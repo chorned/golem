@@ -25,11 +25,13 @@ from github_manager import GitHubManager
 
 logger = logging.getLogger("AGY.Supervisor")
 
-PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+HOST_DIR = os.environ.get("FIRST_MATE_HOST_DIR", os.path.dirname(os.path.abspath(__file__)))
+PROJECT_ROOT = HOST_DIR
+DEFAULT_TARGET_REPO = os.environ.get("DEFAULT_TARGET_REPO", "/Users/hermes/projects/AGY")
 
 DEFAULT_PROTECTED_PATTERNS = [
     re.compile(r"^.*\.plist$", re.IGNORECASE),
-    re.compile(r"^com\.user\.antigravity-slack\.plist$", re.IGNORECASE),
+    re.compile(r"^com\.user\.(antigravity-slack|first-mate)\.plist$", re.IGNORECASE),
     re.compile(r"^.*launchd.*", re.IGNORECASE),
     re.compile(r"^\.git(/|$)", re.IGNORECASE),
     re.compile(r"^\.env(\..*)?$", re.IGNORECASE),
@@ -46,7 +48,7 @@ class AgentSupervisor:
         herdr_client: Optional[HerdrClient] = None,
         github_manager: Optional[GitHubManager] = None,
         workers_config_path: Optional[str] = None,
-        default_repo_path: str = PROJECT_ROOT,
+        default_repo_path: str = DEFAULT_TARGET_REPO,
         no_mistakes_bin: Optional[str] = None
     ):
         self.herdr_client = herdr_client or HerdrClient(config_path=workers_config_path)
@@ -153,7 +155,7 @@ class AgentSupervisor:
         if check_diff:
             diff_lines = check_diff.splitlines()
             for dline in diff_lines:
-                for target in ["com.user.antigravity-slack.plist", ".plist", "launchd", ".env"]:
+                for target in ["com.user.antigravity-slack.plist", "com.user.first-mate.plist", ".plist", "launchd", ".env", "first-mate"]:
                     if target in dline.lower() and any(k in dline for k in ("diff --git", "--- ", "+++ ", "|", "rename from", "rename to")):
                         m = re.search(r'([a-zA-Z0-9_\-./]+\.(?:plist|env))', dline)
                         violation_name = m.group(1) if m else target
@@ -541,6 +543,9 @@ class AgentSupervisor:
         7. Returns structured report containing PR URL, test status, diff stats, and worktree info.
         """
         effective_repo = repo_path or self.default_repo_path
+        # Host isolation guardrail: First Mate's host directory must NEVER be cloned, checked out, or provided to Herdr workers.
+        if effective_repo == HOST_DIR:
+            effective_repo = DEFAULT_TARGET_REPO
 
         # 1. Native Herdr Worktree Isolation
         branch_name = await self.create_task_branch(worker_id, effective_repo)

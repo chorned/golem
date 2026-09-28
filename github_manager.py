@@ -18,7 +18,9 @@ from typing import Dict, Any, Optional, List, Tuple
 
 logger = logging.getLogger("AGY.GitHubManager")
 
-PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+HOST_DIR = os.environ.get("FIRST_MATE_HOST_DIR", os.path.dirname(os.path.abspath(__file__)))
+PROJECT_ROOT = HOST_DIR
+DEFAULT_TARGET_REPO = os.environ.get("DEFAULT_TARGET_REPO", "/Users/hermes/projects/AGY")
 
 DEFAULT_SECONDARY_ACCOUNT = "desktop-pc-worker"
 DEFAULT_SECONDARY_NODE = "desktop-pc"
@@ -30,7 +32,7 @@ class GitHubManager:
     def __init__(
         self,
         gh_bin: Optional[str] = None,
-        default_repo_path: str = PROJECT_ROOT,
+        default_repo_path: str = DEFAULT_TARGET_REPO,
         secondary_account: str = DEFAULT_SECONDARY_ACCOUNT,
         secondary_node: str = DEFAULT_SECONDARY_NODE
     ):
@@ -219,7 +221,7 @@ class GitHubManager:
             "output": out or err
         }
 
-    async def sync_main(self, repo_path: str = PROJECT_ROOT) -> Dict[str, Any]:
+    async def sync_main(self, repo_path: str = DEFAULT_TARGET_REPO) -> Dict[str, Any]:
         """Safely pull the latest changes into `main` using fast-forward only."""
         try:
             proc = await asyncio.create_subprocess_exec(

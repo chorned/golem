@@ -89,9 +89,13 @@ for p in EXTRA_PATHS:
         current_path_list.insert(0, p)
 os.environ["PATH"] = ":".join(current_path_list)
 
-# Load environment variables from .env in project directory
-PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
-env_file = os.path.join(PROJECT_ROOT, ".env")
+# Host root context and target repository configuration
+HOST_DIR = os.environ.get("FIRST_MATE_HOST_DIR", os.path.dirname(os.path.abspath(__file__)))
+PROJECT_ROOT = HOST_DIR
+DEFAULT_TARGET_REPO = os.environ.get("DEFAULT_TARGET_REPO", "/Users/hermes/projects/AGY").strip()
+DAEMON_LABEL = os.environ.get("DAEMON_LABEL", "com.user.first-mate").strip()
+
+env_file = os.path.join(HOST_DIR, ".env")
 if os.path.isfile(env_file):
     load_dotenv(dotenv_path=env_file)
 else:
@@ -101,7 +105,7 @@ SLACK_APP_TOKEN = os.environ.get("SLACK_APP_TOKEN", "").strip()
 SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN", "").strip()
 SLACK_SIGNING_SECRET = os.environ.get("SLACK_SIGNING_SECRET", "").strip()
 
-raw_default_ws = os.environ.get("DEFAULT_WORKSPACE_PATH", PROJECT_ROOT).strip()
+raw_default_ws = os.environ.get("DEFAULT_WORKSPACE_PATH", DEFAULT_TARGET_REPO).strip()
 DEFAULT_WORKSPACE = os.path.realpath(os.path.abspath(os.path.expanduser(raw_default_ws)))
 
 if not SLACK_APP_TOKEN or not SLACK_BOT_TOKEN:
@@ -139,8 +143,8 @@ herdr = fleet
 
 herdr_client_inst = HerdrClient()
 client_herdr = herdr_client_inst
-github_mgr = GitHubManager()
-supervisor = AgentSupervisor(herdr_client=herdr_client_inst, github_manager=github_mgr)
+github_mgr = GitHubManager(default_repo_path=DEFAULT_TARGET_REPO)
+supervisor = AgentSupervisor(herdr_client=herdr_client_inst, github_manager=github_mgr, default_repo_path=DEFAULT_TARGET_REPO)
 agent_supervisor = supervisor
 
 # ------------------------------------------------------------------------------
@@ -1448,7 +1452,7 @@ async def kickstart_daemon_later(delay: float = 0.5):
     await asyncio.sleep(delay)
     try:
         proc = await asyncio.create_subprocess_exec(
-            "launchctl", "kickstart", "-k", f"gui/{os.getuid()}/com.user.antigravity-slack"
+            "launchctl", "kickstart", "-k", f"gui/{os.getuid()}/{DAEMON_LABEL}"
         )
         await proc.wait()
     except Exception as e:
@@ -2064,7 +2068,11 @@ async def execute_approved_plan(
     target_info["pane_id"] = pane_id
 
     session = sessions.get(session_key, {})
-    active_workspace = session.get("workspace", DEFAULT_WORKSPACE)
+    active_workspace = session.get("workspace", DEFAULT_TARGET_REPO)
+    # Host isolation guardrail: First Mate's host directory must NEVER be cloned, checked out, or provided to Herdr workers.
+    if not active_workspace or active_workspace == HOST_DIR:
+        active_workspace = DEFAULT_TARGET_REPO
+    target_repo = active_workspace
 
     if react_ts:
         await swap_reacji(client, channel, react_ts, "eyes", "gear")
@@ -2075,7 +2083,7 @@ async def execute_approved_plan(
     if use_supervisor and current_sup:
         worker_id = plan.get("worker_id") or "opencode-dev"
         user_intent = original_prompt or plan.get("intent_summary") or dispatched_payload
-        logger.info(f"Dispatching task to AgentSupervisor for worker {worker_id} in {active_workspace}...")
+        logger.info(f"Dispatching task to AgentSupervisor for worker {worker_id} in {target_repo}...")
 
         async def heartbeat_cb(data: Dict[str, Any]):
             if session_key in active_supervised_tasks:
@@ -2115,7 +2123,7 @@ async def execute_approved_plan(
             report = await current_sup.supervise_task(
                 worker_id=worker_id,
                 user_intent=user_intent,
-                repo_path=active_workspace,
+                repo_path=target_repo,
                 heartbeat_callback=heartbeat_cb
             )
             is_success = (report.get("status") == "success")
@@ -2189,9 +2197,9 @@ async def execute_approved_plan(
             last_pr = session.get("last_pr", {})
             pr_selector = str(last_pr.get("pr_number") or last_pr.get("pr_url") or "")
 
-        logger.info(f"Executing Tier 3 PR merge for selector '{pr_selector}' in {active_workspace}...")
+        logger.info(f"Executing Tier 3 PR merge for selector '{pr_selector}' in {target_repo}...")
         merge_res = await current_gh.merge_pull_request(
-            repo_path=active_workspace,
+            repo_path=target_repo,
             pr_selector=pr_selector,
             auto=True,
             squash=True,
@@ -2207,11 +2215,11 @@ async def execute_approved_plan(
                 workspace_id=wt_workspace_id,
                 branch_name=wt_branch,
                 worktree_path=wt_path,
-                repo_path=active_workspace,
+                repo_path=target_repo,
                 force=True
             )
 
-        sync_res = await current_gh.sync_main(active_workspace)
+        sync_res = await current_gh.sync_main(target_repo)
 
         if react_ts:
             await swap_reacji(client, channel, react_ts, "gear", "white_check_mark")

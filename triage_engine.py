@@ -17,7 +17,9 @@ import aiohttp
 
 logger = logging.getLogger("AGY.TriageEngine")
 
-PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+HOST_DIR = os.environ.get("FIRST_MATE_HOST_DIR", os.path.dirname(os.path.abspath(__file__)))
+PROJECT_ROOT = HOST_DIR
+DEFAULT_TARGET_REPO = os.environ.get("DEFAULT_TARGET_REPO", "/Users/hermes/projects/AGY")
 GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
 DEFAULT_GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 DEFAULT_TIMEOUT_SEC = 6.0
@@ -285,7 +287,7 @@ def classify_safety_tier(
 # ------------------------------------------------------------------------------
 async def handle_conversational_turn(
     user_prompt: str,
-    repo_path: str = PROJECT_ROOT,
+    repo_path: str = DEFAULT_TARGET_REPO,
     herdr_client_inst: Optional[Any] = None,
     recent_context: str = ""
 ) -> Dict[str, Any]:
@@ -302,6 +304,8 @@ async def handle_conversational_turn(
         "action_plan": None
     }
     """
+    if repo_path == HOST_DIR:
+        repo_path = DEFAULT_TARGET_REPO
     p_lower = (user_prompt or "").strip().lower()
 
     is_cleanup_inquiry = any(k in p_lower for k in ("clean", "cleaned", "cleanup", "scrub"))

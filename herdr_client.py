@@ -37,8 +37,10 @@ class InfrastructureError(RuntimeError):
     """Raised when underlying infrastructure (Herdr, worktree, agent process) fails."""
     pass
 
-PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_WORKERS_YAML = os.path.join(PROJECT_ROOT, ".agents", "workers.yaml")
+HOST_DIR = os.environ.get("FIRST_MATE_HOST_DIR", os.path.dirname(os.path.abspath(__file__)))
+PROJECT_ROOT = HOST_DIR
+DEFAULT_TARGET_REPO = os.environ.get("DEFAULT_TARGET_REPO", "/Users/hermes/projects/AGY")
+DEFAULT_WORKERS_YAML = os.path.join(HOST_DIR, ".agents", "workers.yaml")
 
 DEFAULT_TOPOLOGY_PANES = {
     "fleet-control": "w1:p1",
@@ -437,7 +439,7 @@ class HerdrClient:
     # --------------------------------------------------------------------------
     # Native Herdr Git Worktree Management
     # --------------------------------------------------------------------------
-    async def list_worktrees(self, repo_path: str = PROJECT_ROOT) -> List[Dict[str, Any]]:
+    async def list_worktrees(self, repo_path: str = DEFAULT_TARGET_REPO) -> List[Dict[str, Any]]:
         """List active Herdr worktree-backed workspaces for repo_path."""
         code, out, err = await self.run_cli(["worktree", "list", "--cwd", repo_path], timeout=10.0)
         raw = out or err
@@ -457,7 +459,7 @@ class HerdrClient:
     async def create_worktree(
         self,
         branch_name: str,
-        repo_path: str = PROJECT_ROOT,
+        repo_path: str = DEFAULT_TARGET_REPO,
         label: Optional[str] = None
     ) -> Dict[str, Any]:
         """
@@ -599,7 +601,7 @@ class HerdrClient:
 
     async def create_task_worktree(
         self,
-        repo_path: str = PROJECT_ROOT,
+        repo_path: str = DEFAULT_TARGET_REPO,
         task_id: str = "opencode-dev",
         base_ref: str = "origin/main"
     ) -> str:
@@ -655,7 +657,7 @@ class HerdrClient:
         workspace_id: Optional[str] = None,
         branch_name: Optional[str] = None,
         worktree_path: Optional[str] = None,
-        repo_path: str = PROJECT_ROOT,
+        repo_path: str = DEFAULT_TARGET_REPO,
         force: bool = True,
         agent_name: Optional[str] = None
     ) -> Dict[str, Any]:
