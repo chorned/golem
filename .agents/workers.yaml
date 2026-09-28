@@ -1,0 +1,51 @@
+version: "1.0"
+frugallm:
+  base_url: "http://127.0.0.1:61721/v1"
+  endpoint: "http://127.0.0.1:61721/v1"
+  host: "0.0.0.0:61721"
+  api_key: "horned66"
+  password: "horned66"
+  model: "frugallm/coding"
+  system_integrated: true
+
+workers:
+  opencode-dev:
+    description: "Code refactoring, test generation, and bug fixing"
+    target_node: "hermes"
+    workspace: "dev-grid"
+    harness: "opencode"
+    # Natively configured to route through FrugaLLM on Hermes (0.0.0.0:61721); no artificial proxy injection needed
+    env: {}
+    launch_command: "opencode --auto"
+    launch_args:
+      - "--auto"
+    protected_paths:
+      - "com.user.antigravity-slack.plist"
+      - "*.plist"
+      - "launchd"
+      - ".git"
+      - ".env"
+
+  hermes-homelab:
+    description: "Docker administration, homelab script maintenance, and config edits"
+    target_node: "hermes"
+    workspace: "homelab-ops"
+    harness: "hermes-agent"
+    # Natively configured to route through FrugaLLM on Hermes (0.0.0.0:61721); no artificial proxy injection needed
+    env: {}
+    launch_command: "hermes-agent"
+    protected_paths:
+      - "com.user.antigravity-slack.plist"
+      - "*.plist"
+      - "launchd"
+      - ".git"
+      - ".env"
+
+  cuda-worker:
+    description: "Heavy CUDA benchmarks, model evals, and PyTorch workloads"
+    target_node: "desktop-pc"
+    workspace: "compute-grid"
+    harness: "shell"
+    env:
+      CUDA_VISIBLE_DEVICES: "0"
+    launch_command: "cmd.exe"
