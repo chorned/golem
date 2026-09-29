@@ -121,10 +121,21 @@ class TestThinIngressGateway(unittest.IsolatedAsyncioTestCase):
             }
         })
 
+        mock_ready_agent = json.dumps({
+            "result": {
+                "agent": {
+                    "interactive_ready": True,
+                    "agent_status": "idle"
+                }
+            }
+        })
+
         with patch.object(app.herdr_client, "run_cli", new_callable=AsyncMock) as mock_cli:
             mock_cli.side_effect = [
                 (0, mock_ws_output, ""),  # workspace create
-                (0, "started", ""),       # agent start --kind agy --pane w9:p1 -- --prompt-interactive <prompt>
+                (0, "started", ""),       # agent start --kind agy --pane w9:p1
+                (0, mock_ready_agent, ""),# agent get (readiness check)
+                (0, "prompted", ""),      # agent prompt fm-100001 <prompt>
             ]
 
             await process_user_prompt(event, client)
@@ -132,16 +143,17 @@ class TestThinIngressGateway(unittest.IsolatedAsyncioTestCase):
             # Verification:
             # 1. Herdr workspace create was called
             self.assertEqual(mock_cli.call_args_list[0][0][0][:2], ["workspace", "create"])
-            # 2. Antigravity CLI started directly with prompt in startup arguments (no keystroke race)
-            self.assertEqual(mock_cli.call_args_list[1][0][0][:3], ["agent", "start", "fm-100001"])
-            self.assertEqual(mock_cli.call_args_list[1][0][0][3:7], ["--kind", "agy", "--pane", "w9:p1"])
-            self.assertEqual(mock_cli.call_args_list[1][0][0][7], "--")
-            self.assertIn("--prompt-interactive", mock_cli.call_args_list[1][0][0])
+            # 2. Antigravity CLI started cleanly with zero trailing prompt arguments
+            self.assertEqual(mock_cli.call_args_list[1][0][0], ["agent", "start", "fm-100001", "--kind", "agy", "--pane", "w9:p1"])
+            # 3. Prompt dispatched via herdr agent prompt after readiness
+            self.assertEqual(mock_cli.call_args_list[3][0][0][:3], ["agent", "prompt", "fm-100001"])
 
             # Session registered
             session_key = "C12345:100.001"
             self.assertIn(session_key, sessions)
             self.assertEqual(sessions[session_key].status, "starting")
+            if sessions[session_key].monitor_task and not sessions[session_key].monitor_task.done():
+                sessions[session_key].monitor_task.cancel()
 
     async def test_followup_prompt_uses_agent_prompt(self):
         """Verify subsequent prompts in an existing session use herdr agent prompt."""

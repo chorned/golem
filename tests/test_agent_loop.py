@@ -641,6 +641,194 @@ class TestIngressLifecycleStateMachine(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("Antigravity CLI 1.2.12", final_text)
             self.assertNotIn("? for shortcuts", final_text)
 
+    async def test_agent_start_failure_fails_fast_and_updates_ui(self):
+        """Simulate Herdr returning invalid_agent_argument -> verify session marks failed, reacji swaps to :x:, and no infinite loop occurs."""
+        client = AsyncMock()
+        client.reactions_add = AsyncMock()
+        client.reactions_remove = AsyncMock()
+        client.chat_postMessage = AsyncMock(return_value={"ts": "msg-err"})
+
+        event = {
+            "channel": "C_TEST",
+            "ts": "100.999",
+            "thread_ts": "100.999",
+            "text": "run complex multi-line task\nwith special chars",
+            "is_imessage": False
+        }
+
+        mock_ws_output = json.dumps({
+            "result": {
+                "workspace": {"workspace_id": "w_failed"},
+                "root_pane": {"pane_id": "w_failed:p1"}
+            }
+        })
+        error_json = json.dumps({
+            "error": {
+                "code": "invalid_agent_argument",
+                "message": "agent arguments cannot be encoded safely for the target shell"
+            },
+            "id": "cli:agent:start"
+        })
+
+        async def mock_run_cli(args, timeout=5.0):
+            if args[:2] == ["workspace", "create"]:
+                return 0, mock_ws_output, ""
+            elif args[:2] == ["agent", "start"]:
+                return 1, error_json, "agent arguments cannot be encoded safely for the target shell"
+            elif args[:2] == ["workspace", "close"]:
+                return 0, json.dumps({"result": {"type": "ok"}}), ""
+            return 0, "", ""
+
+        with patch.object(app.herdr_client, "run_cli", side_effect=mock_run_cli):
+            await app.process_user_prompt(event, client)
+
+        session_key = "C_TEST:100.999"
+        self.assertIn(session_key, app.sessions)
+        session = app.sessions[session_key]
+
+        # 1. State invariant: session marked as failed
+        self.assertEqual(session.status, "failed")
+        self.assertEqual(session.state, "failed")
+        self.assertFalse(session.has_worked)
+
+        # 2. Reacji updated to :x:
+        reacji_calls = [c[1]["name"] for c in client.reactions_add.call_args_list]
+        self.assertIn("x", reacji_calls)
+
+        # 3. Diagnostic error posted to thread
+        client.chat_postMessage.assert_called()
+        posted_text = client.chat_postMessage.call_args_list[0][1]["text"]
+        self.assertIn("Failed to spawn Antigravity agent", posted_text)
+        self.assertIn("agent arguments cannot be encoded safely", posted_text)
+
+        # 4. No infinite loop / monitor task running
+        self.assertTrue(session.monitor_task is None or session.monitor_task.done())
+
+    async def test_readiness_handshake_delivers_prompt(self):
+        """Simulate clean start -> wait for ready prompt -> verify herdr agent prompt dispatches only after TUI initialization."""
+        client = AsyncMock()
+        client.reactions_add = AsyncMock()
+        client.reactions_remove = AsyncMock()
+        client.chat_postMessage = AsyncMock(return_value={"ts": "msg-ok"})
+
+        event = {
+            "channel": "C_TEST",
+            "ts": "200.999",
+            "thread_ts": "200.999",
+            "text": "build a dashboard",
+            "is_imessage": False
+        }
+
+        mock_ws_output = json.dumps({
+            "result": {
+                "workspace": {"workspace_id": "w_handshake"},
+                "root_pane": {"pane_id": "w_handshake:p1"}
+            }
+        })
+
+        cli_call_log = []
+        poll_count = 0
+
+        async def mock_run_cli(args, timeout=5.0):
+            nonlocal poll_count
+            cli_call_log.append(list(args))
+            sub = args[1] if len(args) > 1 else ""
+
+            if args[0] == "workspace" and sub == "create":
+                return 0, mock_ws_output, ""
+            elif args[0] == "agent" and sub == "start":
+                return 0, json.dumps({"result": {"type": "ok"}}), ""
+            elif args[0] == "agent" and sub == "get":
+                poll_count += 1
+                if poll_count < 2:
+                    return 0, json.dumps({"result": {"agent": {"agent_status": "starting", "interactive_ready": False}}}), ""
+                else:
+                    return 0, json.dumps({"result": {"agent": {"agent_status": "idle", "interactive_ready": True}}}), ""
+            elif args[0] == "agent" and sub == "read":
+                if poll_count < 2:
+                    return 0, "signing in...\n", ""
+                else:
+                    return 0, "Antigravity CLI\n>\n? for shortcuts", ""
+            elif args[0] == "agent" and sub == "prompt":
+                return 0, json.dumps({"result": {"type": "ok"}}), ""
+            return 0, "", ""
+
+        with patch.object(app.herdr_client, "run_cli", side_effect=mock_run_cli):
+            await app.process_user_prompt(event, client)
+
+        session_key = "C_TEST:200.999"
+        self.assertIn(session_key, app.sessions)
+        session = app.sessions[session_key]
+
+        # 1. Verify agent start was clean (zero trailing prompt args)
+        start_calls = [c for c in cli_call_log if c[:2] == ["agent", "start"]]
+        self.assertEqual(len(start_calls), 1)
+        self.assertEqual(start_calls[0], ["agent", "start", session.agent_name, "--kind", "agy", "--pane", "w_handshake:p1"])
+
+        # 2. Verify agent prompt was dispatched AFTER readiness check
+        prompt_calls = [c for c in cli_call_log if c[:2] == ["agent", "prompt"]]
+        self.assertEqual(len(prompt_calls), 1)
+        self.assertEqual(prompt_calls[0][2], session.agent_name)
+        self.assertIn("build a dashboard", prompt_calls[0][3])
+
+        # Verify order: start -> get (not ready) -> get (ready) -> prompt
+        start_idx = next(i for i, c in enumerate(cli_call_log) if c[:2] == ["agent", "start"])
+        prompt_idx = next(i for i, c in enumerate(cli_call_log) if c[:2] == ["agent", "prompt"])
+        self.assertGreater(prompt_idx, start_idx)
+
+        # Clean up session monitor task
+        if session.monitor_task and not session.monitor_task.done():
+            session.monitor_task.cancel()
+
+    async def test_lifecycle_watchdog_times_out_stuck_booting_agent(self):
+        """Verify monitor_agent_lifecycle enforces strict timeout if agent remains booting > 30s."""
+        client = AsyncMock()
+        client.reactions_add = AsyncMock()
+        client.reactions_remove = AsyncMock()
+        client.chat_postMessage = AsyncMock()
+
+        session = app.GatewaySession(
+            session_key="C_TEST:300.999",
+            agent_name="fm-test-timeout",
+            target_cwd="/tmp/timeout",
+            channel="C_TEST",
+            thread_ts="300.999",
+            workspace_id="w_timeout"
+        )
+        session.status = "booting"
+        session.has_worked = False
+
+        async def mock_run_cli(args, timeout=5.0):
+            if args[:2] == ["agent", "get"]:
+                return 0, json.dumps({"result": {"agent": {"agent_status": "starting"}}}), ""
+            elif args[:2] == ["agent", "read"]:
+                return 0, "signing in...\n", ""
+            elif args[:2] == ["workspace", "close"]:
+                return 0, "ok", ""
+            return 0, "", ""
+
+        # Mock time.time to simulate passage of 35 seconds
+        current_mock_time = [1000.0]
+        def mock_time():
+            return current_mock_time[0]
+
+        with patch.object(app.herdr_client, "run_cli", side_effect=mock_run_cli), \
+             patch("time.time", side_effect=mock_time):
+            async def advance_time():
+                await asyncio.sleep(0.05)
+                current_mock_time[0] += 35.0
+
+            adv_task = asyncio.create_task(advance_time())
+            monitor_task = asyncio.create_task(app.monitor_agent_lifecycle(session, client, trigger_ts="300.999"))
+            await asyncio.gather(adv_task, monitor_task)
+
+        # Verification: session marked as failed, timeout message sent, reacji :x:
+        self.assertEqual(session.status, "failed")
+        reacji_calls = [c[1]["name"] for c in client.reactions_add.call_args_list]
+        self.assertIn("x", reacji_calls)
+        client.chat_postMessage.assert_called()
+        self.assertIn("timed out during initialization (>30s)", client.chat_postMessage.call_args_list[0][1]["text"])
+
 
 if __name__ == "__main__":
     unittest.main()

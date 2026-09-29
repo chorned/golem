@@ -107,7 +107,7 @@ class GatewaySession:
         self.workspace_id = workspace_id
         self.pane_id = pane_id
         self.is_imessage = is_imessage
-        self.status = "starting"  # "starting" | "booting" | "working" | "blocked" | "done"
+        self.status = "starting"  # "starting" | "booting" | "working" | "blocked" | "done" | "failed"
         self.has_worked = False
         self.execution_steps = 0
         self.last_prompt = ""
@@ -115,6 +115,14 @@ class GatewaySession:
         self.approval_msg_ts: Optional[str] = None
         self.monitor_task: Optional[asyncio.Task] = None
         self.created_at = time.time()
+
+    @property
+    def state(self) -> str:
+        return self.status
+
+    @state.setter
+    def state(self, val: str) -> None:
+        self.status = val
 
 
 # Active session registry
@@ -420,16 +428,68 @@ def is_rejection_reply(text: str) -> bool:
 # ------------------------------------------------------------------------------
 # Herdr PTY Dispatch & Blocked State Monitoring
 # ------------------------------------------------------------------------------
+async def wait_for_agent_readiness(
+    agent_name: str,
+    timeout_seconds: float = 15.0,
+    poll_interval: float = 0.5
+) -> bool:
+    """
+    Readiness Watchdog (The TUI Handshake):
+    Monitor the agent pane buffer / agent status for up to timeout_seconds
+    until agy finishes initializing terminal attributes and displays its ready indicator
+    (e.g. >, ? for shortcuts, or interactive_ready=True).
+    """
+    start_time = time.time()
+    ready_patterns = [
+        r"(?m)^\s*>\s*$",
+        r">\n",
+        r"\?\s*for\s*shortcuts",
+        r"welcome to the antigravity",
+        r"gemini 3.8 flash"
+    ]
+    while time.time() - start_time < timeout_seconds:
+        # 1. Check Herdr agent state
+        code, out, _ = await herdr_client.run_cli(["agent", "get", agent_name], timeout=5.0)
+        if code == 0 and out:
+            try:
+                data = json.loads(out)
+                agent_info = data.get("result", {}).get("agent", {})
+                if agent_info.get("interactive_ready") is True:
+                    return True
+                status = agent_info.get("agent_status")
+                if status in ("idle", "ready"):
+                    return True
+            except Exception:
+                pass
+
+        # 2. Check pane buffer output
+        _, read_out, _ = await herdr_client.run_cli([
+            "agent", "read", agent_name,
+            "--source", "recent-unwrapped",
+            "--lines", "30"
+        ], timeout=5.0)
+        if read_out:
+            clean_text = strip_ansi(read_out)
+            if any(re.search(pat, clean_text, re.IGNORECASE) for pat in ready_patterns):
+                return True
+
+        await asyncio.sleep(poll_interval)
+
+    return False
+
+
 async def ensure_session_agent(
     session_key: str,
     channel: str,
     thread_ts: str,
     prompt: str,
     is_imessage: bool = False,
-    agent_args: Optional[List[str]] = None
+    agent_args: Optional[List[str]] = None,
+    client: Any = None,
+    trigger_ts: Optional[str] = None
 ) -> GatewaySession:
-    """Ensure a Herdr workspace and Antigravity CLI agent exist for this thread."""
-    if session_key in sessions:
+    """Ensure a Herdr workspace and Antigravity CLI agent exist for this thread with readiness-gated handshake."""
+    if session_key in sessions and sessions[session_key].status != "failed":
         return sessions[session_key]
 
     clean_ts = re.sub(r"[^0-9]", "", str(thread_ts or time.time()))[-8:]
@@ -460,21 +520,6 @@ async def ensure_session_agent(
         pane_id = "w6:p1"
 
     scoped_prompt = scope_server_commands(prompt, target_cwd)
-    formatted_prompt = format_agent_dispatch_prompt(scoped_prompt, target_cwd)
-
-    # 2. Start Antigravity CLI directly with startup arguments:
-    # herdr agent start <name> --kind agy --pane <pane_id> -- --prompt-interactive "<prompt>"
-    cli_agent_args = agent_args or ["--prompt-interactive", formatted_prompt]
-    start_cmd = [
-        "agent", "start", agent_name,
-        "--kind", "agy",
-        "--pane", pane_id,
-        "--"
-    ] + cli_agent_args
-
-    start_code, _, start_err = await herdr_client.run_cli(start_cmd)
-    if start_code != 0:
-        logger.warning(f"herdr agent start warning for {agent_name}: {start_err}")
 
     session = GatewaySession(
         session_key=session_key,
@@ -493,6 +538,77 @@ async def ensure_session_agent(
 
     sessions[session_key] = session
     agent_name_to_session[agent_name] = session
+
+    # 2. Clean Spawn: Launch agent with zero trailing prompt arguments
+    start_cmd = [
+        "agent", "start", agent_name,
+        "--kind", "agy",
+        "--pane", pane_id
+    ]
+    if agent_args:
+        start_cmd.extend(["--"] + agent_args)
+
+    start_code, start_out, start_err = await herdr_client.run_cli(start_cmd)
+
+    # 3. Fail-Fast Trap: Inspect process return code and error response immediately
+    start_failed = False
+    err_detail = ""
+    if start_code != 0:
+        start_failed = True
+        err_detail = start_err or start_out or f"herdr agent start exited with code {start_code}"
+    elif start_out:
+        try:
+            parsed = json.loads(start_out)
+            if "error" in parsed:
+                start_failed = True
+                err_detail = parsed.get("error", {}).get("message") or str(parsed.get("error"))
+        except Exception:
+            pass
+
+    if start_failed:
+        session.status = "failed"
+        logger.error(f"herdr agent start failed for {agent_name}: {err_detail}")
+        if client:
+            if trigger_ts and not is_imessage:
+                await swap_reacji(client, channel, trigger_ts, "gear", "x")
+                await swap_reacji(client, channel, trigger_ts, "eyes", "x")
+            err_msg = f":x: *Failed to spawn Antigravity agent (`{agent_name}`)*:\n```{err_detail}```"
+            if is_imessage:
+                await client.chat_postMessage(channel=channel, text=normalize_for_bluebubbles(err_msg))
+            else:
+                await client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=err_msg)
+        if ws_id:
+            await herdr_client.run_cli(["workspace", "close", ws_id])
+        return session
+
+    # 4. Readiness Watchdog (The TUI Handshake):
+    # Monitor the pane buffer for up to 15s until agy displays ready indicator
+    is_ready = await wait_for_agent_readiness(agent_name, timeout_seconds=15.0)
+    if not is_ready:
+        session.status = "failed"
+        timeout_detail = f"Agent `{agent_name}` failed to reach readiness within 15 seconds."
+        logger.error(timeout_detail)
+        if client:
+            if trigger_ts and not is_imessage:
+                await swap_reacji(client, channel, trigger_ts, "gear", "x")
+                await swap_reacji(client, channel, trigger_ts, "eyes", "x")
+            timeout_msg = f":x: *Failed to start Antigravity agent (`{agent_name}`)*:\n```{timeout_detail}```"
+            if is_imessage:
+                await client.chat_postMessage(channel=channel, text=normalize_for_bluebubbles(timeout_msg))
+            else:
+                await client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=timeout_msg)
+        if ws_id:
+            await herdr_client.run_cli(["workspace", "close", ws_id])
+        return session
+
+    # 5. Prompt Delivery:
+    # Once readiness is confirmed, dispatch the prompt via herdr agent prompt
+    prompt_code, _, prompt_err = await herdr_client.run_cli([
+        "agent", "prompt", agent_name, scoped_prompt
+    ])
+    if prompt_code != 0:
+        logger.warning(f"herdr agent prompt returned code {prompt_code}: {prompt_err}")
+
     return session
 
 
@@ -514,9 +630,31 @@ async def monitor_agent_lifecycle(
     agent_name = session.agent_name
     logger.info(f"Lifecycle monitor active for agent {agent_name} (initial status: {session.status})...")
     consecutive_idle_ticks = 0
+    boot_start_time = time.time()
 
     while True:
         await asyncio.sleep(1.5)
+
+        if session.status == "failed":
+            break
+
+        # Global Lifecycle Watchdog: strict 30s timeout while booting/starting
+        if not session.has_worked and session.status in ("starting", "booting"):
+            if time.time() - boot_start_time > 30.0:
+                logger.error(f"Agent {agent_name} lifecycle timeout: stuck in {session.status} for >30s.")
+                session.status = "failed"
+                if trigger_ts and not session.is_imessage:
+                    await swap_reacji(client, session.channel, trigger_ts, "gear", "x")
+                    await swap_reacji(client, session.channel, trigger_ts, "eyes", "x")
+                timeout_msg = f":x: *Agent (`{agent_name}`) timed out during initialization (>30s).* Session aborted."
+                if session.is_imessage:
+                    await client.chat_postMessage(channel=session.channel, text=normalize_for_bluebubbles(timeout_msg))
+                else:
+                    await client.chat_postMessage(channel=session.channel, thread_ts=session.thread_ts, text=timeout_msg)
+                if session.workspace_id:
+                    await herdr_client.run_cli(["workspace", "close", session.workspace_id])
+                break
+
         code, out, _ = await herdr_client.run_cli(["agent", "get", agent_name], timeout=5.0)
 
         current_status = "unknown"
@@ -550,6 +688,7 @@ async def monitor_agent_lifecycle(
 
         if current_status == "working" or is_terminal_working:
             session.status = "working"
+            session.has_worked = True
             session.execution_steps += 1
             consecutive_idle_ticks = 0
             continue
@@ -566,7 +705,7 @@ async def monitor_agent_lifecycle(
         if (current_status == "blocked" or is_terminal_blocked) and session.status != "blocked":
             session.status = "blocked"
             session.last_blocked_snapshot = read_out
-            if trigger_ts:
+            if trigger_ts and not session.is_imessage:
                 await swap_reacji(client, session.channel, trigger_ts, "gear", "warning")
             await post_approval_card(session, client, read_out)
             continue
@@ -595,7 +734,7 @@ async def monitor_agent_lifecycle(
                 consecutive_idle_ticks += 1
                 if consecutive_idle_ticks >= 2:
                     session.status = "done"
-                    if trigger_ts:
+                    if trigger_ts and not session.is_imessage:
                         await swap_reacji(client, session.channel, trigger_ts, "gear", "white_check_mark")
                     await post_completion_briefing(session, client, read_out)
                     break
@@ -880,15 +1019,20 @@ async def process_user_prompt(event: Dict[str, Any], client: Any) -> None:
     if not is_imessage:
         await add_reacji(client, channel, ts, "eyes")
 
-    is_new_session = session_key not in sessions
+    is_new_session = session_key not in sessions or sessions[session_key].status == "failed"
 
     session = await ensure_session_agent(
         session_key=session_key,
         channel=channel,
         thread_ts=thread_ts,
         prompt=clean_text,
-        is_imessage=is_imessage
+        is_imessage=is_imessage,
+        client=client,
+        trigger_ts=ts
     )
+
+    if session.status == "failed":
+        return
 
     scoped_prompt = scope_server_commands(clean_text, session.target_cwd)
     session.last_prompt = scoped_prompt
@@ -1030,6 +1174,8 @@ async def stop_bluebubbles_transport():
 # ------------------------------------------------------------------------------
 # Signal Handling & Main Entrypoint
 # ------------------------------------------------------------------------------
+shutdown_event = asyncio.Event()
+
 def setup_signal_handlers(loop: asyncio.AbstractEventLoop):
     for sig in (signal.SIGINT, signal.SIGTERM):
         try:
@@ -1038,8 +1184,8 @@ def setup_signal_handlers(loop: asyncio.AbstractEventLoop):
             pass
 
 def on_signal_received(sig):
-    logger.info(f"Received exit signal {sig.name}. Shutting down...")
-    sys.exit(0)
+    logger.info(f"Received exit signal {sig.name}. Initiating graceful shutdown...")
+    shutdown_event.set()
 
 
 async def main():
@@ -1074,10 +1220,35 @@ async def main():
 
     handler = AsyncSocketModeHandler(app, SLACK_APP_TOKEN)
     logger.info("First Mate Gateway ready. Listening for Slack & iMessage events...")
+
+    handler_task = asyncio.create_task(handler.start_async())
+    stop_task = asyncio.create_task(shutdown_event.wait())
+
     try:
-        await handler.start_async()
+        done, pending = await asyncio.wait(
+            [handler_task, stop_task],
+            return_when=asyncio.FIRST_COMPLETED
+        )
+        for t in pending:
+            t.cancel()
     finally:
+        logger.info("Performing graceful shutdown: disconnecting transports and closing client sessions...")
+        try:
+            await handler.close_async()
+        except Exception as e:
+            logger.debug(f"Error closing socket mode handler: {e}")
+
         await stop_bluebubbles_transport()
+
+        try:
+            if hasattr(app, "client") and hasattr(app.client, "session") and app.client.session and not app.client.session.closed:
+                await app.client.session.close()
+        except Exception as e:
+            logger.debug(f"Error closing Slack client session: {e}")
+
+        # Brief yield to let underlying SSL transports complete clean closure
+        await asyncio.sleep(0.25)
+        logger.info("First Mate Gateway shutdown completed cleanly.")
 
 
 if __name__ == "__main__":

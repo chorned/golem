@@ -353,13 +353,23 @@ class TestBlueBubblesOutboundAndBridge(unittest.IsolatedAsyncioTestCase):
                 "root_pane": {"pane_id": "p-bb-1"}
             }
         })
+        mock_ready_agent = json.dumps({
+            "result": {
+                "agent": {
+                    "interactive_ready": True,
+                    "agent_status": "idle"
+                }
+            }
+        })
 
         cli_calls = []
 
-        async def fake_run_cli(args):
+        async def fake_run_cli(args, timeout=5.0):
             cli_calls.append(args)
             if args[0] == "workspace" and args[1] == "create":
                 return 0, mock_ws_json, ""
+            elif args[0] == "agent" and args[1] == "get":
+                return 0, mock_ready_agent, ""
             return 0, "", ""
 
         with patch.object(app.herdr_client, "run_cli", side_effect=fake_run_cli), \
@@ -373,12 +383,17 @@ class TestBlueBubblesOutboundAndBridge(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(session.status, "starting")
             self.assertTrue(session.is_imessage)
 
-            # Verified agent start launched directly with prompt arguments
+            # Verified agent start launched cleanly without prompt arguments
             start_cmds = [c for c in cli_calls if c[0] == "agent" and c[1] == "start"]
             self.assertEqual(len(start_cmds), 1)
             self.assertEqual(start_cmds[0][2], session.agent_name)
-            self.assertIn("--prompt-interactive", start_cmds[0])
-            self.assertTrue(any("build a quick html preview prototype" in arg for arg in start_cmds[0]))
+            self.assertNotIn("--prompt-interactive", start_cmds[0])
+
+            # Verified prompt dispatched via agent prompt after handshake
+            prompt_cmds = [c for c in cli_calls if c[0] == "agent" and c[1] == "prompt"]
+            self.assertEqual(len(prompt_cmds), 1)
+            self.assertEqual(prompt_cmds[0][2], session.agent_name)
+            self.assertTrue(any("build a quick html preview prototype" in arg for arg in prompt_cmds[0]))
 
 
     async def test_imessage_approval_relay_with_thumbsup(self):
