@@ -25,6 +25,79 @@ TAPBACK_CODES = {*range(2000, 2006), *range(3000, 3006)}
 MESSAGE_EVENTS = {"new-message", "message", "updated-message"}
 MAX_IMESSAGE_CHUNK = 3500
 
+SLACK_EMOJI_MAP = {
+    ":white_check_mark:": "✅",
+    ":heavy_check_mark:": "✔️",
+    ":check:": "✅",
+    ":eyes:": "👀",
+    ":thumbsup:": "👍",
+    ":+1:": "👍",
+    ":thumbsdown:": "👎",
+    ":-1:": "👎",
+    ":warning:": "⚠️",
+    ":x:": "❌",
+    ":octagonal_sign:": "🛑",
+    ":brain:": "🧠",
+    ":gear:": "⚙️",
+    ":page_facing_up:": "📄",
+    ":wave:": "👋",
+    ":fire:": "🔥",
+    ":rocket:": "🚀",
+    ":robot_face:": "🤖",
+    ":robot:": "🤖",
+    ":bulb:": "💡",
+    ":tada:": "🎉",
+    ":lock:": "🔒",
+    ":clipboard:": "📋",
+    ":package:": "📦",
+    ":hammer:": "🔨",
+    ":wrench:": "🔧",
+    ":sparkles:": "✨",
+}
+
+
+def sanitize_for_imessage(text: str) -> str:
+    """
+    Sanitize Slack mrkdwn and shortcodes for clean BlueBubbles iMessage presentation:
+    - Links: <http://example.com|label> -> label (http://example.com) or http://example.com if label == url.
+             <http://example.com> -> http://example.com.
+    - Emojis: Slack shortcodes (:white_check_mark:, :eyes:, :+1:, etc.) -> native Unicode.
+    - Mentions: <#C123|channel> -> #channel, <@U123> -> @user.
+    - Preserves standard bold (*bold* / **bold**) and inline code (`code`) cleanly.
+    """
+    if not text:
+        return ""
+
+    # 1. Convert Slack links <url|label> or <url>
+    def _link_replace(match):
+        url = match.group(1).strip()
+        label = match.group(2).strip() if match.group(2) else None
+        if label:
+            if label == url:
+                return url
+            return f"{label} ({url})"
+        return url
+
+    sanitized = re.sub(
+        r"<((?:https?://|mailto:)[^|>]+)(?:\|([^>]+))?>",
+        _link_replace,
+        text
+    )
+
+    # 2. Convert channel mentions <#C123|name> -> #name or <#C123> -> #channel
+    sanitized = re.sub(r"<#[A-Z0-9]+\|([^>]+)>", r"#\1", sanitized)
+    sanitized = re.sub(r"<#([A-Z0-9]+)>", r"#\1", sanitized)
+
+    # 3. Convert user mentions <@U123|name> -> @name or <@U123> -> @user
+    sanitized = re.sub(r"<@[A-Z0-9]+\|([^>]+)>", r"@\1", sanitized)
+    sanitized = re.sub(r"<@([A-Z0-9]+)>", r"@\1", sanitized)
+
+    # 4. Convert Slack emoji shortcodes to native Unicode
+    for shortcode, unicode_char in SLACK_EMOJI_MAP.items():
+        sanitized = sanitized.replace(shortcode, unicode_char)
+
+    return sanitized
+
 
 def chunk_text(text: str, max_chars: int = MAX_IMESSAGE_CHUNK) -> List[str]:
     """Chunk text into segments of at most max_chars, preferably breaking on newlines or spaces."""
@@ -83,16 +156,17 @@ class BlueBubblesClient:
         **kwargs
     ) -> Dict[str, Any]:
         target = channel or self.chat_guid
+        clean_text = sanitize_for_imessage(text)
         now_ts = str(time.time())
         self.history.append({
             "bot_id": "B_AGY",
-            "text": text,
+            "text": clean_text,
             "ts": now_ts
         })
         if len(self.history) > 100:
             self.history.pop(0)
 
-        res = await self.transport.send_imessage(target, text)
+        res = await self.transport.send_imessage(target, clean_text)
         return {
             "ok": res.get("status") == 200 or res.get("success", False),
             "ts": now_ts,
@@ -359,8 +433,9 @@ class BlueBubblesTransport:
         if not text:
             return {"status": 400, "message": "Text cannot be empty"}
 
+        clean_text = sanitize_for_imessage(text)
         session = await self._get_session()
-        chunks = chunk_text(text, max_chars=MAX_IMESSAGE_CHUNK)
+        chunks = chunk_text(clean_text, max_chars=MAX_IMESSAGE_CHUNK)
         last_res = {"status": 200, "message": "Success"}
 
         for chunk in chunks:

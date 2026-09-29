@@ -73,9 +73,9 @@ tail -f /Users/hermes/projects/AGY/bot.log
 
 Run the regression test suites covering in-memory locks, debouncer rate limits, `switch to` directory commands, post-execution git diff / artifact uploads, and the Herdr Chief of Staff persistent execution engine:
 ```bash
-cd /Users/hermes/projects/AGY
-./.venv/bin/python3 -m unittest tests/test_agy_service.py
-./.venv/bin/python3 -m unittest tests/test_herdr_chief_of_staff.py
+cd /Users/hermes/projects/first-mate
+./.venv/bin/python3 -m unittest tests/test_app.py
+./.venv/bin/python3 -m unittest tests/test_herdr_fleet.py
 ```
 
 ---

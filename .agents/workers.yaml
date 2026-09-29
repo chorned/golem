@@ -19,6 +19,29 @@ workers:
     launch_command: "opencode --auto"
     launch_args:
       - "--auto"
+    system_instructions: "You are a guest worker in this repository. Unless explicitly instructed to manage infrastructure, NEVER modify `*.plist` files, service definitions, `.env` files, or git configuration. Keep prototypes, test servers, and standalone scripts strictly self-contained within the designated sandbox folder."
+    rules:
+      - "You are a guest worker in this repository. Unless explicitly instructed to manage infrastructure, NEVER modify `*.plist` files, service definitions, `.env` files, or git configuration. Keep prototypes, test servers, and standalone scripts strictly self-contained within the designated sandbox folder."
+      - "When asked to create a script, test page, or server, create a NEW standalone file. NEVER modify existing project entrypoints (`app.py`, `main.py`, `index.js`) unless explicitly instructed to refactor them."
+    protected_paths:
+      - "com.user.antigravity-slack.plist"
+      - "*.plist"
+      - "launchd"
+      - ".git"
+      - ".env"
+
+  hermes-worker:
+    description: "Homelab administration, operations, and maintenance"
+    target_node: "hermes"
+    workspace: "homelab-ops"
+    harness: "hermes-agent"
+    # Natively configured to route through FrugaLLM on Hermes (0.0.0.0:61721); no artificial proxy injection needed
+    env: {}
+    launch_command: "hermes-agent"
+    system_instructions: "You are a guest worker in this repository. Unless explicitly instructed to manage infrastructure, NEVER modify `*.plist` files, service definitions, `.env` files, or git configuration. Keep prototypes, test servers, and standalone scripts strictly self-contained within the designated sandbox folder."
+    rules:
+      - "You are a guest worker in this repository. Unless explicitly instructed to manage infrastructure, NEVER modify `*.plist` files, service definitions, `.env` files, or git configuration. Keep prototypes, test servers, and standalone scripts strictly self-contained within the designated sandbox folder."
+      - "When asked to create a script, test page, or server, create a NEW standalone file. NEVER modify existing project entrypoints (`app.py`, `main.py`, `index.js`) unless explicitly instructed to refactor them."
     protected_paths:
       - "com.user.antigravity-slack.plist"
       - "*.plist"
@@ -34,6 +57,10 @@ workers:
     # Natively configured to route through FrugaLLM on Hermes (0.0.0.0:61721); no artificial proxy injection needed
     env: {}
     launch_command: "hermes-agent"
+    system_instructions: "You are a guest worker in this repository. Unless explicitly instructed to manage infrastructure, NEVER modify `*.plist` files, service definitions, `.env` files, or git configuration. Keep prototypes, test servers, and standalone scripts strictly self-contained within the designated sandbox folder."
+    rules:
+      - "You are a guest worker in this repository. Unless explicitly instructed to manage infrastructure, NEVER modify `*.plist` files, service definitions, `.env` files, or git configuration. Keep prototypes, test servers, and standalone scripts strictly self-contained within the designated sandbox folder."
+      - "When asked to create a script, test page, or server, create a NEW standalone file. NEVER modify existing project entrypoints (`app.py`, `main.py`, `index.js`) unless explicitly instructed to refactor them."
     protected_paths:
       - "com.user.antigravity-slack.plist"
       - "*.plist"

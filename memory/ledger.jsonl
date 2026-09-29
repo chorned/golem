@@ -1,0 +1,20 @@
+{"ts": "2026-09-28T17:40:34.331834+00:00", "type": "task_dispatched", "task_id": "1790617234", "repo": "/Users/hermes/projects/AGY", "worker": "opencode-dev", "worktree": "wC", "branch": "task-1790617234-opencode-dev", "cleaned": false}
+{"ts": "2026-09-28T18:02:43.962972+00:00", "type": "task_dispatched", "task_id": "1790618563", "repo": "/Users/hermes/projects/AGY", "worker": "opencode-dev", "worktree": "wD", "branch": "task-1790618563-opencode-dev", "cleaned": false}
+{"ts": "2026-09-28T18:56:57.309895+00:00", "type": "task_dispatched", "task_id": "1790621817", "repo": "/Users/hermes/projects/AGY", "worker": "opencode-dev", "worktree": "wE", "branch": "task-1790621817-opencode-dev", "cleaned": false}
+{"ts": "2026-09-28T19:02:56.892769+00:00", "type": "pr_opened", "task_id": "1790621817", "repo": "/Users/hermes/projects/AGY", "worker": "opencode-dev", "pr_number": 428, "branch": "task-1790621817-opencode-dev", "worktree": "wE", "cleaned": false}
+{"ts": "2026-09-28T20:11:41.702429+00:00", "type": "task_dispatched", "task_id": "1790626301", "repo": "/Users/hermes/projects/sandbox/1790626263", "worker": "opencode-dev", "worktree": "w4", "branch": "sandbox-1790626301", "cleaned": false}
+{"ts": "2026-09-28T20:42:58.105791+00:00", "type": "task_dispatched", "task_id": "1790628177", "repo": "/Users/hermes/projects/sandbox/1790627874", "worker": "opencode-dev", "worktree": "w4", "branch": "sandbox-1790628177", "cleaned": false}
+{"ts": "2026-09-28T21:13:32.635364+00:00", "type": "task_dispatched", "task_id": "1790630012", "repo": "/Users/hermes/projects/sandbox/1790629988", "worker": "opencode-dev", "worktree": "w4", "branch": "sandbox-1790630012", "cleaned": false}
+{"ts": "2026-09-28T21:35:08.355942+00:00", "type": "task_dispatched", "task_id": "1790631307", "repo": "/Users/hermes/projects/sandbox/1790631287", "worker": "opencode-dev", "worktree": "w4", "branch": "sandbox-1790631307", "cleaned": false}
+{"ts": "2026-09-29T00:42:07.587864+00:00", "type": "learn_crystallized", "task_id": "learn-1790642527", "notes": "", "channel": "C_GENERAL", "thread_ts": "300.001"}
+{"ts": "2026-09-29T00:42:07.599955+00:00", "type": "learn_crystallized", "task_id": "learn-1790642527", "notes": "", "channel": "C_TEST", "thread_ts": "400.001"}
+{"ts": "2026-09-29T00:42:20.341968+00:00", "type": "learn_crystallized", "task_id": "learn-1790642540", "notes": "", "channel": "C_GENERAL", "thread_ts": "300.001"}
+{"ts": "2026-09-29T00:42:20.353374+00:00", "type": "learn_crystallized", "task_id": "learn-1790642540", "notes": "", "channel": "C_TEST", "thread_ts": "400.001"}
+{"ts": "2026-09-29T00:42:25.170837+00:00", "type": "learn_crystallized", "task_id": "learn-1790642545", "notes": "", "channel": "C_GENERAL", "thread_ts": "300.001"}
+{"ts": "2026-09-29T00:42:25.192217+00:00", "type": "learn_crystallized", "task_id": "learn-1790642545", "notes": "", "channel": "C_TEST", "thread_ts": "400.001"}
+{"ts": "2026-09-29T00:42:28.657145+00:00", "type": "learn_crystallized", "task_id": "learn-1790642548", "notes": "", "channel": "C_GENERAL", "thread_ts": "300.001"}
+{"ts": "2026-09-29T00:42:28.669187+00:00", "type": "learn_crystallized", "task_id": "learn-1790642548", "notes": "", "channel": "C_TEST", "thread_ts": "400.001"}
+{"ts": "2026-09-29T00:42:44.302571+00:00", "type": "learn_crystallized", "task_id": "learn-1790642564", "notes": "", "channel": "C_GENERAL", "thread_ts": "300.001"}
+{"ts": "2026-09-29T00:42:44.311414+00:00", "type": "learn_crystallized", "task_id": "learn-1790642564", "notes": "", "channel": "C_TEST", "thread_ts": "400.001"}
+{"ts": "2026-09-29T00:50:41.101258+00:00", "type": "learn_crystallized", "task_id": "learn-1790643041", "notes": "", "channel": "C_GENERAL", "thread_ts": "300.001"}
+{"ts": "2026-09-29T00:50:41.114493+00:00", "type": "learn_crystallized", "task_id": "learn-1790643041", "notes": "", "channel": "C_TEST", "thread_ts": "400.001"}

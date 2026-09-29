@@ -19,6 +19,8 @@ from bluebubbles_transport import (
     BlueBubblesTransport,
     chunk_text,
     MAX_IMESSAGE_CHUNK,
+    sanitize_for_imessage,
+    SLACK_EMOJI_MAP,
 )
 
 
@@ -58,6 +60,50 @@ class TestBlueBubblesTransportUnit(unittest.TestCase):
             # Check .conversations property shim
             res2 = await client.conversations.replies("iMessage;-;k.horned@gmail.com")
             self.assertEqual(len(res2["messages"]), 1)
+
+        asyncio.run(_test())
+
+    def test_sanitize_for_imessage_links(self):
+        # Redundant URL/label pair: <http://localhost:54028|http://localhost:54028> -> http://localhost:54028
+        raw = "Sandbox server listening at <http://localhost:54028|http://localhost:54028>"
+        sanitized = sanitize_for_imessage(raw)
+        self.assertEqual(sanitized, "Sandbox server listening at http://localhost:54028")
+
+        # Distinct label: <http://example.com|Example Page> -> Example Page (http://example.com)
+        raw2 = "Check out <http://example.com|Example Page> now."
+        sanitized2 = sanitize_for_imessage(raw2)
+        self.assertEqual(sanitized2, "Check out Example Page (http://example.com) now.")
+
+        # Bare link with brackets: <https://github.com/test/repo> -> https://github.com/test/repo
+        raw3 = "Repository: <https://github.com/test/repo>"
+        sanitized3 = sanitize_for_imessage(raw3)
+        self.assertEqual(sanitized3, "Repository: https://github.com/test/repo")
+
+    def test_sanitize_for_imessage_emojis(self):
+        raw = ":white_check_mark: Completed task :thumbsup: and verified :eyes: without :warning: or :x:"
+        sanitized = sanitize_for_imessage(raw)
+        self.assertEqual(sanitized, "✅ Completed task 👍 and verified 👀 without ⚠️ or ❌")
+
+    def test_sanitize_for_imessage_mentions(self):
+        raw = "Alert sent to <#C01234|general> by <@U98765|carl>"
+        sanitized = sanitize_for_imessage(raw)
+        self.assertEqual(sanitized, "Alert sent to #general by @carl")
+
+    def test_client_chat_post_message_sanitizes(self):
+        transport = MagicMock()
+        transport.send_imessage = AsyncMock(return_value={"status": 200})
+        client = BlueBubblesClient(transport, "iMessage;-;k.horned@gmail.com")
+
+        raw_text = ":white_check_mark: Server is up at <http://localhost:54028|http://localhost:54028>!"
+        async def _test():
+            res = await client.chat_postMessage(channel="iMessage;-;k.horned@gmail.com", text=raw_text)
+            self.assertTrue(res["ok"])
+            transport.send_imessage.assert_called_once()
+            called_text = transport.send_imessage.call_args[0][1]
+            self.assertIn("✅", called_text)
+            self.assertIn("http://localhost:54028", called_text)
+            self.assertNotIn(":white_check_mark:", called_text)
+            self.assertNotIn("<http://localhost:54028", called_text)
 
         asyncio.run(_test())
 
@@ -285,97 +331,102 @@ class TestBlueBubblesOutboundAndBridge(unittest.IsolatedAsyncioTestCase):
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)
 
-    async def test_imessage_preflight_alignment_and_go_approval(self):
-        """Verify incoming iMessage request triggers Pre-Flight Alignment, and 'go' triggers execution."""
+    async def test_imessage_dispatch_and_agent_start(self):
+        """Verify incoming iMessage request creates workspace, starts agy agent, and prompts."""
         chat_guid = "iMessage;-;k.horned@gmail.com"
         sender = "k.horned@gmail.com"
-        session_key = f"{chat_guid}:{chat_guid}"
+        client = self.transport.get_client(chat_guid)
+        app.sessions.clear()
 
-        app.pending_alignment.clear()
-        app.pending_alignment_by_msg_ts.clear()
-
-        # Step 1: User sends initial request over iMessage
-        event_init = {
+        event = {
             "channel": chat_guid,
             "user": sender,
-            "text": "Check disk space and Docker containers on hermes",
+            "text": "build a quick html preview prototype",
             "ts": "2000.001",
             "thread_ts": chat_guid,
             "is_imessage": True
         }
 
-        mock_plan = {
-            "intent_summary": "inspect storage and containers on hermes",
-            "target_node": "hermes",
-            "delegated_worker": "Hermes Butler",
-            "domain": "homelab infrastructure",
-            "dispatched_payload": "df -h / && docker ps",
-            "assumptions": "read-only audit of hermes host",
-            "choice": "shallow vs deep inspection",
-            "recommendation": "inspect root disk and containers",
-            "estimated_duration_sec": 15
-        }
+        mock_ws_json = json.dumps({
+            "result": {
+                "workspace": {"workspace_id": "ws-bb-1"},
+                "root_pane": {"pane_id": "p-bb-1"}
+            }
+        })
 
+        cli_calls = []
+
+        async def fake_run_cli(args):
+            cli_calls.append(args)
+            if args[0] == "workspace" and args[1] == "create":
+                return 0, mock_ws_json, ""
+            return 0, "", ""
+
+        with patch.object(app.herdr_client, "run_cli", side_effect=fake_run_cli), \
+             patch("asyncio.create_task"):
+
+            await app.process_user_prompt(event, client)
+
+            session_key = f"{chat_guid}:{chat_guid}"
+            self.assertIn(session_key, app.sessions)
+            session = app.sessions[session_key]
+            self.assertEqual(session.status, "working")
+            self.assertTrue(session.is_imessage)
+
+            # Verified agent prompt forwarded
+            prompt_cmds = [c for c in cli_calls if c[0] == "agent" and c[1] == "prompt"]
+            self.assertEqual(len(prompt_cmds), 1)
+            self.assertEqual(prompt_cmds[0][2], session.agent_name)
+            self.assertIn("build a quick html preview prototype", prompt_cmds[0][3])
+
+    async def test_imessage_approval_relay_with_thumbsup(self):
+        """Verify Carl texting 👍 relays 'y enter' to blocked agent PTY stdin."""
+        chat_guid = "iMessage;-;k.horned@gmail.com"
+        sender = "k.horned@gmail.com"
         client = self.transport.get_client(chat_guid)
+        session_key = f"{chat_guid}:{chat_guid}"
 
-        with patch.object(app.fleet, "execute_task", new_callable=AsyncMock) as mock_exec, \
-             patch("app.generate_preflight_plan", new_callable=AsyncMock, return_value=mock_plan), \
-             patch.object(self.transport, "send_imessage", new_callable=AsyncMock, return_value={"status": 200}) as mock_send:
+        app.sessions.clear()
+        session = app.GatewaySession(
+            session_key=session_key,
+            agent_name="fm-bb-test",
+            target_cwd="/tmp/sandbox",
+            channel=chat_guid,
+            thread_ts=chat_guid,
+            is_imessage=True
+        )
+        session.status = "blocked"
+        app.sessions[session_key] = session
 
-            await app.process_user_prompt(event_init, client)
-
-            # 1. Backstage task not executed yet
-            mock_exec.assert_not_called()
-
-            # 2. Alignment briefing sent over iMessage
-            mock_send.assert_called_once()
-            called_guid, called_msg = mock_send.call_args[0]
-            self.assertEqual(called_guid, chat_guid)
-            self.assertIn("On it, Carl.", called_msg)
-            self.assertIn("The best agent for this is *Hermes Butler*", called_msg)
-            self.assertIn("df -h / && docker ps", called_msg)
-            self.assertIn("Hit me with `go` (or 👍)", called_msg)
-
-            # 3. State latched
-            self.assertIn(session_key, app.pending_alignment)
-
-        # Step 2: User approves with 'go'
-        event_go = {
+        event_thumbsup = {
             "channel": chat_guid,
             "user": sender,
-            "text": "go",
+            "text": "👍",
             "ts": "2000.002",
             "thread_ts": chat_guid,
             "is_imessage": True
         }
 
-        mock_task_res = {
-            "task_id": "t_bb_go",
-            "exit_code": 0,
-            "stdout": "Filesystem Size Used Avail Use% Mounted on\n/dev/disk3s1 460G 20G 440G 5% /",
-            "stderr": "",
-            "output": "Filesystem Size Used Avail Use% Mounted on\n/dev/disk3s1 460G 20G 440G 5% /",
-            "blocked": False
-        }
+        cli_calls = []
 
-        with patch.object(app.fleet, "execute_task", new_callable=AsyncMock, return_value=mock_task_res) as mock_exec_go, \
-             patch("app.synthesize_with_agy", new_callable=AsyncMock, return_value="*Briefing:* Root disk is 5% used and Docker is healthy."), \
-             patch.object(self.transport, "send_imessage", new_callable=AsyncMock, return_value={"status": 200}) as mock_send_final:
+        async def fake_run_cli(args):
+            cli_calls.append(args)
+            return 0, "", ""
 
-            await app.process_user_prompt(event_go, client)
+        with patch.object(app.herdr_client, "run_cli", side_effect=fake_run_cli), \
+             patch.object(self.transport, "send_imessage", new_callable=AsyncMock, return_value={"status": 200}) as mock_send:
 
-            # 1. Plan popped
-            self.assertNotIn(session_key, app.pending_alignment)
+            await app.process_user_prompt(event_thumbsup, client)
 
-            # 2. Dispatched planned payload (NOT English text)
-            mock_exec_go.assert_called_once()
-            called_instruction = mock_exec_go.call_args[1].get("instruction") or mock_exec_go.call_args[0][1]
-            self.assertEqual(called_instruction, "df -h / && docker ps")
+            # Verified 'y enter' sent to agent
+            send_keys_cmds = [c for c in cli_calls if c[0] == "agent" and c[1] == "send-keys"]
+            self.assertEqual(len(send_keys_cmds), 1)
+            self.assertEqual(send_keys_cmds[0], ["agent", "send-keys", "fm-bb-test", "y", "enter"])
+            self.assertEqual(session.status, "working")
 
-            # 3. Final executive briefing sent to iMessage
-            mock_send_final.assert_called_once()
-            _, final_text = mock_send_final.call_args[0]
-            self.assertIn("Root disk is 5% used and Docker is healthy.", final_text)
+            mock_send.assert_called_once()
+            _, text = mock_send.call_args[0]
+            self.assertIn("Approval relayed", text)
 
     async def test_imessage_executive_command_bearings(self):
         """Verify '!bearings' command works directly over iMessage."""
@@ -394,201 +445,99 @@ class TestBlueBubblesOutboundAndBridge(unittest.IsolatedAsyncioTestCase):
         with patch("app.handle_bearings_request", new_callable=AsyncMock) as mock_bearings:
             await app.process_user_prompt(event, client)
             mock_bearings.assert_called_once()
-            called_kw = mock_bearings.call_args[1]
-            self.assertEqual(called_kw["channel"], chat_guid)
-            self.assertEqual(called_kw["client"], client)
+            called_args = mock_bearings.call_args[0]
+            self.assertEqual(called_args[0], chat_guid)
+            self.assertEqual(called_args[1], chat_guid)
 
-    async def test_imessage_tweak_alignment(self):
-        """Verify sending a tweak regenerates alignment plan and sends updated briefing."""
+    async def test_imessage_rejection_relay(self):
+        """Verify Carl texting 'abort' relays 'n enter' to blocked agent PTY stdin."""
         chat_guid = "iMessage;-;k.horned@gmail.com"
-        session_key = f"{chat_guid}:{chat_guid}"
+        sender = "k.horned@gmail.com"
         client = self.transport.get_client(chat_guid)
+        session_key = f"{chat_guid}:{chat_guid}"
 
-        mock_plan = {
-            "intent_summary": "audit root disk",
-            "target_node": "hermes",
-            "delegated_worker": "Hermes Butler",
-            "domain": "homelab infrastructure",
-            "dispatched_payload": "df -h /",
-            "assumptions": "read-only audit",
-            "choice": "root only vs all",
-            "recommendation": "check root",
-            "estimated_duration_sec": 15
-        }
-        app.pending_alignment[session_key] = {
-            "plan": mock_plan,
-            "target_info": {
-                "workspace_label": "homelab-ops",
-                "target_machine": "local",
-                "role": "Hermes Butler",
-                "pane_id": "w2:p1"
-            },
+        app.sessions.clear()
+        session = app.GatewaySession(
+            session_key=session_key,
+            agent_name="fm-bb-test2",
+            target_cwd="/tmp/sandbox",
+            channel=chat_guid,
+            thread_ts=chat_guid,
+            is_imessage=True
+        )
+        session.status = "blocked"
+        app.sessions[session_key] = session
+
+        event_abort = {
             "channel": chat_guid,
-            "thread_ts": chat_guid,
-            "alignment_msg_ts": "2200.002",
-            "original_prompt": "Check disk"
-        }
-
-        mock_updated_plan = {
-            "intent_summary": "audit root disk and ZFS pools",
-            "target_node": "hermes",
-            "delegated_worker": "Hermes Butler",
-            "domain": "homelab infrastructure",
-            "dispatched_payload": "df -h / && zpool list && zfs list",
-            "assumptions": "read-only audit",
-            "choice": "root only vs all",
-            "recommendation": "check root and ZFS",
-            "estimated_duration_sec": 15
-        }
-
-        event_tweak = {
-            "channel": chat_guid,
-            "user": "k.horned@gmail.com",
-            "text": "include ZFS as well",
-            "ts": "2200.003",
+            "user": sender,
+            "text": "abort",
+            "ts": "2000.003",
             "thread_ts": chat_guid,
             "is_imessage": True
         }
 
-        with patch.object(app.fleet, "execute_task", new_callable=AsyncMock) as mock_exec, \
-             patch("app.generate_preflight_plan", new_callable=AsyncMock, return_value=mock_updated_plan), \
+        cli_calls = []
+
+        async def fake_run_cli(args):
+            cli_calls.append(args)
+            return 0, "", ""
+
+        with patch.object(app.herdr_client, "run_cli", side_effect=fake_run_cli), \
              patch.object(self.transport, "send_imessage", new_callable=AsyncMock, return_value={"status": 200}) as mock_send:
 
-            await app.process_user_prompt(event_tweak, client)
+            await app.process_user_prompt(event_abort, client)
 
-            # Execution not run
-            mock_exec.assert_not_called()
+            # Verified 'n enter' sent to agent
+            send_keys_cmds = [c for c in cli_calls if c[0] == "agent" and c[1] == "send-keys"]
+            self.assertEqual(len(send_keys_cmds), 1)
+            self.assertEqual(send_keys_cmds[0], ["agent", "send-keys", "fm-bb-test2", "n", "enter"])
+            self.assertEqual(session.status, "idle")
 
-            # Updated plan stored
-            self.assertIn(session_key, app.pending_alignment)
-            self.assertEqual(app.pending_alignment[session_key]["plan"]["dispatched_payload"], "df -h / && zpool list && zfs list")
-
-            # Updated briefing sent
             mock_send.assert_called_once()
-            _, briefing_text = mock_send.call_args[0]
-            self.assertIn("df -h / && zpool list && zfs list", briefing_text)
+            _, text = mock_send.call_args[0]
+            self.assertIn("Cancellation relayed", text)
 
-    async def test_imessage_conversational_turn(self):
-        """Verify conversational question over iMessage returns direct answer without alignment card."""
+    async def test_imessage_status_inquiry(self):
+        """Verify status questions over iMessage query live pane scrollback."""
         chat_guid = "iMessage;-;k.horned@gmail.com"
+        sender = "k.horned@gmail.com"
         client = self.transport.get_client(chat_guid)
         session_key = f"{chat_guid}:{chat_guid}"
-        app.pending_alignment.clear()
 
-        event = {
+        app.sessions.clear()
+        session = app.GatewaySession(
+            session_key=session_key,
+            agent_name="fm-bb-active",
+            target_cwd="/tmp/sandbox",
+            channel=chat_guid,
+            thread_ts=chat_guid,
+            is_imessage=True
+        )
+        session.status = "working"
+        app.sessions[session_key] = session
+
+        event_status = {
             "channel": chat_guid,
-            "user": "k.horned@gmail.com",
-            "text": "Well it was working in the previous prompt right? What happened?",
-            "ts": "2300.001",
+            "user": sender,
+            "text": "what is it doing? is it stuck?",
+            "ts": "2000.004",
             "thread_ts": chat_guid,
             "is_imessage": True
         }
 
-        with patch.object(app.fleet, "execute_task", new_callable=AsyncMock) as mock_exec, \
+        mock_scrollback = "Compiling assets\nServing HTTP on http://127.0.0.1:8080\nReady for input"
+
+        with patch.object(app.herdr_client, "run_cli", new_callable=AsyncMock, return_value=(0, mock_scrollback, "")), \
              patch.object(self.transport, "send_imessage", new_callable=AsyncMock, return_value={"status": 200}) as mock_send:
 
-            await app.process_user_prompt(event, client)
-
-            mock_exec.assert_not_called()
-            self.assertNotIn(session_key, app.pending_alignment)
-            mock_send.assert_called_once()
-            called_guid, reply_text = mock_send.call_args[0]
-            self.assertEqual(called_guid, chat_guid)
-            self.assertNotIn("On it, Carl.", reply_text)
-            self.assertNotIn("Here is what I'm running:", reply_text)
-            self.assertTrue(len(reply_text) > 10)
-
-    async def test_imessage_first_person_alignment_on_hermes(self):
-        """Verify local tasks on Hermes over iMessage format first-person alignment card."""
-        chat_guid = "iMessage;-;k.horned@gmail.com"
-        client = self.transport.get_client(chat_guid)
-        session_key = f"{chat_guid}:{chat_guid}"
-        app.pending_alignment.clear()
-
-        event = {
-            "channel": chat_guid,
-            "user": "k.horned@gmail.com",
-            "text": "Run python test suite and generate coverage",
-            "ts": "2400.001",
-            "thread_ts": chat_guid,
-            "is_imessage": True
-        }
-
-        with patch.object(app.fleet, "execute_task", new_callable=AsyncMock) as mock_exec, \
-             patch.object(self.transport, "send_imessage", new_callable=AsyncMock, return_value={"status": 200}) as mock_send:
-
-            await app.process_user_prompt(event, client)
-
-            mock_exec.assert_not_called()
-            self.assertIn(session_key, app.pending_alignment)
-            mock_send.assert_called_once()
-            _, briefing = mock_send.call_args[0]
-            self.assertIn("On it, Carl.", briefing)
-            self.assertIn("I'll take care of this directly on *hermes* (`localhost`).", briefing)
-            self.assertIn("*Here is what I'm running:*", briefing)
-            self.assertNotIn("The best agent for this is", briefing)
-            self.assertIn("⤷ *_Recommendation (Default if you just say `go`):_*", briefing)
-            self.assertIn("Hit me with `go` (or 👍)", briefing)
-
-    async def test_imessage_approval_with_thumbsup_text(self):
-        """Verify Carl texting '👍' approves pending plan and dispatches task."""
-        chat_guid = "iMessage;-;k.horned@gmail.com"
-        client = self.transport.get_client(chat_guid)
-        session_key = f"{chat_guid}:{chat_guid}"
-
-        mock_plan = {
-            "intent_summary": "inspect git status",
-            "target_node": "hermes",
-            "delegated_worker": "Local AGY",
-            "domain": "local development",
-            "dispatched_payload": "git status -s",
-            "assumptions": "clean repo",
-            "choice": "quick vs full",
-            "recommendation": "quick status",
-            "estimated_duration_sec": 5,
-            "is_self": True
-        }
-        app.pending_alignment[session_key] = {
-            "plan": mock_plan,
-            "target_info": {"workspace_label": "fleet-control", "target_machine": "local", "role": "Chief of Staff"},
-            "channel": chat_guid,
-            "thread_ts": chat_guid,
-            "alignment_msg_ts": "2500.002",
-            "original_prompt": "check git"
-        }
-
-        event = {
-            "channel": chat_guid,
-            "user": "k.horned@gmail.com",
-            "text": "👍",
-            "ts": "2500.003",
-            "thread_ts": chat_guid,
-            "is_imessage": True
-        }
-
-        mock_task_res = {
-            "task_id": "t_bb_thumbsup",
-            "exit_code": 0,
-            "stdout": "Clean tree",
-            "stderr": "",
-            "output": "Clean tree",
-            "blocked": False
-        }
-
-        with patch.object(app.fleet, "execute_task", new_callable=AsyncMock, return_value=mock_task_res) as mock_exec, \
-             patch("app.synthesize_with_agy", new_callable=AsyncMock, return_value="*Briefing:* Repository is clean."), \
-             patch.object(self.transport, "send_imessage", new_callable=AsyncMock, return_value={"status": 200}) as mock_send:
-
-            await app.process_user_prompt(event, client)
-
-            self.assertNotIn(session_key, app.pending_alignment)
-            mock_exec.assert_called_once()
-            called_cmd = mock_exec.call_args[1].get("instruction") or mock_exec.call_args[0][1]
-            self.assertEqual(called_cmd, "git status -s")
+            await app.process_user_prompt(event_status, client)
 
             mock_send.assert_called_once()
-            _, briefing = mock_send.call_args[0]
-            self.assertIn("Repository is clean.", briefing)
+            _, text = mock_send.call_args[0]
+            self.assertIn("Status Update", text)
+            self.assertIn("http://127.0.0.1:8080", text)
+
 
     async def test_imessage_executive_command_learn(self):
         """Verify '!learn' command bypasses alignment gate over iMessage."""
@@ -607,8 +556,7 @@ class TestBlueBubblesOutboundAndBridge(unittest.IsolatedAsyncioTestCase):
         with patch("app.handle_learn_request", new_callable=AsyncMock) as mock_learn:
             await app.process_user_prompt(event, client)
             mock_learn.assert_called_once()
-            called_kw = mock_learn.call_args[1]
-            self.assertEqual(called_kw["channel"], chat_guid)
-            self.assertEqual(called_kw["user_notes"], "save node quirk")
-            self.assertEqual(called_kw["client"], client)
+            called_args = mock_learn.call_args[0]
+            self.assertEqual(called_args[0], chat_guid)
+            self.assertEqual(called_args[3], "save node quirk")
 

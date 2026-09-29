@@ -1,0 +1,493 @@
+#!/usr/bin/env python3
+"""
+tests/test_agent_loop.py
+Comprehensive unit tests for First Mate Agent-First Chief of Staff loop:
+- Turn 1: Plan Pitching without premature tool dispatch
+- Turn 2: Approval ("go" / 👍) triggering spawn_agent with git branch isolation
+- Turn 3: In-flight inspection ("what's the URL?") triggering read_agent
+- Turn 4: Undo/Rollback ("abort" / "undo") triggering stop_agent with rollback
+"""
+
+import os
+import sys
+import unittest
+from unittest.mock import patch, AsyncMock, MagicMock
+
+PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if PROJECT_DIR not in sys.path:
+    sys.path.insert(0, PROJECT_DIR)
+
+import agent_core
+from agent_core import ChiefOfStaff, build_system_prompt, format_for_slack
+from herdr_tools import SPAWNED_AGENTS
+
+
+class TestAgentLoop(unittest.IsolatedAsyncioTestCase):
+
+    def setUp(self):
+        SPAWNED_AGENTS.clear()
+        self.chief = ChiefOfStaff(api_key="mock_api_key", model="gemini-2.5-flash")
+
+    def tearDown(self):
+        SPAWNED_AGENTS.clear()
+
+    def test_build_system_prompt_fleet_topology_and_rules(self):
+        """Verify dynamic system prompt provides Chief of Staff identity, fleet topology, and zero-PR rules."""
+        prompt = build_system_prompt()
+        self.assertIn("Chief of Staff", prompt)
+        self.assertIn("hermes", prompt)
+        self.assertIn("desktop-pc", prompt)
+        self.assertIn("oci-machine", prompt)
+        self.assertIn("personal-laptop", prompt)
+        self.assertIn("ALWAYS PITCH THE PLAN FIRST", prompt)
+        self.assertIn("DISPATCH ON APPROVAL", prompt)
+        self.assertIn("IN-FLIGHT STATUS", prompt)
+        self.assertIn("UNDO & ROLLBACK", prompt)
+        self.assertIn("NO UNNECESSARY PRs", prompt)
+
+    def test_format_for_slack_converts_bold_outside_code(self):
+        """Verify double asterisks convert to single asterisks in Slack mrkdwn outside code blocks."""
+        input_text = "This is **bold** text and `**not bold**` in code block."
+        formatted = format_for_slack(input_text)
+        self.assertEqual(formatted, "This is *bold* text and `**not bold**` in code block.")
+
+    async def test_turn_1_plan_pitch_does_not_spawn_agent(self):
+        """Turn 1: Verify user task request returns a pitched plan asking for approval without calling spawn_agent."""
+        thread_history = []
+        user_msg = "Create a hello-world FastAPI service in a sandbox"
+
+        # Mock Gemini API returning plan pitch text (no function calls)
+        mock_api_response = {
+            "candidates": [{
+                "content": {
+                    "role": "model",
+                    "parts": [{
+                        "text": "I will dispatch OpenCode to `/Users/hermes/projects/sandbox/fastapi-demo` to build the service on an isolated branch. Ready when you are—say `go` or 👍 to run it."
+                    }]
+                }
+            }]
+        }
+
+        with patch("aiohttp.ClientSession.post") as mock_post, \
+             patch("agent_core.ChiefOfStaff.execute_tool_call", new_callable=AsyncMock) as mock_tool:
+
+            mock_resp = AsyncMock()
+            mock_resp.status = 200
+            mock_resp.json = AsyncMock(return_value=mock_api_response)
+            mock_post.return_value.__aenter__.return_value = mock_resp
+
+            reply, updated_history = await self.chief.process_turn(thread_history, user_msg)
+
+            # Verification:
+            # 1. Tool call was NOT executed
+            mock_tool.assert_not_called()
+            # 2. Plan was pitched
+            self.assertIn("OpenCode", reply)
+            self.assertIn("sandbox", reply)
+            self.assertIn("say `go` or 👍", reply)
+            # 3. Thread history recorded user and model turns
+            self.assertEqual(len(updated_history), 2)
+            self.assertEqual(updated_history[0]["role"], "user")
+            self.assertEqual(updated_history[1]["role"], "model")
+
+    async def test_turn_2_approval_spawns_agent_with_branch_isolation(self):
+        """Turn 2: Verify approval prompt triggers spawn_agent tool call and returns confirmation."""
+        thread_history = [
+            {"role": "user", "parts": [{"text": "Create a hello-world FastAPI service in a sandbox"}]},
+            {"role": "model", "parts": [{"text": "I will dispatch OpenCode to `/Users/hermes/projects/sandbox/fastapi-demo`. Ready when you are—say `go` or 👍 to run it."}]}
+        ]
+        user_msg = "go"
+
+        # Step 1: Gemini decides to call spawn_agent
+        api_step_1 = {
+            "candidates": [{
+                "content": {
+                    "role": "model",
+                    "parts": [{
+                        "functionCall": {
+                            "name": "spawn_agent",
+                            "args": {
+                                "node": "hermes",
+                                "cwd": "/Users/hermes/projects/sandbox/fastapi-demo",
+                                "worker": "opencode-dev",
+                                "instructions": "Build hello world FastAPI service",
+                                "isolate_branch": True
+                            }
+                        }
+                    }]
+                }
+            }]
+        }
+
+        # Step 2: Gemini generates final text based on tool result
+        api_step_2 = {
+            "candidates": [{
+                "content": {
+                    "role": "model",
+                    "parts": [{
+                        "text": "Dispatched OpenCode to `/Users/hermes/projects/sandbox/fastapi-demo` on branch `task-1234-opencode` (pane `w1:p1`). Monitoring execution."
+                    }]
+                }
+            }]
+        }
+
+        with patch("aiohttp.ClientSession.post") as mock_post, \
+             patch("agent_core.ChiefOfStaff.execute_tool_call", new_callable=AsyncMock) as mock_tool:
+
+            mock_tool.return_value = {
+                "pane_id": "w1:p1",
+                "node": "hermes",
+                "cwd": "/Users/hermes/projects/sandbox/fastapi-demo",
+                "branch": "task-1234-opencode"
+            }
+
+            mock_resp_1 = AsyncMock()
+            mock_resp_1.status = 200
+            mock_resp_1.json = AsyncMock(return_value=api_step_1)
+
+            mock_resp_2 = AsyncMock()
+            mock_resp_2.status = 200
+            mock_resp_2.json = AsyncMock(return_value=api_step_2)
+
+            mock_post.return_value.__aenter__.side_effect = [mock_resp_1, mock_resp_2]
+
+            reply, updated_history = await self.chief.process_turn(thread_history, user_msg)
+
+            # Verification:
+            # 1. spawn_agent was executed with expected args
+            mock_tool.assert_called_once_with(
+                "spawn_agent",
+                {
+                    "node": "hermes",
+                    "cwd": "/Users/hermes/projects/sandbox/fastapi-demo",
+                    "worker": "opencode-dev",
+                    "instructions": "Build hello world FastAPI service",
+                    "isolate_branch": True
+                }
+            )
+            # 2. Confirmation message returned
+            self.assertIn("Dispatched OpenCode", reply)
+            self.assertIn("task-1234-opencode", reply)
+            # 3. Thread history contains user, model (functionCall), function (functionResponse), model (text)
+            self.assertEqual(len(updated_history), 6)
+            self.assertEqual(updated_history[2]["role"], "user")
+            self.assertEqual(updated_history[3]["role"], "model")
+            self.assertEqual(updated_history[4]["role"], "function")
+            self.assertEqual(updated_history[5]["role"], "model")
+
+    async def test_turn_3_status_or_url_query_reads_agent_buffer(self):
+        """Turn 3: Verify follow-up 'what's the URL?' triggers read_agent and grounds reply."""
+        thread_history = [
+            {"role": "user", "parts": [{"text": "go"}]},
+            {"role": "model", "parts": [{"text": "Dispatched OpenCode to `/Users/hermes/projects/sandbox/fastapi-demo`."}]}
+        ]
+        user_msg = "what is the URL and is it running?"
+
+        api_step_1 = {
+            "candidates": [{
+                "content": {
+                    "role": "model",
+                    "parts": [{
+                        "functionCall": {
+                            "name": "read_agent",
+                            "args": {
+                                "pane_id": "w1:p1"
+                            }
+                        }
+                    }]
+                }
+            }]
+        }
+
+        api_step_2 = {
+            "candidates": [{
+                "content": {
+                    "role": "model",
+                    "parts": [{
+                        "text": "The service is actively running at `http://localhost:8000`. The server responded to health checks cleanly."
+                    }]
+                }
+            }]
+        }
+
+        with patch("aiohttp.ClientSession.post") as mock_post, \
+             patch("agent_core.ChiefOfStaff.execute_tool_call", new_callable=AsyncMock) as mock_tool:
+
+            mock_tool.return_value = "Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)\nHealthcheck: 200 OK"
+
+            mock_resp_1 = AsyncMock()
+            mock_resp_1.status = 200
+            mock_resp_1.json = AsyncMock(return_value=api_step_1)
+
+            mock_resp_2 = AsyncMock()
+            mock_resp_2.status = 200
+            mock_resp_2.json = AsyncMock(return_value=api_step_2)
+
+            mock_post.return_value.__aenter__.side_effect = [mock_resp_1, mock_resp_2]
+
+            reply, updated_history = await self.chief.process_turn(thread_history, user_msg)
+
+            # Verification:
+            mock_tool.assert_called_once_with("read_agent", {"pane_id": "w1:p1"})
+            self.assertIn("http://localhost:8000", reply)
+            self.assertEqual(len(updated_history), 6)
+
+    async def test_turn_4_undo_triggers_stop_agent_with_rollback(self):
+        """Turn 4: Verify 'undo' or 'abort' triggers stop_agent with rollback=True."""
+        thread_history = [
+            {"role": "user", "parts": [{"text": "what is the URL?"}]},
+            {"role": "model", "parts": [{"text": "The service is running at http://localhost:8000"}]}
+        ]
+        user_msg = "undo and scrap the changes"
+
+        api_step_1 = {
+            "candidates": [{
+                "content": {
+                    "role": "model",
+                    "parts": [{
+                        "functionCall": {
+                            "name": "stop_agent",
+                            "args": {
+                                "pane_id": "w1:p1",
+                                "rollback": True
+                            }
+                        }
+                    }]
+                }
+            }]
+        }
+
+        api_step_2 = {
+            "candidates": [{
+                "content": {
+                    "role": "model",
+                    "parts": [{
+                        "text": "Stopped agent pane `w1:p1`, wiped uncommitted changes, and deleted task branch. Baseline restored."
+                    }]
+                }
+            }]
+        }
+
+        with patch("aiohttp.ClientSession.post") as mock_post, \
+             patch("agent_core.ChiefOfStaff.execute_tool_call", new_callable=AsyncMock) as mock_tool:
+
+            mock_tool.return_value = "Stopped agent pane `w1:p1`. Rolled back working directory `/Users/hermes/projects/sandbox/fastapi-demo` to `main` and deleted branch `task-1234-opencode`."
+
+            mock_resp_1 = AsyncMock()
+            mock_resp_1.status = 200
+            mock_resp_1.json = AsyncMock(return_value=api_step_1)
+
+            mock_resp_2 = AsyncMock()
+            mock_resp_2.status = 200
+            mock_resp_2.json = AsyncMock(return_value=api_step_2)
+
+            mock_post.return_value.__aenter__.side_effect = [mock_resp_1, mock_resp_2]
+
+            reply, updated_history = await self.chief.process_turn(thread_history, user_msg)
+
+            # Verification:
+            mock_tool.assert_called_once_with("stop_agent", {"pane_id": "w1:p1", "rollback": True})
+            self.assertIn("Stopped agent pane", reply)
+            self.assertIn("deleted task branch", reply)
+
+    async def test_conversational_approval_lets_go_triggers_herdr_spawn(self):
+        """Verify conversational approval 'Let's go' triggers herdr_spawn without re-pitching the plan."""
+        thread_history = [
+            {"role": "user", "parts": [{"text": "Create a simple test page and host it in a python server"}]},
+            {"role": "model", "parts": [{"text": "I will dispatch OpenCode to `/Users/hermes/projects/sandbox/test-server` to create `index.html` and run `python3 -m http.server 54028 --directory /Users/hermes/projects/sandbox/test-server`. Ready when you are—say `go` or 👍 to run it."}]}
+        ]
+        user_msg = "Let's go"
+
+        api_step_1 = {
+            "candidates": [{
+                "content": {
+                    "role": "model",
+                    "parts": [{
+                        "functionCall": {
+                            "name": "herdr_spawn",
+                            "args": {
+                                "node": "hermes",
+                                "cwd": "/Users/hermes/projects/sandbox/test-server",
+                                "worker": "opencode-dev",
+                                "prompt": "Create index.html and run python3 -m http.server 54028 --directory /Users/hermes/projects/sandbox/test-server"
+                            }
+                        }
+                    }]
+                }
+            }]
+        }
+
+        api_step_2 = {
+            "candidates": [{
+                "content": {
+                    "role": "model",
+                    "parts": [{
+                        "text": "Dispatched OpenCode to `/Users/hermes/projects/sandbox/test-server` on branch `task-4567-opencode` (pane `w4:p2`). The server will be hosted on port 54028."
+                    }]
+                }
+            }]
+        }
+
+        with patch("aiohttp.ClientSession.post") as mock_post, \
+             patch("agent_core.ChiefOfStaff.execute_tool_call", new_callable=AsyncMock) as mock_tool:
+
+            mock_tool.return_value = {
+                "pane_id": "w4:p2",
+                "node": "hermes",
+                "cwd": "/Users/hermes/projects/sandbox/test-server",
+                "branch": "task-4567-opencode"
+            }
+
+            mock_resp_1 = AsyncMock()
+            mock_resp_1.status = 200
+            mock_resp_1.json = AsyncMock(return_value=api_step_1)
+
+            mock_resp_2 = AsyncMock()
+            mock_resp_2.status = 200
+            mock_resp_2.json = AsyncMock(return_value=api_step_2)
+
+            mock_post.return_value.__aenter__.side_effect = [mock_resp_1, mock_resp_2]
+
+            reply, updated_history = await self.chief.process_turn(thread_history, user_msg)
+
+            # Verified herdr_spawn executed
+            mock_tool.assert_called_once()
+            call_name, call_args = mock_tool.call_args[0]
+            self.assertEqual(call_name, "herdr_spawn")
+            self.assertEqual(call_args["cwd"], "/Users/hermes/projects/sandbox/test-server")
+            self.assertIn("Dispatched OpenCode", reply)
+            self.assertNotIn("Ready when you are", reply)
+
+    async def test_tool_driven_inspection_url_returns_live_url_sentence_1(self):
+        """Verify 'Can you give me the URL?' calls inspection tools and returns the live URL in sentence 1."""
+        thread_history = [
+            {"role": "user", "parts": [{"text": "Let's go"}]},
+            {"role": "model", "parts": [{"text": "Dispatched OpenCode to `/Users/hermes/projects/sandbox/test-server`."}]}
+        ]
+        user_msg = "Can you give me the URL?"
+
+        # Tool call 1: run_command to check listening ports
+        api_step_1 = {
+            "candidates": [{
+                "content": {
+                    "role": "model",
+                    "parts": [{
+                        "functionCall": {
+                            "name": "run_command",
+                            "args": {
+                                "cmd": "lsof -iTCP -sTCP:LISTEN -n -P",
+                                "cwd": "/Users/hermes/projects/sandbox/test-server"
+                            }
+                        }
+                    }]
+                }
+            }]
+        }
+
+        # Response 2: Direct answer with URL in sentence 1
+        api_step_2 = {
+            "candidates": [{
+                "content": {
+                    "role": "model",
+                    "parts": [{
+                        "text": "The test server is live at http://localhost:54028. OpenCode successfully created index.html and started the background server."
+                    }]
+                }
+            }]
+        }
+
+        with patch("aiohttp.ClientSession.post") as mock_post, \
+             patch("agent_core.ChiefOfStaff.execute_tool_call", new_callable=AsyncMock) as mock_tool:
+
+            mock_tool.return_value = "Python 12345 hermes 3u IPv4 0x123 0t0 TCP *:54028 (LISTEN)"
+
+            mock_resp_1 = AsyncMock()
+            mock_resp_1.status = 200
+            mock_resp_1.json = AsyncMock(return_value=api_step_1)
+
+            mock_resp_2 = AsyncMock()
+            mock_resp_2.status = 200
+            mock_resp_2.json = AsyncMock(return_value=api_step_2)
+
+            mock_post.return_value.__aenter__.side_effect = [mock_resp_1, mock_resp_2]
+
+            reply, updated_history = await self.chief.process_turn(thread_history, user_msg)
+
+            # Verification:
+            mock_tool.assert_called_once_with(
+                "run_command",
+                {
+                    "cmd": "lsof -iTCP -sTCP:LISTEN -n -P",
+                    "cwd": "/Users/hermes/projects/sandbox/test-server"
+                }
+            )
+            # URL is returned directly in sentence 1
+            first_sentence = reply.split(".")[0]
+            self.assertIn("http://localhost:54028", first_sentence)
+            self.assertNotIn("I'll retrieve that for you now", reply)
+
+    async def test_roleplay_trap_intercepts_empty_promises(self):
+        """Verify roleplay trap intercepts 'I'll retrieve that for you now', runs tools, and demands facts."""
+        SPAWNED_AGENTS["w1:p1"] = {
+            "pane_id": "w1:p1",
+            "node": "hermes",
+            "cwd": "/Users/hermes/projects/sandbox/spike-1",
+            "branch": "task-1",
+            "worker": "opencode-dev"
+        }
+
+        thread_history = []
+        user_msg = "What is the URL?"
+
+        # Step 1: Model attempts to reply with empty promise roleplay text
+        api_step_1 = {
+            "candidates": [{
+                "content": {
+                    "role": "model",
+                    "parts": [{
+                        "text": "I'll retrieve that for you now. Let me check the running ports."
+                    }]
+                }
+            }]
+        }
+
+        # Step 2: After interception injected real inspection data, model outputs factual answer
+        api_step_2 = {
+            "candidates": [{
+                "content": {
+                    "role": "model",
+                    "parts": [{
+                        "text": "The server is active at http://localhost:8080."
+                    }]
+                }
+            }]
+        }
+
+        with patch("aiohttp.ClientSession.post") as mock_post, \
+             patch("agent_core.ChiefOfStaff.execute_tool_call", new_callable=AsyncMock) as mock_tool:
+
+            mock_tool.side_effect = [
+                "Serving HTTP on 0.0.0.0 port 8080 (http://0.0.0.0:8080/) ...", # herdr_read
+                "Python 1111 hermes 4u TCP *:8080 (LISTEN)" # run_command
+            ]
+
+            mock_resp_1 = AsyncMock()
+            mock_resp_1.status = 200
+            mock_resp_1.json = AsyncMock(return_value=api_step_1)
+
+            mock_resp_2 = AsyncMock()
+            mock_resp_2.status = 200
+            mock_resp_2.json = AsyncMock(return_value=api_step_2)
+
+            mock_post.return_value.__aenter__.side_effect = [mock_resp_1, mock_resp_2]
+
+            reply, updated_history = await self.chief.process_turn(thread_history, user_msg)
+
+            # Verification: Both herdr_read and run_command were called
+            self.assertEqual(mock_tool.call_count, 2)
+            self.assertIn("http://localhost:8080", reply)
+            self.assertNotIn("I'll retrieve that for you now", reply)
+
+
+if __name__ == "__main__":
+    unittest.main()

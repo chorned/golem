@@ -31,6 +31,9 @@ class TestNoMistakesGate(unittest.IsolatedAsyncioTestCase):
             github_manager=self.gh,
             default_repo_path="/tmp/mock_repo"
         )
+        self.patch_log_event = patch("memory_manager.MemoryManager.log_event")
+        self.mock_log_event = self.patch_log_event.start()
+        self.addCleanup(self.patch_log_event.stop)
 
     def test_parse_no_mistakes_toon_passed(self):
         """Verify parsing TOON report indicating clean pass."""
