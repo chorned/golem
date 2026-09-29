@@ -36,6 +36,14 @@ from herdr_tools import (
 )
 from supervisor import AgentSupervisor, cleanup_rogue_servers, summarize_terminal_activity
 from memory_manager import MemoryManager
+from telemetry_observer import (
+    SessionTelemetryObserver,
+    extract_listening_ports,
+    resolve_machine_label,
+    format_runner_label,
+    format_terminal_tail,
+    build_status_card_blocks
+)
 
 # ------------------------------------------------------------------------------
 # Logging & Environment Setup
@@ -114,6 +122,7 @@ class GatewaySession:
         self.last_blocked_snapshot: Optional[str] = None
         self.approval_msg_ts: Optional[str] = None
         self.monitor_task: Optional[asyncio.Task] = None
+        self.telemetry_observer: Optional[SessionTelemetryObserver] = None
         self.created_at = time.time()
 
     @property
@@ -123,6 +132,13 @@ class GatewaySession:
     @state.setter
     def state(self, val: str) -> None:
         self.status = val
+
+    def stop_observer(self) -> None:
+        """Cancel and clean up associated telemetry observer loop."""
+        if self.telemetry_observer:
+            self.telemetry_observer.stop_event.set()
+            if getattr(self.telemetry_observer, "task", None) and not self.telemetry_observer.task.done():
+                self.telemetry_observer.task.cancel()
 
 
 # Active session registry
@@ -636,6 +652,8 @@ async def monitor_agent_lifecycle(
         await asyncio.sleep(1.5)
 
         if session.status == "failed":
+            if session.telemetry_observer:
+                await session.telemetry_observer.stop()
             break
 
         # Global Lifecycle Watchdog: strict 30s timeout while booting/starting
@@ -643,10 +661,12 @@ async def monitor_agent_lifecycle(
             if time.time() - boot_start_time > 30.0:
                 logger.error(f"Agent {agent_name} lifecycle timeout: stuck in {session.status} for >30s.")
                 session.status = "failed"
+                timeout_msg = f":x: *Agent (`{agent_name}`) timed out during initialization (>30s).* Session aborted."
+                if session.telemetry_observer:
+                    await session.telemetry_observer.settle_failed(error_detail=timeout_msg)
                 if trigger_ts and not session.is_imessage:
                     await swap_reacji(client, session.channel, trigger_ts, "gear", "x")
                     await swap_reacji(client, session.channel, trigger_ts, "eyes", "x")
-                timeout_msg = f":x: *Agent (`{agent_name}`) timed out during initialization (>30s).* Session aborted."
                 if session.is_imessage:
                     await client.chat_postMessage(channel=session.channel, text=normalize_for_bluebubbles(timeout_msg))
                 else:
@@ -796,6 +816,9 @@ async def post_completion_briefing(session: GatewaySession, client: Any, termina
     """Post final completion output to chat, filtering out splash banners and highlighting artifacts."""
     sanitized = sanitize_terminal_output(terminal_output)
     artifacts = extract_operational_artifacts(terminal_output)
+
+    if session.telemetry_observer:
+        await session.telemetry_observer.settle_complete(artifacts=artifacts, terminal_output=terminal_output)
 
     url_banner = f"\n*Live Endpoint:* {artifacts['urls'][0]}\n" if artifacts["urls"] else ""
     files_banner = f"\n*Files Created:* {', '.join(artifacts['files'])}\n" if artifacts["files"] else ""
@@ -1003,10 +1026,15 @@ async def process_user_prompt(event: Dict[str, Any], client: Any) -> None:
         ])
         sanitized = sanitize_terminal_output(read_out)
         artifacts = extract_operational_artifacts(read_out)
+        ports = extract_listening_ports(read_out)
+
+        urls = list(artifacts.get("urls", []))
+        if not urls and ports:
+            urls.append(f"http://localhost:{ports[0]}")
+
+        url_line = f"Live Endpoint: {urls[0]}\n" if urls else ""
         clean_lines = [l for l in sanitized.splitlines() if l.strip()][-6:]
         summary = "\n".join(clean_lines) or f"Agent `{session.agent_name}` is currently {session.status}."
-
-        url_line = f"Live Endpoint: {artifacts['urls'][0]}\n" if artifacts["urls"] else ""
         msg = f"*Status Update (`{session.agent_name}`)*\n{url_line}```{summary}```"
 
         if is_imessage:
@@ -1039,6 +1067,17 @@ async def process_user_prompt(event: Dict[str, Any], client: Any) -> None:
 
     if not is_imessage:
         await swap_reacji(client, channel, ts, "eyes", "gear")
+
+    # Start living status card & out-of-band PTY telemetry observer if not active
+    if client and (not session.telemetry_observer or session.telemetry_observer.stop_event.is_set()):
+        session.telemetry_observer = SessionTelemetryObserver(
+            session=session,
+            client=client,
+            herdr_client=herdr_client,
+            poll_interval=1.0,
+            min_update_interval=1.5
+        )
+        session.telemetry_observer.start()
 
     # If it is a follow-up prompt on an existing active session, submit via agent prompt
     if not is_new_session:
