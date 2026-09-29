@@ -39,9 +39,17 @@ from memory_manager import MemoryManager
 from telemetry_observer import (
     SessionTelemetryObserver,
     extract_listening_ports,
+    resolve_machine_name,
     resolve_machine_label,
     format_runner_label,
     format_terminal_tail,
+    format_startup_message,
+    format_approval_blocks,
+    format_completion_message,
+    format_failure_message,
+    extract_pending_command,
+    is_plumbing_command,
+    sanitize_scrollback,
     build_status_card_blocks
 )
 
@@ -588,7 +596,7 @@ async def ensure_session_agent(
             if trigger_ts and not is_imessage:
                 await swap_reacji(client, channel, trigger_ts, "gear", "x")
                 await swap_reacji(client, channel, trigger_ts, "eyes", "x")
-            err_msg = f":x: *Failed to spawn Antigravity agent (`{agent_name}`)*:\n```{err_detail}```"
+            err_msg = f":x: *Hit an issue running the server: Failed to spawn Antigravity agent (`{agent_name}`)*:\n```{err_detail}```"
             if is_imessage:
                 await client.chat_postMessage(channel=channel, text=normalize_for_bluebubbles(err_msg))
             else:
@@ -608,7 +616,7 @@ async def ensure_session_agent(
             if trigger_ts and not is_imessage:
                 await swap_reacji(client, channel, trigger_ts, "gear", "x")
                 await swap_reacji(client, channel, trigger_ts, "eyes", "x")
-            timeout_msg = f":x: *Failed to start Antigravity agent (`{agent_name}`)*:\n```{timeout_detail}```"
+            timeout_msg = f":x: *Hit an issue running the server: Failed to start Antigravity agent (`{agent_name}`)*:\n```{timeout_detail}```"
             if is_imessage:
                 await client.chat_postMessage(channel=channel, text=normalize_for_bluebubbles(timeout_msg))
             else:
@@ -661,7 +669,7 @@ async def monitor_agent_lifecycle(
             if time.time() - boot_start_time > 30.0:
                 logger.error(f"Agent {agent_name} lifecycle timeout: stuck in {session.status} for >30s.")
                 session.status = "failed"
-                timeout_msg = f":x: *Agent (`{agent_name}`) timed out during initialization (>30s).* Session aborted."
+                timeout_msg = f":x: *Hit an issue running the server: Agent (`{agent_name}`) timed out during initialization (>30s).* Session aborted."
                 if session.telemetry_observer:
                     await session.telemetry_observer.settle_failed(error_detail=timeout_msg)
                 if trigger_ts and not session.is_imessage:
@@ -761,15 +769,17 @@ async def monitor_agent_lifecycle(
 
 
 async def post_approval_card(session: GatewaySession, client: Any, terminal_snippet: str):
-    """Render interactive approval card to Slack or BlueBubbles."""
-    clean_snippet = terminal_snippet.strip() or "(Agent awaiting confirmation)"
-    clean_lines = [l.rstrip() for l in clean_snippet.splitlines()][-10:]
-    formatted_snippet = "\n".join(clean_lines)
+    """Render interactive approval card to Slack or BlueBubbles with conversational framing."""
+    cmd = extract_pending_command(terminal_snippet)
+    runner = "OpenCode" if (
+        re.search(r"\bopencode\b", session.agent_name, re.IGNORECASE)
+        or (session.telemetry_observer and "opencode" in getattr(session.telemetry_observer, "last_runner_label", "").lower())
+        or re.search(r"\bopencode\b", session.last_prompt, re.IGNORECASE)
+    ) else "Antigravity"
 
     if session.is_imessage:
         msg = (
-            f"⚠️ *Antigravity Action Requires Approval*\n\n"
-            f"```{formatted_snippet}```\n\n"
+            f"*{runner} wants to run `{cmd}`. Good to go?*\n\n"
             f"Reply 'approve' (or 👍) to execute, or 'abort' to cancel."
         )
         await client.chat_postMessage(
@@ -777,35 +787,11 @@ async def post_approval_card(session: GatewaySession, client: Any, terminal_snip
             text=normalize_for_bluebubbles(msg)
         )
     else:
-        blocks = [
-            {
-                "type": "section",
-                "text": {
-                    "type": "mrkdwn",
-                    "text": "⚠️ *Antigravity Action Requires Approval*"
-                }
-            },
-            {
-                "type": "section",
-                "text": {
-                    "type": "mrkdwn",
-                    "text": f"```{formatted_snippet}```"
-                }
-            },
-            {
-                "type": "context",
-                "elements": [
-                    {
-                        "type": "mrkdwn",
-                        "text": "Reply with *approve* (or 👍) to execute, or *abort* to cancel."
-                    }
-                ]
-            }
-        ]
+        text_content, blocks = format_approval_blocks(runner, cmd, session.session_key)
         resp = await client.chat_postMessage(
             channel=session.channel,
             thread_ts=session.thread_ts,
-            text=f"⚠️ Approval required for `{session.agent_name}`: reply approve or abort.",
+            text=f"{runner} wants to run `{cmd}`. Good to go? Approval required: reply approve or abort.",
             blocks=blocks
         )
         if isinstance(resp, dict):
@@ -813,28 +799,42 @@ async def post_approval_card(session: GatewaySession, client: Any, terminal_snip
 
 
 async def post_completion_briefing(session: GatewaySession, client: Any, terminal_output: str):
-    """Post final completion output to chat, filtering out splash banners and highlighting artifacts."""
+    """Post final completion output to chat in natural Chief of Staff voice."""
     sanitized = sanitize_terminal_output(terminal_output)
     artifacts = extract_operational_artifacts(terminal_output)
+    ports = extract_listening_ports(terminal_output)
+
+    urls = list(artifacts.get("urls", []))
+    if not urls and ports:
+        urls.append(f"http://localhost:{ports[0]}")
+
+    clean_urls = []
+    for u in urls:
+        clean_u = re.sub(r"[)/]+$", "", u)
+        if clean_u not in clean_urls:
+            clean_urls.append(clean_u)
+    urls = clean_urls
+
+    files = artifacts.get("files", [])
+    machine = resolve_machine_name(getattr(session, "target_machine", None))
 
     if session.telemetry_observer:
-        await session.telemetry_observer.settle_complete(artifacts=artifacts, terminal_output=terminal_output)
+        await session.telemetry_observer.settle_complete(artifacts={"urls": urls, "files": files}, terminal_output=terminal_output)
 
-    url_banner = f"\n*Live Endpoint:* {artifacts['urls'][0]}\n" if artifacts["urls"] else ""
-    files_banner = f"\n*Files Created:* {', '.join(artifacts['files'])}\n" if artifacts["files"] else ""
+    conversational_lead = format_completion_message(machine=machine, urls=urls, files=files)
+    endpoint_banner = f"*Live Endpoint:* {urls[0]}\n" if urls else ""
+    files_banner = f"*Files Created:* {', '.join(files)}\n" if files else ""
 
     clean_lines = [l for l in sanitized.splitlines() if l.strip()][-10:]
-    summary = "\n".join(clean_lines) if clean_lines else "Task completed successfully."
+    summary = "\n".join(clean_lines) if clean_lines else ""
+    summary_block = f"\n```{summary}```" if summary and summary != "Task completed successfully." else ""
 
-    msg = (
-        f"*Task Completed via Herdr (`{session.agent_name}`)*{url_banner}{files_banner}\n\n"
-        f"```{summary}```"
-    )
+    msg = f"{conversational_lead}\n\n*Task Completed via Herdr (`{session.agent_name}`)*\n{endpoint_banner}{files_banner}{summary_block}".strip()
 
     if session.is_imessage:
         await client.chat_postMessage(
             channel=session.channel,
-            text=normalize_for_bluebubbles(msg)
+            text=normalize_for_bluebubbles(conversational_lead)
         )
     else:
         await client.chat_postMessage(
@@ -1149,6 +1149,64 @@ async def handle_reaction_added(event: Dict[str, Any], client: AsyncWebClient):
         await herdr_client.run_cli(["agent", "send-keys", matched_session.agent_name, "n", "enter"])
         matched_session.status = "idle"
         await add_reacji(client, channel, item_ts, "x")
+
+
+@app.action("approve_action")
+async def handle_button_approve(ack, body, client):
+    """Handle interactive Block Kit Approve button click."""
+    await ack()
+    channel = body.get("channel", {}).get("id")
+    msg = body.get("message", {})
+    message_ts = msg.get("ts")
+    thread_ts = msg.get("thread_ts") or message_ts
+    actions = body.get("actions", [])
+    session_key = actions[0].get("value") if actions else f"{channel}:{thread_ts}"
+
+    matched_session = sessions.get(session_key)
+    if not matched_session:
+        for s in sessions.values():
+            if s.channel == channel and (s.approval_msg_ts == message_ts or s.thread_ts == thread_ts):
+                matched_session = s
+                break
+
+    if matched_session and matched_session.status == "blocked":
+        logger.info(f"Relaying button approval to agent {matched_session.agent_name}...")
+        await herdr_client.run_cli(["agent", "send-keys", matched_session.agent_name, "y", "enter"])
+        matched_session.status = "working"
+        await client.chat_postMessage(
+            channel=channel,
+            thread_ts=thread_ts,
+            text="*Approved 👍. Continuing execution...*"
+        )
+
+
+@app.action("reject_action")
+async def handle_button_reject(ack, body, client):
+    """Handle interactive Block Kit Reject button click."""
+    await ack()
+    channel = body.get("channel", {}).get("id")
+    msg = body.get("message", {})
+    message_ts = msg.get("ts")
+    thread_ts = msg.get("thread_ts") or message_ts
+    actions = body.get("actions", [])
+    session_key = actions[0].get("value") if actions else f"{channel}:{thread_ts}"
+
+    matched_session = sessions.get(session_key)
+    if not matched_session:
+        for s in sessions.values():
+            if s.channel == channel and (s.approval_msg_ts == message_ts or s.thread_ts == thread_ts):
+                matched_session = s
+                break
+
+    if matched_session and matched_session.status == "blocked":
+        logger.info(f"Relaying button rejection to agent {matched_session.agent_name}...")
+        await herdr_client.run_cli(["agent", "send-keys", matched_session.agent_name, "n", "enter"])
+        matched_session.status = "idle"
+        await client.chat_postMessage(
+            channel=channel,
+            thread_ts=thread_ts,
+            text="*Cancelled ❌. Operation aborted.*"
+        )
 
 
 # ------------------------------------------------------------------------------
