@@ -124,8 +124,7 @@ class TestThinIngressGateway(unittest.IsolatedAsyncioTestCase):
         with patch.object(app.herdr_client, "run_cli", new_callable=AsyncMock) as mock_cli:
             mock_cli.side_effect = [
                 (0, mock_ws_output, ""),  # workspace create
-                (0, "started", ""),       # agent start --kind agy
-                (0, "prompted", "")       # agent prompt
+                (0, "started", ""),       # agent start --kind agy --pane w9:p1 -- --prompt-interactive <prompt>
             ]
 
             await process_user_prompt(event, client)
@@ -133,16 +132,45 @@ class TestThinIngressGateway(unittest.IsolatedAsyncioTestCase):
             # Verification:
             # 1. Herdr workspace create was called
             self.assertEqual(mock_cli.call_args_list[0][0][0][:2], ["workspace", "create"])
-            # 2. Antigravity CLI started in the pane
+            # 2. Antigravity CLI started directly with prompt in startup arguments (no keystroke race)
             self.assertEqual(mock_cli.call_args_list[1][0][0][:3], ["agent", "start", "fm-100001"])
-            self.assertEqual(mock_cli.call_args_list[1][0][0][3:], ["--kind", "agy", "--pane", "w9:p1"])
-            # 3. User prompt submitted
-            self.assertEqual(mock_cli.call_args_list[2][0][0][:3], ["agent", "prompt", "fm-100001"])
+            self.assertEqual(mock_cli.call_args_list[1][0][0][3:7], ["--kind", "agy", "--pane", "w9:p1"])
+            self.assertEqual(mock_cli.call_args_list[1][0][0][7], "--")
+            self.assertIn("--prompt-interactive", mock_cli.call_args_list[1][0][0])
 
             # Session registered
             session_key = "C12345:100.001"
             self.assertIn(session_key, sessions)
-            self.assertEqual(sessions[session_key].status, "working")
+            self.assertEqual(sessions[session_key].status, "starting")
+
+    async def test_followup_prompt_uses_agent_prompt(self):
+        """Verify subsequent prompts in an existing session use herdr agent prompt."""
+        client = AsyncMock()
+        client.reactions_add = AsyncMock()
+        session_key = "C12345:100.001"
+        session = GatewaySession(
+            session_key=session_key,
+            agent_name="fm-100001",
+            target_cwd="/Users/hermes/projects/sandbox/100001",
+            channel="C12345",
+            thread_ts="100.001"
+        )
+        sessions[session_key] = session
+
+        event = {
+            "channel": "C12345",
+            "ts": "100.002",
+            "thread_ts": "100.001",
+            "text": "add a reset button to the counter",
+            "is_imessage": False
+        }
+
+        with patch.object(app.herdr_client, "run_cli", new_callable=AsyncMock) as mock_cli:
+            mock_cli.return_value = (0, "prompted", "")
+            await process_user_prompt(event, client)
+
+            self.assertEqual(mock_cli.call_args_list[0][0][0][:3], ["agent", "prompt", "fm-100001"])
+            self.assertEqual(session.status, "working")
 
     async def test_interactive_approval_relay_sends_y_enter_to_herdr_pane(self):
         """Verify user approving a blocked agent relays 'y enter' directly to Herdr pane stdin."""
@@ -272,8 +300,9 @@ class TestThinIngressGateway(unittest.IsolatedAsyncioTestCase):
             await process_user_prompt(event, client)
 
             mock_cli.assert_called_once_with([
-                "agent", "read", "fm-test-agent", "--lines", "20", "--source", "recent-unwrapped"
+                "agent", "read", "fm-test-agent", "--lines", "30", "--source", "recent-unwrapped"
             ])
+
             client.chat_postMessage.assert_called_once()
             reply = client.chat_postMessage.call_args[1]["text"]
             self.assertIn("http://127.0.0.1:51723", reply)

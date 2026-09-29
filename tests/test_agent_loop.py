@@ -10,6 +10,8 @@ Comprehensive unit tests for First Mate Agent-First Chief of Staff loop:
 
 import os
 import sys
+import json
+import asyncio
 import unittest
 from unittest.mock import patch, AsyncMock, MagicMock
 
@@ -17,9 +19,11 @@ PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_DIR not in sys.path:
     sys.path.insert(0, PROJECT_DIR)
 
+import app
 import agent_core
 from agent_core import ChiefOfStaff, build_system_prompt, format_for_slack
 from herdr_tools import SPAWNED_AGENTS
+
 
 
 class TestAgentLoop(unittest.IsolatedAsyncioTestCase):
@@ -489,5 +493,155 @@ class TestAgentLoop(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("I'll retrieve that for you now", reply)
 
 
+class TestIngressLifecycleStateMachine(unittest.IsolatedAsyncioTestCase):
+    """
+    Unit tests for the robust ingress lifecycle state machine:
+    - Boot Splash Guard: Never declares 'done' when agent is idle at the startup splash banner
+    - Full execution cycle: WORKING -> BLOCKED -> WORKING -> DONE with clean output extraction
+    """
+
+    def setUp(self):
+        app.sessions.clear()
+        app.agent_name_to_session.clear()
+
+    async def test_boot_splash_rendering_does_not_post_task_completed(self):
+        """Simulate CLI boot splash rendering without execution -> assert relay DOES NOT post 'Task Completed'."""
+        client = AsyncMock()
+        client.chat_postMessage = AsyncMock()
+        session = app.GatewaySession(
+            session_key="C123:T100",
+            agent_name="fm-test-boot",
+            target_cwd="/Users/hermes/projects/sandbox/fm-test-boot",
+            channel="C123",
+            thread_ts="T100"
+        )
+        app.sessions[session.session_key] = session
+
+        splash_screen = (
+            "hermes@hermes fm-test-boot % agy\n"
+            "^[_Gi=31;OK^[\\^[[?62;22c\n\n"
+            "      ▄▀▀▄        Antigravity CLI 1.2.12\n"
+            "     ▀▀▀▀▀▀       k.horned@gmail.com (Google AI Ultra)\n"
+            "    ▀▀▀▀▀▀▀▀      Gemini 3.8 Flash (High)\n"
+            "   ▄▀▀    ▀▀▄     ~/projects/sandbox/fm-test-boot\n"
+            "  ▄▀▀      ▀▀▄\n\n"
+            "────────────────────────────────────────────────────────────────────────────────\n"
+            ">\n"
+            "────────────────────────────────────────────────────────────────────────────────\n"
+            "? for shortcuts                                          Gemini 3.8 Flash · high\n"
+        )
+
+        async def mock_run_cli(args, timeout=5.0):
+            if args[0] == "agent" and args[1] == "get":
+                return 0, json.dumps({"result": {"agent": {"agent_status": "idle"}}}), ""
+            elif args[0] == "agent" and args[1] == "read":
+                return 0, splash_screen, ""
+            return 0, "", ""
+
+        with patch.object(app.herdr_client, "run_cli", side_effect=mock_run_cli):
+            task = asyncio.create_task(app.monitor_agent_lifecycle(session, client))
+            await asyncio.sleep(3.5)
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+        # Verification:
+        # 1. State invariant preserved: session NEVER transitioned to 'done'
+        self.assertNotEqual(session.status, "done")
+        self.assertEqual(session.status, "booting")
+        self.assertFalse(session.has_worked)
+        # 2. No premature completion message was posted to Slack/iMessage
+        client.chat_postMessage.assert_not_called()
+
+    async def test_executing_commands_transitions_working_blocked_working_done_with_clean_output(self):
+        """Simulate CLI executing commands (WORKING -> BLOCKED -> WORKING -> DONE) -> assert clean output extraction."""
+        client = AsyncMock()
+        client.chat_postMessage = AsyncMock(return_value={"ts": "msg-123"})
+        client.reactions_add = AsyncMock()
+        client.reactions_remove = AsyncMock()
+
+        session = app.GatewaySession(
+            session_key="C123:T200",
+            agent_name="fm-test-exec",
+            target_cwd="/Users/hermes/projects/sandbox/fm-test-exec",
+            channel="C123",
+            thread_ts="T200"
+        )
+        app.sessions[session.session_key] = session
+
+        tick = 0
+
+        output_working = "▸ Thought for 2s\n  Creating test page in sandbox...\n● Edit(index.html)\nGenerating..."
+        output_blocked = "Do you want to run `python3 -m http.server 8080 --directory /Users/hermes/projects/sandbox/fm-test-exec`?\n[y/n] approval required"
+        output_done = (
+            "● Run(python3 -m http.server 8080 --directory /Users/hermes/projects/sandbox/fm-test-exec)\n"
+            "Serving HTTP on 0.0.0.0 port 8080 (http://127.0.0.1:8080/) ...\n"
+            "Created simple test page and launched server at http://127.0.0.1:8080.\n"
+            ">\n? for shortcuts"
+        )
+
+        async def mock_run_cli(args, timeout=5.0):
+            nonlocal tick
+            sub = args[1] if len(args) > 1 else ""
+            if sub == "get":
+                if tick == 0:
+                    return 0, json.dumps({"result": {"agent": {"agent_status": "working"}}}), ""
+                elif tick == 1:
+                    return 0, json.dumps({"result": {"agent": {"agent_status": "blocked"}}}), ""
+                elif tick == 2:
+                    return 0, json.dumps({"result": {"agent": {"agent_status": "working"}}}), ""
+                else:
+                    return 0, json.dumps({"result": {"agent": {"agent_status": "idle"}}}), ""
+            elif sub == "read":
+                if tick == 0:
+                    return 0, output_working, ""
+                elif tick == 1:
+                    return 0, output_blocked, ""
+                elif tick == 2:
+                    return 0, output_working, ""
+                else:
+                    return 0, output_done, ""
+            return 0, "", ""
+
+        with patch.object(app.herdr_client, "run_cli", side_effect=mock_run_cli):
+            task = asyncio.create_task(app.monitor_agent_lifecycle(session, client, trigger_ts="T200"))
+
+            # Tick 0: Working
+            await asyncio.sleep(1.6)
+            self.assertTrue(session.has_worked)
+            self.assertEqual(session.status, "working")
+
+            # Tick 1: Blocked (Ask Mode)
+            tick = 1
+            await asyncio.sleep(1.6)
+            self.assertEqual(session.status, "blocked")
+            # Verify approval card was posted
+            client.chat_postMessage.assert_called()
+            self.assertIn("Approval required", client.chat_postMessage.call_args_list[0][1]["text"])
+
+            # User approves: transition back to working
+            tick = 2
+            session.status = "working"
+            await asyncio.sleep(1.6)
+            self.assertEqual(session.status, "working")
+
+            # Tick 3: Done
+            tick = 3
+            await asyncio.sleep(3.2)
+            self.assertEqual(session.status, "done")
+
+            # Verify final completion briefing was posted with clean output and live URL banner
+            final_call = client.chat_postMessage.call_args_list[-1]
+            final_text = final_call[1]["text"]
+            self.assertIn("*Task Completed via Herdr", final_text)
+            self.assertIn("*Live Endpoint:* http://127.0.0.1:8080", final_text)
+            self.assertIn("Created simple test page", final_text)
+            self.assertNotIn("Antigravity CLI 1.2.12", final_text)
+            self.assertNotIn("? for shortcuts", final_text)
+
+
 if __name__ == "__main__":
     unittest.main()
+

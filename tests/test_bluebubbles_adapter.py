@@ -370,14 +370,16 @@ class TestBlueBubblesOutboundAndBridge(unittest.IsolatedAsyncioTestCase):
             session_key = f"{chat_guid}:{chat_guid}"
             self.assertIn(session_key, app.sessions)
             session = app.sessions[session_key]
-            self.assertEqual(session.status, "working")
+            self.assertEqual(session.status, "starting")
             self.assertTrue(session.is_imessage)
 
-            # Verified agent prompt forwarded
-            prompt_cmds = [c for c in cli_calls if c[0] == "agent" and c[1] == "prompt"]
-            self.assertEqual(len(prompt_cmds), 1)
-            self.assertEqual(prompt_cmds[0][2], session.agent_name)
-            self.assertIn("build a quick html preview prototype", prompt_cmds[0][3])
+            # Verified agent start launched directly with prompt arguments
+            start_cmds = [c for c in cli_calls if c[0] == "agent" and c[1] == "start"]
+            self.assertEqual(len(start_cmds), 1)
+            self.assertEqual(start_cmds[0][2], session.agent_name)
+            self.assertIn("--prompt-interactive", start_cmds[0])
+            self.assertTrue(any("build a quick html preview prototype" in arg for arg in start_cmds[0]))
+
 
     async def test_imessage_approval_relay_with_thumbsup(self):
         """Verify Carl texting 👍 relays 'y enter' to blocked agent PTY stdin."""

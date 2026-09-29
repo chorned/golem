@@ -107,7 +107,9 @@ class GatewaySession:
         self.workspace_id = workspace_id
         self.pane_id = pane_id
         self.is_imessage = is_imessage
-        self.status = "idle"  # "idle" | "working" | "blocked" | "done"
+        self.status = "starting"  # "starting" | "booting" | "working" | "blocked" | "done"
+        self.has_worked = False
+        self.execution_steps = 0
         self.last_prompt = ""
         self.last_blocked_snapshot: Optional[str] = None
         self.approval_msg_ts: Optional[str] = None
@@ -236,6 +238,123 @@ def scope_server_commands(prompt: str, sandbox_cwd: str) -> str:
     return scoped
 
 
+def ensure_trusted_workspace(path: str) -> None:
+    """Ensure directory is listed in Antigravity CLI's trustedWorkspaces to avoid startup trust prompt."""
+    settings_path = os.path.expanduser("~/.gemini/antigravity-cli/settings.json")
+    if not os.path.isfile(settings_path):
+        return
+    try:
+        with open(settings_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        trusted = data.get("trustedWorkspaces", [])
+        canonical = os.path.realpath(os.path.abspath(os.path.expanduser(path)))
+        if canonical not in trusted:
+            trusted.append(canonical)
+            data["trustedWorkspaces"] = trusted
+            with open(settings_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+    except Exception as e:
+        logger.debug(f"Could not update trustedWorkspaces: {e}")
+
+
+def format_agent_dispatch_prompt(prompt: str, target_cwd: str) -> str:
+    """
+    Format prompt for Antigravity CLI dispatch:
+    - If prompt references subagents, workers, or fleet tools (e.g. OpenCode, remote execution),
+      append context that herdr-mesh MCP tools (herdr_pane_run, herdr_handoff, herdr_agent_read)
+      are available for orchestration.
+    - Preserves repository hygiene and scratch sandbox rules.
+    """
+    clean = prompt.strip()
+    subagent_patterns = [
+        r"\bopencode\b", r"\bhermes\b", r"\bsubagent\b", r"\bworker\b",
+        r"\bfleet\b", r"\bremote\b", r"\bgrid\b", r"\bdelegate\b",
+        r"\bhand\s*off\b", r"\bhandoff\b"
+    ]
+    if any(re.search(pat, clean, re.IGNORECASE) for pat in subagent_patterns):
+        clean = (
+            f"{clean}\n\n"
+            "[Context: You are First Mate / Tech Lead. You have access to herdr-mesh MCP tools "
+            "(`herdr_pane_run`, `herdr_handoff`, `herdr_agent_read`, `herdr_workspace_create`, etc.) "
+            "to orchestrate subagents or worker panes if delegating work. "
+            "Keep prototypes, test servers, and standalone scripts strictly self-contained within "
+            f"the designated sandbox folder: {target_cwd}.]"
+        )
+    return clean
+
+
+def sanitize_terminal_output(raw_text: str) -> str:
+    """
+    Filter raw terminal text from Antigravity CLI:
+    - Strips ANSI escape codes, terminal device queries, and graphics protocol sequences.
+    - Filters out ASCII art splash banners and TUI chrome.
+    - Strips status bar lines ('? for shortcuts', 'esc to cancel', 'Last progress:').
+    - Returns clean substantive execution output and tool results.
+    """
+    clean = strip_ansi(raw_text)
+    # Strip terminal query responses and graphics sequences
+    clean = re.sub(r"\^\[_G[^\^]*\^\\", "", clean)
+    clean = re.sub(r"\x1b\[\?[0-9;]*[a-zA-Z]", "", clean)
+    clean = re.sub(r"G[a-z0-9_=,;+]+(?:==)?", "", clean)
+    clean = re.sub(r"\x1b[^\s]*", "", clean)
+
+    splash_indicators = [
+        "antigravity cli",
+        "gemini 3.8 flash",
+        "welcome to the antigravity",
+        "signing in...",
+        "? for shortcuts",
+        "esc to cancel",
+        "last progress:",
+        "navigate · enter confirm",
+        "do you trust the contents",
+        "yes, i trust this folder"
+    ]
+
+    filtered_lines = []
+    for line in clean.splitlines():
+        line_stripped = line.strip()
+        if not line_stripped:
+            continue
+        # Skip pure border/divider lines
+        if all(c in "─━│┃-=_* " for c in line_stripped):
+            continue
+        # Skip ASCII art logo blocks
+        if any(c in "▄▀█▌▐" for c in line_stripped):
+            continue
+        lower_line = line_stripped.lower()
+        # Skip splash / TUI footer lines
+        if any(ind in lower_line for ind in splash_indicators):
+            continue
+        # Skip bare prompt
+        if line_stripped in (">", "> "):
+            continue
+        # Skip shell command prompt invocation line (e.g. hermes@... % agy ...)
+        if re.search(r"%\s+agy\b", line_stripped):
+            continue
+
+        filtered_lines.append(line.rstrip())
+
+    return "\n".join(filtered_lines).strip()
+
+
+def extract_operational_artifacts(text: str) -> Dict[str, Any]:
+    """Extract operational artifacts (live URLs, files edited/created, tool outputs)."""
+    urls = re.findall(
+        r"https?://(?:localhost|127\.0\.0\.1|0\.0\.0\.0|100\.\d+\.\d+\.\d+)(?::\d+)?(?:/[a-zA-Z0-9_.~!$&'()*+,;=:@%/-]*)?",
+        text
+    )
+    files_created = re.findall(r"(?:●\s*Edit|Created|file:)\s*\(([^)]+)\)", text, re.IGNORECASE)
+    if not files_created:
+        files_created = re.findall(r"\b(?:created|wrote to)\s+[`']?([a-zA-Z0-9_./-]+\.[a-zA-Z0-9]+)[`']?", text, re.IGNORECASE)
+
+    return {
+        "urls": urls,
+        "files": files_created
+    }
+
+
+
 # ------------------------------------------------------------------------------
 # Chat Formatting Normalizer for BlueBubbles
 # ------------------------------------------------------------------------------
@@ -306,7 +425,8 @@ async def ensure_session_agent(
     channel: str,
     thread_ts: str,
     prompt: str,
-    is_imessage: bool = False
+    is_imessage: bool = False,
+    agent_args: Optional[List[str]] = None
 ) -> GatewaySession:
     """Ensure a Herdr workspace and Antigravity CLI agent exist for this thread."""
     if session_key in sessions:
@@ -315,6 +435,7 @@ async def ensure_session_agent(
     clean_ts = re.sub(r"[^0-9]", "", str(thread_ts or time.time()))[-8:]
     agent_name = f"fm-{clean_ts}"
     target_cwd = resolve_target_directory(prompt, task_id=agent_name)
+    ensure_trusted_workspace(target_cwd)
 
     # 1. Spawn Herdr workspace: herdr workspace create --cwd <target_cwd> --label <task_name> --no-focus
     ws_id = None
@@ -338,12 +459,20 @@ async def ensure_session_agent(
     if not pane_id:
         pane_id = "w6:p1"
 
-    # 2. Start Antigravity CLI: herdr agent start <name> --kind agy --pane <pane_id>
-    start_code, _, start_err = await herdr_client.run_cli([
+    scoped_prompt = scope_server_commands(prompt, target_cwd)
+    formatted_prompt = format_agent_dispatch_prompt(scoped_prompt, target_cwd)
+
+    # 2. Start Antigravity CLI directly with startup arguments:
+    # herdr agent start <name> --kind agy --pane <pane_id> -- --prompt-interactive "<prompt>"
+    cli_agent_args = agent_args or ["--prompt-interactive", formatted_prompt]
+    start_cmd = [
         "agent", "start", agent_name,
         "--kind", "agy",
-        "--pane", pane_id
-    ])
+        "--pane", pane_id,
+        "--"
+    ] + cli_agent_args
+
+    start_code, _, start_err = await herdr_client.run_cli(start_cmd)
     if start_code != 0:
         logger.warning(f"herdr agent start warning for {agent_name}: {start_err}")
 
@@ -357,6 +486,11 @@ async def ensure_session_agent(
         pane_id=pane_id,
         is_imessage=is_imessage
     )
+    session.status = "starting"
+    session.has_worked = False
+    session.execution_steps = 0
+    session.last_prompt = scoped_prompt
+
     sessions[session_key] = session
     agent_name_to_session[agent_name] = session
     return session
@@ -368,54 +502,103 @@ async def monitor_agent_lifecycle(
     trigger_ts: Optional[str] = None
 ):
     """
-    Monitor Herdr agent state transitions:
-    - blocked -> render approval card for native Ask Mode
-    - done / idle -> post final output summary
+    Monitor Herdr agent state transitions with strict State Invariant & Splash Guard:
+    - State Invariant: A session CANNOT transition to DONE unless it has first successfully
+      entered and operated in a WORKING state.
+    - Splash / Boot Guard: If a pane is idle at the startup banner without having executed
+      any tool or generated substantive output, treat it as BOOTING/INITIALIZING, not DONE.
+    - Ask Mode: Detect blocked confirmation states and render approval cards.
+    - Completion: Only declare completion when child process exits cleanly OR agent returns to idle
+      AFTER having logged active execution steps and substantive output.
     """
     agent_name = session.agent_name
-    logger.info(f"Lifecycle monitor active for agent {agent_name}...")
-    prev_status = "working"
+    logger.info(f"Lifecycle monitor active for agent {agent_name} (initial status: {session.status})...")
+    consecutive_idle_ticks = 0
 
     while True:
         await asyncio.sleep(1.5)
-        code, out, _ = await herdr_client.run_cli(["agent", "get", agent_name])
-        if code != 0 or not out:
-            continue
+        code, out, _ = await herdr_client.run_cli(["agent", "get", agent_name], timeout=5.0)
 
         current_status = "unknown"
-        try:
-            data = json.loads(out)
-            current_status = data.get("result", {}).get("agent", {}).get("agent_status", "unknown")
-        except Exception:
-            pass
+        if code == 0 and out:
+            try:
+                data = json.loads(out)
+                current_status = data.get("result", {}).get("agent", {}).get("agent_status", "unknown")
+            except Exception:
+                pass
 
-        # Native Ask Mode detection: agent is blocked waiting for interactive confirmation
-        if current_status == "blocked" and session.status != "blocked":
+        _, read_out, _ = await herdr_client.run_cli([
+            "agent", "read", agent_name,
+            "--source", "recent-unwrapped",
+            "--lines", "30"
+        ], timeout=5.0)
+
+        raw_lower = read_out.lower()
+
+        # 1. Detect active working state vs historical execution content
+        active_working_indicators = [
+            "generating...", "thinking...", "ruminating...", "computing...",
+            "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏", "msg=interrupt"
+        ]
+        is_terminal_working = any(ind in raw_lower for ind in active_working_indicators)
+
+        has_execution_content = any(ind in raw_lower for ind in [
+            "thought for", "● edit", "● run", "● command", "created", "serving http", "tokens", "available at http"
+        ])
+        if has_execution_content or current_status == "working":
+            session.has_worked = True
+
+        if current_status == "working" or is_terminal_working:
+            session.status = "working"
+            session.execution_steps += 1
+            consecutive_idle_ticks = 0
+            continue
+
+
+        # 2. Detect blocked Ask Mode indicators
+        blocked_patterns = [
+            r"\[y/n\]", r"\(y/n\)", r"\(yes/no\)", r"\[y/N\]", r"\[Y/n\]",
+            r"password:", r"confirm\s*\?", r"approval\s+required", r"allow\s+this\s+action\?",
+            r"do\s+you\s+want\s+to\s+run", r"navigate\s*·\s*enter\s+confirm"
+        ]
+        is_terminal_blocked = any(re.search(pat, read_out, re.IGNORECASE) for pat in blocked_patterns)
+
+        if (current_status == "blocked" or is_terminal_blocked) and session.status != "blocked":
             session.status = "blocked"
-            _, read_out, _ = await herdr_client.run_cli([
-                "agent", "read", agent_name,
-                "--source", "recent-unwrapped",
-                "--lines", "15"
-            ])
             session.last_blocked_snapshot = read_out
             if trigger_ts:
                 await swap_reacji(client, session.channel, trigger_ts, "gear", "warning")
             await post_approval_card(session, client, read_out)
+            continue
 
-        # Completion detection: agent finished work and returned to idle/done
-        elif current_status in ("done", "idle") and prev_status == "working":
-            session.status = current_status
-            _, read_out, _ = await herdr_client.run_cli([
-                "agent", "read", agent_name,
-                "--source", "recent-unwrapped",
-                "--lines", "25"
-            ])
-            if trigger_ts:
-                await swap_reacji(client, session.channel, trigger_ts, "gear", "white_check_mark")
-            await post_completion_briefing(session, client, read_out)
-            break
+        if session.status == "blocked":
+            # Still waiting for user approval/rejection reply
+            continue
 
-        prev_status = current_status
+        # 3. Splash / Boot Guard
+        # If agent has not yet operated in WORKING state, check if it's still at the splash banner
+        if not session.has_worked:
+            splash_banner_patterns = [
+                "antigravity cli", "gemini 3.8 flash", "welcome to the antigravity",
+                "? for shortcuts", "signing in..."
+            ]
+            is_splash = any(ind in raw_lower for ind in splash_banner_patterns)
+            if is_splash or current_status in ("starting", "unknown", "idle", "done"):
+                session.status = "booting"
+                logger.debug(f"Agent {agent_name} at splash banner/booting; ignoring premature idle/done.")
+                continue
+
+        # 4. Completion Detection: ONLY valid if session.has_worked is True
+        if session.has_worked and current_status in ("done", "idle") and not is_terminal_working:
+            sanitized = sanitize_terminal_output(read_out)
+            if sanitized:
+                consecutive_idle_ticks += 1
+                if consecutive_idle_ticks >= 2:
+                    session.status = "done"
+                    if trigger_ts:
+                        await swap_reacji(client, session.channel, trigger_ts, "gear", "white_check_mark")
+                    await post_completion_briefing(session, client, read_out)
+                    break
 
 
 async def post_approval_card(session: GatewaySession, client: Any, terminal_snippet: str):
@@ -471,15 +654,18 @@ async def post_approval_card(session: GatewaySession, client: Any, terminal_snip
 
 
 async def post_completion_briefing(session: GatewaySession, client: Any, terminal_output: str):
-    """Post final completion output to chat."""
-    clean_out = terminal_output.strip()
-    urls = re.findall(r"https?://(?:localhost|127\.0\.0\.1|0\.0\.0\.0|100\.\d+\.\d+\.\d+)(?::\d+)?(?:/[a-zA-Z0-9_.~!$&'()*+,;=:@%/-]*)?", clean_out)
-    clean_lines = [l.rstrip() for l in clean_out.splitlines() if l.strip()][-8:]
-    summary = "\n".join(clean_lines) or "Task completed successfully."
+    """Post final completion output to chat, filtering out splash banners and highlighting artifacts."""
+    sanitized = sanitize_terminal_output(terminal_output)
+    artifacts = extract_operational_artifacts(terminal_output)
 
-    url_banner = f"\n*Live Endpoint:* {urls[0]}\n" if urls else ""
+    url_banner = f"\n*Live Endpoint:* {artifacts['urls'][0]}\n" if artifacts["urls"] else ""
+    files_banner = f"\n*Files Created:* {', '.join(artifacts['files'])}\n" if artifacts["files"] else ""
+
+    clean_lines = [l for l in sanitized.splitlines() if l.strip()][-10:]
+    summary = "\n".join(clean_lines) if clean_lines else "Task completed successfully."
+
     msg = (
-        f"*Task Completed via Herdr (`{session.agent_name}`)*{url_banner}\n\n"
+        f"*Task Completed via Herdr (`{session.agent_name}`)*{url_banner}{files_banner}\n\n"
         f"```{summary}```"
     )
 
@@ -494,6 +680,7 @@ async def post_completion_briefing(session: GatewaySession, client: Any, termina
             thread_ts=session.thread_ts,
             text=msg
         )
+
 
 
 # ------------------------------------------------------------------------------
@@ -672,15 +859,15 @@ async def process_user_prompt(event: Dict[str, Any], client: Any) -> None:
     if session and is_status_inquiry(clean_text):
         _, read_out, _ = await herdr_client.run_cli([
             "agent", "read", session.agent_name,
-            "--lines", "20",
+            "--lines", "30",
             "--source", "recent-unwrapped"
         ])
-        clean_out = read_out.strip()
-        urls = re.findall(r"https?://(?:localhost|127\.0\.0\.1|0\.0\.0\.0|100\.\d+\.\d+\.\d+)(?::\d+)?(?:/[a-zA-Z0-9_.~!$&'()*+,;=:@%/-]*)?", clean_out)
-        clean_lines = [l.rstrip() for l in clean_out.splitlines() if l.strip()][-6:]
-        summary = "\n".join(clean_lines) or "Agent is actively running."
+        sanitized = sanitize_terminal_output(read_out)
+        artifacts = extract_operational_artifacts(read_out)
+        clean_lines = [l for l in sanitized.splitlines() if l.strip()][-6:]
+        summary = "\n".join(clean_lines) or f"Agent `{session.agent_name}` is currently {session.status}."
 
-        url_line = f"Live URL: {urls[0]}\n" if urls else ""
+        url_line = f"Live Endpoint: {artifacts['urls'][0]}\n" if artifacts["urls"] else ""
         msg = f"*Status Update (`{session.agent_name}`)*\n{url_line}```{summary}```"
 
         if is_imessage:
@@ -693,6 +880,8 @@ async def process_user_prompt(event: Dict[str, Any], client: Any) -> None:
     if not is_imessage:
         await add_reacji(client, channel, ts, "eyes")
 
+    is_new_session = session_key not in sessions
+
     session = await ensure_session_agent(
         session_key=session_key,
         channel=channel,
@@ -703,23 +892,26 @@ async def process_user_prompt(event: Dict[str, Any], client: Any) -> None:
 
     scoped_prompt = scope_server_commands(clean_text, session.target_cwd)
     session.last_prompt = scoped_prompt
-    session.status = "working"
 
     if not is_imessage:
         await swap_reacji(client, channel, ts, "eyes", "gear")
 
-    # Forward user prompt via herdr agent prompt <name> "<prompt>"
-    prompt_code, _, prompt_err = await herdr_client.run_cli([
-        "agent", "prompt", session.agent_name, scoped_prompt
-    ])
-    if prompt_code != 0:
-        logger.warning(f"herdr agent prompt returned code {prompt_code}: {prompt_err}")
+    # If it is a follow-up prompt on an existing active session, submit via agent prompt
+    if not is_new_session:
+        session.status = "working"
+        session.has_worked = False  # Reset working flag for the follow-up turn
+        prompt_code, _, prompt_err = await herdr_client.run_cli([
+            "agent", "prompt", session.agent_name, scoped_prompt
+        ])
+        if prompt_code != 0:
+            logger.warning(f"herdr agent prompt returned code {prompt_code}: {prompt_err}")
 
     # Launch background lifecycle monitor
     if not session.monitor_task or session.monitor_task.done():
         session.monitor_task = asyncio.create_task(
             monitor_agent_lifecycle(session, client, trigger_ts=ts)
         )
+
 
 
 # ------------------------------------------------------------------------------
