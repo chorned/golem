@@ -153,9 +153,73 @@ To ensure uninterrupted uptime and absolute conversational responsiveness:
 4. **NDJSON Stream Integrity:**
    - Turn demarcations are driven exclusively by protocol events (`result`, `awaiting_input`) rather than arbitrary idle timers, preventing off-by-one stdout pipe phase shifts.
 
+## 7. Branching, Release & Emergency Rollback Strategy
+
+To maintain zero downtime and prevent regressions as First Mate scales toward Beta, development and deployment follow a strict 4-tier branching and verification lifecycle:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                 Production & Branch Lifecycle Architecture                  │
+│                                                                             │
+│   [main] (Golden Production)                                                │
+│     │ • Bound directly to LaunchAgent daemon (com.user.first-mate)          │
+│     │ • 100% test-verified (920+ unit & integration tests)                 │
+│     │ • Tagged releases (e.g. v0.2.0-beta)                                 │
+│     │                                                                       │
+│     ▲ Fast-forward merge only after ./scripts/safe_update.sh passes         │
+│     │                                                                       │
+│   [dev] (Staging & Integration)                                             │
+│     │ • Staging branch for integrating tested feature branches              │
+│     │                                                                       │
+│     ▲ Merged from feature worktrees                                         │
+│     │                                                                       │
+│   [feat/*, fix/*] (Isolated Git Worktrees)                                  │
+│     • Developed in ../first-mate-<feature> outside the live daemon tree     │
+│     • Live daemon remains 100% untouched during active development          │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 1. Worktree Isolation Workflow
+Because the live background daemon (`com.user.first-mate`) runs continuously out of `/Users/hermes/projects/first-mate`, modifying files directly on `main` risks breaking active Socket Mode threads mid-turn. All active development uses isolated git worktrees:
+```bash
+# 1. Create an isolated worktree for your feature
+git worktree add ../first-mate-myfeature -b feat/myfeature
+
+# 2. Develop and test in the isolated directory
+cd ../first-mate-myfeature
+pytest
+
+# 3. Merge into dev when clean, test integration, and clean up worktree
+cd /Users/hermes/projects/first-mate
+git merge feat/myfeature
+git worktree remove ../first-mate-myfeature
+```
+
+### 2. Pre-Flight Test Gate (`scripts/safe_update.sh`)
+Before merging to `main` or reloading the live daemon, the automated pre-flight gate must be executed:
+```bash
+./scripts/safe_update.sh
+```
+- **Stash Safety:** Automatically stashes uncommitted changes to preserve working tree integrity.
+- **Verification Gate:** Executes all 920+ tests (`./.venv/bin/python3 -m unittest discover tests`). If any test fails, the update **aborts immediately** with an error code, preventing regression deployment.
+- **Atomic Daemon Reload:** If and only if all tests pass, the LaunchAgent (`com.user.first-mate`) is reloaded via `launchctl kickstart -k -p` and verifies the running PID.
+
+### 3. Instant Emergency Rollback (`scripts/rollback.sh`)
+If an unexpected edge case or regression occurs in production, First Mate can be restored to a known golden release in under 3 seconds:
+```bash
+# Roll back to the golden beta baseline (default: v0.2.0-beta)
+./scripts/rollback.sh
+
+# Or roll back to any specific commit or release tag
+./scripts/rollback.sh <git-ref-or-tag>
+```
+- Saves the pre-rollback commit SHA to `/tmp/first_mate_pre_rollback_sha`.
+- Stashes any uncommitted state.
+- Checks out the target ref, executes immediate smoke tests, and restarts the daemon cleanly.
+
 ---
 
-## 7. Quickstart & Verification
+## 8. Quickstart & Verification
 
 ### Prerequisites
 - Python 3.11+
@@ -177,13 +241,13 @@ cp .env.example .env
 ```
 
 ### Running Tests
-The test suite contains over 640 unit, boundary, and adversarial stress tests:
+The test suite contains over 920 unit, boundary, and adversarial stress tests:
 ```bash
 # Run entire test suite
-pytest
+./.venv/bin/python3 -m unittest discover tests
 
-# Run gateway and execution test suites specifically
-pytest tests/test_gateway_m3.py tests/test_execution_m4.py tests/test_workspace_layout.py
+# Or run with pytest
+pytest
 ```
 
 ### Launching the Daemon
@@ -194,3 +258,4 @@ python3 app.py
 # Or via launchd service
 launchctl load ~/Library/LaunchAgents/com.user.first-mate.plist
 ```
+
