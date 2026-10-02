@@ -16,6 +16,8 @@ import asyncio
 import logging
 from typing import Dict, Any, Optional, List, Tuple, Set
 
+from normalizer import sanitize_for_slack
+
 logger = logging.getLogger("AGY.TelemetryObserver")
 
 # ------------------------------------------------------------------------------
@@ -256,7 +258,7 @@ def summarize_task_intent(prompt: str) -> str:
 def format_startup_message(runner: str, machine: str, prompt: str) -> str:
     """Build conversational startup / delegation notification."""
     intent = summarize_task_intent(prompt)
-    if "opencode" in runner.lower() or "opencode" in prompt.lower():
+    if "opencode" in runner.lower():
         return f"On it. Handing this to OpenCode on `{machine}` to {intent}."
     return f"On it. Working on `{machine}` to {intent}."
 
@@ -421,43 +423,10 @@ class SessionTelemetryObserver:
                 pass
 
     async def initialize_dashboard(self) -> None:
-        """Post the conversational startup milestone into the thread."""
+        """Initialize telemetry state without sending canned startup text."""
         if "startup" in self.milestones_posted:
             return
-
-        # Check if user prompt requested opencode or subagent
-        prompt = getattr(self.session, "last_prompt", "") or self.user_prompt
-        runner = "OpenCode" if re.search(r"\bopencode\b", prompt, re.IGNORECASE) else "Antigravity"
-        msg = format_startup_message(runner, self.machine, prompt)
-
-        if hasattr(self.client, "chat_postMessage"):
-            try:
-                if self.is_imessage:
-                    await self.client.chat_postMessage(channel=self.channel, text=msg)
-                else:
-                    resp = await self.client.chat_postMessage(
-                        channel=self.channel,
-                        thread_ts=self.thread_ts,
-                        text=msg
-                    )
-                    if resp:
-                        ts_val = None
-                        if isinstance(resp, dict):
-                            ts_val = resp.get("ts")
-                        elif hasattr(resp, "data") and isinstance(resp.data, dict):
-                            ts_val = resp.data.get("ts")
-                        elif hasattr(resp, "get") and not inspect.iscoroutinefunction(resp.get):
-                            try:
-                                res = resp.get("ts")
-                                if not inspect.iscoroutine(res):
-                                    ts_val = res
-                            except Exception:
-                                pass
-                        if isinstance(ts_val, (str, int)):
-                            self.card_msg_ts = str(ts_val)
-                self.milestones_posted.add("startup")
-            except Exception as e:
-                logger.debug(f"Error posting startup milestone: {e}")
+        self.milestones_posted.add("startup")
 
     async def run(self) -> None:
         """Main observation loop monitoring milestones out-of-band."""
@@ -514,17 +483,19 @@ class SessionTelemetryObserver:
             except Exception:
                 pass
 
-        # Also inspect agent list
+        # Also inspect agent list, strictly scoped to this workspace
         agent_code, agent_out, _ = await self.herdr_client.run_cli(["agent", "list"])
         if agent_code == 0 and agent_out:
             try:
                 adata = json.loads(agent_out)
                 for a in adata.get("result", {}).get("agents", []):
-                    akind = a.get("agent")
-                    if akind and akind.lower() not in ("agy", "hermes"):
-                        if a.get("agent_status") in ("working", "starting", "idle"):
-                            child_runners.append(akind)
-                            active_agent_target = a.get("name", active_agent_target)
+                    if a.get("workspace_id") == self.workspace_id:
+                        akind = a.get("agent")
+                        if akind and akind.lower() not in ("agy",):
+                            if a.get("agent_status") in ("working", "starting"):
+                                if akind not in child_runners:
+                                    child_runners.append(akind)
+                                active_agent_target = a.get("name", active_agent_target)
             except Exception:
                 pass
 
@@ -534,27 +505,25 @@ class SessionTelemetryObserver:
         runner_label = format_runner_label("agy", child_runners)
         self.last_runner_label = runner_label
 
-        # 2. Delegation Milestone Notification
+        # 2. Delegation Milestone Notification (sole authority: fires strictly when child pane appears in Herdr)
         if child_runners:
             subagent = child_runners[-1]
             delegation_key = f"delegation_{subagent.lower()}"
             if delegation_key not in self.milestones_posted:
                 self.milestones_posted.add(delegation_key)
-                # If startup message did not announce this subagent, post delegation notice
-                if "startup" in self.milestones_posted:
-                    runner_display = "OpenCode" if "opencode" in subagent.lower() else subagent
-                    notice = f"Handing this to {runner_display} on `{machine}` to execute."
-                    try:
-                        if self.is_imessage:
-                            await self.client.chat_postMessage(channel=self.channel, text=notice)
-                        elif hasattr(self.client, "chat_postMessage"):
-                            await self.client.chat_postMessage(
-                                channel=self.channel,
-                                thread_ts=self.thread_ts,
-                                text=notice
-                            )
-                    except Exception as e:
-                        logger.debug(f"Error posting delegation notice: {e}")
+                runner_display = "OpenCode" if "opencode" in subagent.lower() else subagent
+                notice = f"Handing this to {runner_display} on `{machine}` to execute."
+                try:
+                    if self.is_imessage:
+                        await self.client.chat_postMessage(channel=self.channel, text=notice)
+                    elif hasattr(self.client, "chat_postMessage"):
+                        await self.client.chat_postMessage(
+                            channel=self.channel,
+                            thread_ts=self.thread_ts,
+                            text=sanitize_for_slack(notice)
+                        )
+                except Exception as e:
+                    logger.debug(f"Error posting delegation notice: {e}")
 
         # 3. Foreground process check (filtered for internal plumbing)
         cmdline = ""
@@ -597,28 +566,14 @@ class SessionTelemetryObserver:
         artifacts: Optional[Dict[str, List[str]]] = None,
         terminal_output: str = ""
     ) -> None:
-        """Post conversational task completion milestone."""
+        """
+        Mark task completion milestone and stop observer loop.
+        Completion messages are solely emitted by monitor_agent_lifecycle in app.py.
+        """
         self.stop_event.set()
         if "complete" in self.milestones_posted:
             return
         self.milestones_posted.add("complete")
-
-        urls = (artifacts or {}).get("urls", [])
-        files = (artifacts or {}).get("files", [])
-        summary = format_completion_message(self.machine, urls, files)
-
-        if hasattr(self.client, "chat_postMessage"):
-            try:
-                if self.is_imessage:
-                    await self.client.chat_postMessage(channel=self.channel, text=summary)
-                else:
-                    await self.client.chat_postMessage(
-                        channel=self.channel,
-                        thread_ts=self.thread_ts,
-                        text=summary
-                    )
-            except Exception as e:
-                logger.debug(f"Error posting completion milestone: {e}")
 
     async def settle_failed(
         self,
@@ -640,7 +595,7 @@ class SessionTelemetryObserver:
                     await self.client.chat_postMessage(
                         channel=self.channel,
                         thread_ts=self.thread_ts,
-                        text=msg
+                        text=sanitize_for_slack(msg)
                     )
             except Exception as e:
                 logger.debug(f"Error posting failure milestone: {e}")

@@ -21,6 +21,14 @@
     <string>/Users/hermes/projects/first-mate/bot.err</string>
     <key>EnvironmentVariables</key>
     <dict>
+        <key>PYTHONUNBUFFERED</key>
+        <string>1</string>
+        <key>DAEMON_LABEL</key>
+        <string>com.user.first-mate</string>
+        <key>PYTHONPATH</key>
+        <string>/Users/hermes/projects/first-mate</string>
+        <key>AGY_BIN</key>
+        <string>/Users/hermes/.local/bin/agy</string>
         <key>PATH</key>
         <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:~/.antigravity/bin:/Users/hermes/.local/bin:/Users/hermes/.antigravity/bin</string>
         <key>SLACK_APP_TOKEN</key>
@@ -43,6 +51,8 @@
         <string>/Users/hermes/.config/herdr/herdr.sock</string>
         <key>HERDR_BIN</key>
         <string>/Users/hermes/.local/bin/herdr</string>
+        <key>DUAL_PANE_WORKSPACE</key>
+        <string>1</string>
         <key>BLUEBUBBLES_URL</key>
         <string>http://127.0.0.1:1234</string>
         <key>BLUEBUBBLES_PASSWORD</key>

@@ -16,98 +16,12 @@ from typing import Dict, Any, Optional, List, Tuple
 
 logger = logging.getLogger("AGY.HerdrFleet")
 
-# Default topology specification
-TOPOLOGY_SPECS = {
-    "fleet-control": {
-        "label": "fleet-control",
-        "workspace_label": "fleet-control",
-        "pane_label": "chief-of-staff",
-        "pane_id": "w1:p1",
-        "agent_name": "chief-of-staff",
-        "agent_kind": "agy",
-        "role": "Antigravity Chief of Staff & Primary Dev (localhost)",
-        "target_machine": "local",
-        "default_cwd": "/Users/hermes"
-    },
-    "homelab-ops": {
-        "label": "homelab-ops",
-        "workspace_label": "homelab-ops",
-        "pane_label": "hermes-worker",
-        "pane_id": "w2:p1",
-        "agent_name": "hermes-worker",
-        "agent_kind": "hermes",
-        "role": "Hermes Butler",
-        "target_machine": "local",
-        "default_cwd": "/Users/hermes"
-    },
-    "cloud-ops": {
-        "label": "cloud-ops",
-        "workspace_label": "cloud-ops",
-        "pane_label": "oci-worker",
-        "pane_id": "w3:p1",
-        "agent_name": None,
-        "agent_kind": None,
-        "role": "Cloud Operations (OCI)",
-        "target_machine": "oci-machine",
-        "ssh_target": "oci-machine",
-        "default_cwd": "~"
-    },
-    "dev-grid": {
-        "label": "dev-grid",
-        "workspace_label": "dev-grid",
-        "pane_label": "laptop-worker",
-        "pane_id": "w4:p1",
-        "agent_name": None,
-        "agent_kind": None,
-        "role": "Personal Laptop (Active Workstation - Strict Ad-Hoc)",
-        "target_machine": "personal-laptop",
-        "ssh_target": "personal-laptop",
-        "default_cwd": "~"
-    },
-    "compute-grid": {
-        "label": "compute-grid",
-        "workspace_label": "compute-grid",
-        "pane_label": "pc-worker",
-        "pane_id": "w5:p1",
-        "agent_name": None,
-        "agent_kind": None,
-        "role": "Compute Grid (Desktop PC)",
-        "target_machine": "desktop-pc",
-        "ssh_target": "desktop-pc",
-        "default_cwd": "~"
-    }
-}
-
-
-def wrap_windows_command(cmd: str) -> str:
-    """
-    Ensure no hardcoded POSIX idioms (such as &&, Unix path separators, or bash-specific subshells)
-    are sent to the Windows worker pane unless wrapped in an explicit PowerShell or shell runner.
-    """
-    stripped = cmd.strip()
-    if not stripped:
-        return stripped
-
-    # If already wrapped in an explicit runner, preserve as-is
-    if re.match(r"^(powershell(?:\.exe)?|cmd(?:\.exe)?|pwsh(?:\.exe)?)\b", stripped, re.IGNORECASE):
-        return stripped
-
-    posix_patterns = [
-        r"&&", r"\|\|", r"2>/dev/null", r"/dev/null",
-        r"\$\([^\)]+\)", r"`[^`]+`", r"(?:^|\s)\./", r"(?:^|\s)/(?:tmp|var|etc|usr|bin)\b"
-    ]
-    has_posix = any(re.search(pat, stripped) for pat in posix_patterns)
-
-    if has_posix:
-        # Wrap in cmd.exe /c runner which supports &&, ||, and standard Windows execution
-        cmd_fixed = re.sub(r"2>/dev/null", "2>nul", stripped)
-        cmd_fixed = re.sub(r"/dev/null", "nul", cmd_fixed)
-        cmd_fixed = re.sub(r"(?<=[\s\"'])\./", r".\\", cmd_fixed)
-        if cmd_fixed.startswith("./"):
-            cmd_fixed = ".\\" + cmd_fixed[2:]
-        return f'cmd.exe /c "{cmd_fixed}"'
-
-    return stripped
+# Re-exports from first_mate.execution.mesh for canonical object identity
+from first_mate.execution.mesh import (
+    TOPOLOGY_SPECS,
+    NODE_ALIASES,
+    wrap_windows_command,
+)
 
 
 class HerdrFleet:

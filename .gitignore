@@ -5,3 +5,6 @@ __pycache__/
 *.pyc
 .DS_Store
 .env
+.agents/teamwork/
+slack_transfers/
+*.tmp*

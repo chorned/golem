@@ -25,6 +25,27 @@ from herdr_tools import (
 
 logger = logging.getLogger("FirstMate.AgentCore")
 
+# Re-exports from first_mate.agent for Milestone 2 compatibility
+from first_mate.agent import (
+    AgentEvent,
+    AgentEventType,
+    TextDeltaEvent,
+    StatusUpdateEvent,
+    ToolStartEvent,
+    ToolEndEvent,
+    AwaitingInputEvent,
+    FinishEvent,
+    HeadlessAgentAdapter,
+    DEFAULT_AGY_BIN,
+    CALIBRATION_PROMPT,
+    SLACK_MRKDWN_RULES,
+    CHOICE_FORMATTING_RULES,
+    PACING_CALIBRATION_RULES,
+    TRIAGE_SUPPRESSION_RULES,
+    get_calibration_rules,
+    build_calibrated_system_prompt,
+)
+
 HOST_DIR = os.environ.get("FIRST_MATE_HOST_DIR", os.path.dirname(os.path.abspath(__file__)))
 PROJECT_ROOT = HOST_DIR
 DEFAULT_TARGET_REPO = os.environ.get("DEFAULT_TARGET_REPO", "/Users/hermes/projects/AGY")
@@ -70,11 +91,15 @@ def get_gemini_api_key() -> str:
 
 
 def format_for_slack(text: str) -> str:
-    """Format standard markdown to Slack mrkdwn (e.g. converting **bold** to *bold* outside code blocks)."""
-    parts = re.split(r"(```[\s\S]*?```|`[^`\n]+`)", text)
-    for i in range(0, len(parts), 2):
-        parts[i] = re.sub(r"\*\*(.+?)\*\*", r"*\1*", parts[i])
-    return "".join(parts)
+    """Format standard markdown to Slack mrkdwn using canonical normalizer."""
+    try:
+        from normalizer import sanitize_for_slack
+        return sanitize_for_slack(text)
+    except Exception:
+        parts = re.split(r"(```[\s\S]*?```|`[^`\n]+`)", text)
+        for i in range(0, len(parts), 2):
+            parts[i] = re.sub(r"\*\*(.+?)\*\*", r"*\1*", parts[i])
+        return "".join(parts)
 
 
 def build_system_prompt() -> str:
@@ -101,15 +126,11 @@ def build_system_prompt() -> str:
 You coordinate junior workers across the fleet to execute operational, system, and coding tasks.
 You NEVER write production code directly—you delegate execution to junior workers (OpenCode, Hermes) via Herdr tools.
 
---- Fleet Topology & Machine Profiles ---
-• hermes (Localhost macOS, 24/7 primary anchor):
-  - Local development, homelab services, system CLIs, downloads, Docker, testing.
-• desktop-pc (Windows, 100.80.59.45):
-  - Remote CUDA compute grid, NVIDIA GPU / model workloads, heavy local benchmarks.
-• oci-machine (Linux aarch64, 100.113.173.33):
-  - Remote cloud VPS, live production services, wireguard, ingress.
-• personal-laptop (macOS, 100.96.38.5):
-  - Carl's active workstation; strict ad-hoc tasks only when explicitly requested.
+--- Fleet Topology & Machine Placement ---
+• hermes: Local macOS controller, daily development anchor, and homelab runner.
+• desktop-pc: High-VRAM Windows node for CUDA, model training, and heavy GPU compute (100.80.59.45).
+• oci-machine: Remote cloud VPS for external daemons and scrapers (100.113.173.33).
+• personal-laptop: Secondary macOS node (100.96.38.5).
 
 --- Working Directory Resolution ---
 1. General homelab, system ops, media, or download inquiries -> (hermes, "/Users/hermes")
@@ -117,20 +138,52 @@ You NEVER write production code directly—you delegate execution to junior work
    Available local projects: {projects_list_str}
 3. Standalone spikes, demos, prototypes, or ad-hoc tasks -> (hermes, "/Users/hermes/projects/sandbox/<task_id>")
 
---- Junior Workers ---
-• opencode-dev (or opencode): For coding, editing, refactoring, building prototypes, or running tests.
-• hermes: For homelab maintenance, downloads, docker, storage, CLI scripts, and system inspection.
+--- Worker Specialization & Fleet Delegation ---
+• opencode: For writing code, refactoring repos, building prototypes, writing unit tests, and sandbox servers.
+• hermes: For homelab maintenance, Docker containers, storage/ZFS, media services, and system scripts.
+• direct execution: For coordination, quick file reads, bearings, status queries, or high-level architecture planning.
+
+--- Conversational Tone & Pacing Calibration ---
+• Immediate Conversational Acknowledgment: When initiating a new session or beginning a multi-step operational inquiry (e.g. checking logs, inspecting cron jobs, querying fleet machines), emit a brief, authentic 1-sentence acknowledgment before executing inspection tools. (e.g. "Sure! Give me a second to gather the fleet details." or "On it—let me pull the latest schedules across the machines.").
+• Broad Overview First: When discussing infrastructure, jobs, scheduled cron tasks, or fleet architecture, provide a concise, high-level map (component names and core functions). Always pause and let the user guide where to dig deeper.
+• Suppression of Unsolicited Incident Triage: Never autonomously scrape logs, inspect non-zero exit codes, grep for tracebacks, or generate remedial action checklists unless the user explicitly requests troubleshooting, debugging, or fixing a broken component.
+• Natural Voice & Clean Responses: Do not echo, quote, or repeat the user's incoming message. Answer directly as a peer collaborator in natural Chief of Staff prose.
+• Direct Handling for Inquiries: Answer greetings, casual banter, conversational inquiries (e.g. "Nice, how are you doing?"), and check-ins directly in natural Chief of Staff prose without delegating to subagents.
+• Fleet Status Queries: For fleet inquiries ("how's our fleet doing?", "what's the fleet status?"), run read-only inspection commands (`herdr machine list`, `tailscale status`, `herdr agent list`) directly in your root pane and reply conversationally.
+• Strict Delegation Guardrail: Junior worker panes (OpenCode, Hermes) must ONLY be created when specialized execution (e.g. writing code, editing files, running test suites, managing Docker containers) is required, via explicit `herdr_handoff` or `herdr_pane_run` (or native `herdr_spawn`).
 
 --- Currently Active Herdr Panes ---
 {active_panes_section}
 
+--- Presentation Layer: Slack mrkdwn & Conversational Protocol ---
+Your presentation layer is Slack. You MUST strictly adhere to Slack mrkdwn syntax:
+• Section headers: Use *Bold Title* (never use standard markdown ###, ##, or #).
+• Bold text: Use *single asterisks* (never **double asterisks**).
+• Inline code: Use `code`.
+• Links: Use <URL|Label> (e.g., <http://localhost:8090|Test Server>).
+• Conversational tone: Use standard Slack emojis (:white_check_mark:, :warning:, :rocket:, :gear:) naturally, not robotically.
+• No Interactive Terminal Menus:
+  - Never render terminal arrow-key select menus (`↑/↓ Navigate · enter Select · esc Skip`).
+  - When presenting choices to Carl, always output them as a numbered markdown list (1. Option A, 2. Option B) and ask for his preference or a write-in.
+
+--- Dual-Pane Workspace Architecture & Execution ---
+You run in Pane 1 (liaison) dedicated to pure cognition, planning, and Slack communication. You have no local subshell execution in your pane and never block on child process I/O.
+• Pane 2 (runner): Dedicated, persistent OS shell rooted in the workspace directory.
+• Any command targeting the local host runs in Pane 2 via `herdr_pane_run(pane="runner", command="...")`.
+• Heavy coding tasks hand off to OpenCode via `herdr_handoff(subagent="opencode", ...)`.
+• Remote fleet tasks target `desktop-pc`, `oci-machine`, or `personal-laptop`.
+• Active Runner Observation:
+  - When a runner command pauses or opens an interactive listener (like Google OAuth, confirmations, or long builds), inspect Pane 2 using `herdr_agent_read(pane="runner")`.
+  - Immediately message Carl in Slack with the situation and the exact link/action needed (e.g., "Rclone is waiting for Google OAuth approval in Chrome on `hermes` at <http://127.0.0.1:53682/auth|this link>. Let me know once approved.").
+
 --- Operating Rules ---
-1. ALWAYS PITCH THE PLAN FIRST:
-   When Carl asks you to perform a task or spike, DO NOT call `herdr_spawn` immediately.
+1. ALWAYS PITCH THE PLAN FIRST (FOR CODE/SYSTEM TASKS ONLY):
+   When Carl asks you to perform a code modification, refactor, or infrastructure spike, DO NOT call `herdr_spawn` immediately.
    First, pitch your plan in 2 concise, authentic sentences:
    - State the target machine and working directory.
    - State which worker you will delegate to (e.g. OpenCode or Hermes).
    - Summarize the operational strategy and ask for Carl's approval (e.g. "Ready when you are—say `go` or 👍 to run it.").
+   (Note: NEVER pitch a plan or delegate for greetings or conversational fleet checks; answer them directly!)
 
 2. DISPATCH ON APPROVAL (NATURAL AFFIRMATION):
    Any affirmative reply ("go", "let's go", "do it", "looks good", "lgtm", "thumbs up", "👍", or "Approved, proceed.") means execute!
@@ -158,6 +211,10 @@ You NEVER write production code directly—you delegate execution to junior work
 
 7. SLACK FORMATTING:
    Always format output in Slack mrkdwn: *bold* with single asterisks (never **bold**), `inline code`, and clean bullets.
+
+8. DUAL-PANE EXECUTION & ACTIVE RUNNER OBSERVATION:
+   Local subshell execution is disabled in liaison (Pane 1). All shell commands targeting the local host must run in Pane 2 via `herdr_pane_run(pane="runner", command="...")`.
+   Inspect Pane 2 using `herdr_agent_read(pane="runner")` when interactive listeners or long processes run, and immediately update Carl in Slack.
 """
 
 
@@ -172,10 +229,13 @@ class ChiefOfStaff:
         """Execute a registered native tool function by name."""
         logger.info(f"Executing native tool: {name}({args})")
         if name in ("herdr_spawn", "spawn_agent"):
+            worker_target = args.get("worker")
+            if not worker_target:
+                return {"error": "Explicit worker parameter (e.g. opencode-dev, hermes-worker) is required to spawn subagent."}
             return await herdr_tools.herdr_spawn(
                 node=args.get("node", "hermes"),
                 cwd=args.get("cwd", "/Users/hermes"),
-                worker=args.get("worker", "opencode-dev"),
+                worker=worker_target,
                 prompt=args.get("prompt") or args.get("instructions", ""),
                 instructions=args.get("instructions") or args.get("prompt", ""),
                 isolate_branch=args.get("isolate_branch", True)
@@ -187,6 +247,29 @@ class ChiefOfStaff:
                 pane_id=args.get("pane_id", ""),
                 cwd=args.get("cwd", ""),
                 rollback=args.get("rollback", False)
+            )
+        elif name == "herdr_pane_run":
+            return await herdr_tools.herdr_pane_run(
+                pane=args.get("pane", "runner"),
+                command=args.get("command") or args.get("cmd", "")
+            )
+        elif name in ("herdr_agent_read", "read_runner"):
+            try:
+                lines_val = int(args.get("lines", 30))
+            except Exception:
+                lines_val = 30
+            return await herdr_tools.herdr_agent_read(
+                pane=args.get("pane", "runner"),
+                lines=lines_val
+            )
+        elif name == "herdr_handoff":
+            subagent = args.get("subagent") or args.get("worker", "opencode")
+            task = args.get("task") or args.get("prompt") or args.get("instructions") or args.get("command", "")
+            return await herdr_tools.herdr_handoff(
+                subagent=subagent,
+                task=task,
+                cwd=args.get("cwd"),
+                node=args.get("node", "hermes")
             )
         elif name == "run_command":
             return await herdr_tools.run_command(
@@ -337,18 +420,21 @@ class ChiefOfStaff:
         # Natural Affirmation / Approval
         if p_lower in ("go", "let's go", "do it", "approved", "proceed", "yes", "lgtm", "looks good", "thumbsup", "approved, proceed.", "👍", "start", "run"):
             reply = "Approved. Spawning junior worker in Herdr..."
-        # Status / URL query
-        elif any(k in p_lower for k in ("url", "port", "status", "progress", "how's it going")):
+        # Status / URL / Fleet query
+        elif any(k in p_lower for k in ("url", "port", "status", "progress", "how's it going", "fleet doing", "fleet")):
             if SPAWNED_AGENTS:
                 last_pane, last_info = list(SPAWNED_AGENTS.items())[-1]
                 reply = f"The worker is active in pane `{last_pane}` (`{last_info.get('cwd')}`)."
             else:
-                reply = "No worker pane currently active in Herdr."
+                reply = "Doing great! Fleet is healthy and all background Herdr agents are standing by."
+        # Conversational greetings / check-ins
+        elif any(k in p_lower for k in ("hello", "hi", "hey", "how are you", "how're you", "how are you doing", "nice", "good morning", "good evening")):
+            reply = "Doing well, Carl! All systems across the fleet are running smoothly."
         # Undo / Abort
         elif any(k in p_lower for k in ("undo", "abort", "cancel", "scrap", "clean up")):
             reply = "Terminated agent and restored working directory baseline."
         else:
-            reply = f"I'll have OpenCode handle this task in an isolated sandbox. Ready when you are—say `go` or 👍 to run it."
+            reply = "I'm on it. Ready when you are—say `go` or 👍 to run it."
 
         thread_history.append({"role": "model", "parts": [{"text": reply}]})
         return (reply, thread_history)

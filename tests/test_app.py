@@ -23,6 +23,7 @@ Comprehensive unit tests for First Mate Thin Ingress Gateway:
 import os
 import sys
 import json
+import asyncio
 import unittest
 from unittest.mock import AsyncMock, patch, MagicMock
 
@@ -45,6 +46,7 @@ from app import (
     HOST_DIR,
     DEFAULT_TARGET_REPO
 )
+from first_mate.gateway import SessionState
 
 
 class TestThinIngressGateway(unittest.IsolatedAsyncioTestCase):
@@ -320,6 +322,589 @@ class TestThinIngressGateway(unittest.IsolatedAsyncioTestCase):
             self.assertIn("http://127.0.0.1:51723", reply)
             self.assertNotIn("retrieving it now", reply.lower())
 
+    async def test_ignores_channel_message_without_mention(self):
+        """Channel message without @AGY is ignored and does not react."""
+        client = AsyncMock()
+        client.auth_test = AsyncMock(return_value={"user_id": "U_AGY"})
+        client.reactions_add = AsyncMock()
+        app.BOT_USER_ID = "U_AGY"
+
+        event = {
+            "channel": "C_GENERAL",
+            "channel_type": "channel",
+            "ts": "600.001",
+            "text": "can anyone check disk space?",
+        }
+
+        should_process = await app.should_process_ingress_event(event, client)
+        self.assertFalse(should_process)
+
+        with patch.object(app, "process_user_prompt", new_callable=AsyncMock) as mock_prompt, \
+             patch.object(app.ingress_gateway, "handle_message", new_callable=AsyncMock) as mock_ingress:
+            await app.handle_message_events(event, client)
+            mock_prompt.assert_not_called()
+            mock_ingress.assert_not_called()
+            client.reactions_add.assert_not_called()
+
+    async def test_ignores_message_targeting_other_bots(self):
+        """Message containing <@U_HERMES> in a channel or thread is ignored and does not react."""
+        client = AsyncMock()
+        client.auth_test = AsyncMock(return_value={"user_id": "U_AGY"})
+        client.reactions_add = AsyncMock()
+        app.BOT_USER_ID = "U_AGY"
+
+        # 1. In a channel
+        channel_event = {
+            "channel": "C_GENERAL",
+            "channel_type": "channel",
+            "ts": "600.002",
+            "text": "<@U_HERMES> can you check disk space?",
+        }
+        self.assertFalse(await app.should_process_ingress_event(channel_event, client))
+
+        # 2. In an active thread
+        session_key = "C_GENERAL:600.001"
+        session = GatewaySession(
+            session_key=session_key,
+            agent_name="fm-test-agent",
+            target_cwd="/Users/hermes/projects/AGY",
+            channel="C_GENERAL",
+            thread_ts="600.001"
+        )
+        sessions[session_key] = session
+
+        thread_event = {
+            "channel": "C_GENERAL",
+            "channel_type": "channel",
+            "ts": "600.003",
+            "thread_ts": "600.001",
+            "text": "<@U_HERMES> what is the status?",
+        }
+        self.assertFalse(await app.should_process_ingress_event(thread_event, client))
+
+        with patch.object(app, "process_user_prompt", new_callable=AsyncMock) as mock_prompt, \
+             patch.object(app.ingress_gateway, "handle_message", new_callable=AsyncMock) as mock_ingress:
+            await app.handle_message_events(channel_event, client)
+            await app.handle_message_events(thread_event, client)
+            mock_prompt.assert_not_called()
+            mock_ingress.assert_not_called()
+            client.reactions_add.assert_not_called()
+
+    async def test_handles_direct_messages(self):
+        """1:1 DM is processed normally."""
+        client = AsyncMock()
+        client.auth_test = AsyncMock(return_value={"user_id": "U_AGY"})
+        app.BOT_USER_ID = "U_AGY"
+
+        event = {
+            "channel": "D12345",
+            "channel_type": "im",
+            "ts": "600.004",
+            "text": "check the logs from the last hour",
+        }
+        self.assertTrue(await app.should_process_ingress_event(event, client))
+
+        with patch.object(app, "process_user_prompt", new_callable=AsyncMock) as mock_prompt, \
+             patch.object(app.ingress_gateway, "handle_message", new_callable=AsyncMock) as mock_ingress:
+            await app.handle_message_events(event, client)
+            self.assertTrue(mock_prompt.called or mock_ingress.called)
+
+    async def test_handles_explicit_agy_mentions(self):
+        """Message with <@U_AGY> is processed."""
+        client = AsyncMock()
+        client.auth_test = AsyncMock(return_value={"user_id": "U_AGY"})
+        app.BOT_USER_ID = "U_AGY"
+
+        event = {
+            "channel": "C_GENERAL",
+            "channel_type": "channel",
+            "ts": "600.006",
+            "text": "<@U_AGY> let's take a look at our cronjobs",
+        }
+        self.assertTrue(await app.should_process_ingress_event(event, client))
+
+        with patch.object(app, "process_user_prompt", new_callable=AsyncMock) as mock_prompt, \
+             patch.object(app.ingress_gateway, "handle_message", new_callable=AsyncMock) as mock_ingress:
+            await app.handle_message_events(event, client)
+            self.assertTrue(mock_prompt.called or mock_ingress.called)
+
+    async def test_handles_active_thread_followup_without_mention(self):
+        """Once a thread is active, follow-up messages without @AGY mention must be processed."""
+        client = AsyncMock()
+        client.auth_test = AsyncMock(return_value={"user_id": "U_AGY"})
+        app.BOT_USER_ID = "U_AGY"
+
+        session_key = "C_GENERAL:700.001"
+        session = GatewaySession(
+            session_key=session_key,
+            agent_name="fm-test-agent",
+            target_cwd="/Users/hermes/projects/AGY",
+            channel="C_GENERAL",
+            thread_ts="700.001"
+        )
+        sessions[session_key] = session
+
+        event = {
+            "channel": "C_GENERAL",
+            "channel_type": "channel",
+            "ts": "700.002",
+            "thread_ts": "700.001",
+            "text": "can you also check memory usage?",
+        }
+        self.assertTrue(await app.should_process_ingress_event(event, client))
+
+        with patch.object(app, "process_user_prompt", new_callable=AsyncMock) as mock_prompt, \
+             patch.object(app.ingress_gateway, "handle_message", new_callable=AsyncMock) as mock_ingress:
+            await app.handle_message_events(event, client)
+            self.assertTrue(mock_prompt.called or mock_ingress.called)
+
+    async def test_handles_active_thread_in_session_router_without_mention(self):
+        """Active threads tracked via session_router must be processed on follow-up turns without mention."""
+        client = AsyncMock()
+        client.auth_test = AsyncMock(return_value={"user_id": "U_AGY"})
+        app.BOT_USER_ID = "U_AGY"
+
+        mock_handle = MagicMock()
+        mock_handle.thread_ts = "800.001"
+        mock_handle.state = SessionState.IDLE
+        app.session_router.sessions["C_GENERAL:800.001"] = mock_handle
+
+        try:
+            event = {
+                "channel": "C_GENERAL",
+                "channel_type": "channel",
+                "ts": "800.002",
+                "thread_ts": "800.001",
+                "text": "please proceed with the refactor",
+            }
+            self.assertTrue(await app.should_process_ingress_event(event, client))
+
+            with patch.object(app, "process_user_prompt", new_callable=AsyncMock) as mock_prompt, \
+                 patch.object(app.ingress_gateway, "handle_message", new_callable=AsyncMock) as mock_ingress:
+                await app.handle_message_events(event, client)
+                self.assertTrue(mock_prompt.called or mock_ingress.called)
+        finally:
+            app.session_router.sessions.pop("C_GENERAL:800.001", None)
+
+    async def test_ignores_inactive_thread_message_without_mention(self):
+        """Message in an inactive thread without @AGY is ignored and does not react."""
+        client = AsyncMock()
+        client.auth_test = AsyncMock(return_value={"user_id": "U_AGY"})
+        client.reactions_add = AsyncMock()
+        app.BOT_USER_ID = "U_AGY"
+
+        event = {
+            "channel": "C_GENERAL",
+            "channel_type": "channel",
+            "ts": "900.002",
+            "thread_ts": "900.001",  # Inactive thread, not in sessions/router
+            "text": "is anyone working on this ticket?",
+        }
+        self.assertFalse(await app.should_process_ingress_event(event, client))
+
+        with patch.object(app, "process_user_prompt", new_callable=AsyncMock) as mock_prompt, \
+             patch.object(app.ingress_gateway, "handle_message", new_callable=AsyncMock) as mock_ingress:
+            await app.handle_message_events(event, client)
+            mock_prompt.assert_not_called()
+            mock_ingress.assert_not_called()
+            client.reactions_add.assert_not_called()
+
+    async def test_ignores_empty_or_standalone_mention_without_reaction(self):
+        """Empty messages or standalone @AGY mentions without prompt text are ignored without reactions."""
+        client = AsyncMock()
+        client.auth_test = AsyncMock(return_value={"user_id": "U_AGY"})
+        client.reactions_add = AsyncMock()
+        app.BOT_USER_ID = "U_AGY"
+
+        for text in ("", "   ", "<@U_AGY>", "<@U_AGY>   "):
+            event = {
+                "channel": "C_GENERAL",
+                "channel_type": "channel",
+                "ts": "950.001",
+                "text": text,
+            }
+            self.assertFalse(await app.should_process_ingress_event(event, client))
+
+            with patch.object(app, "process_user_prompt", new_callable=AsyncMock) as mock_prompt, \
+                 patch.object(app.ingress_gateway, "handle_message", new_callable=AsyncMock) as mock_ingress:
+                await app.handle_message_events(event, client)
+                mock_prompt.assert_not_called()
+                mock_ingress.assert_not_called()
+                client.reactions_add.assert_not_called()
+
+    async def test_app_mention_targeting_other_bot_ignored_without_reaction(self):
+        """Slack app_mention event targeting another bot is ignored without reaction."""
+        client = AsyncMock()
+        client.auth_test = AsyncMock(return_value={"user_id": "U_AGY"})
+        client.reactions_add = AsyncMock()
+        app.BOT_USER_ID = "U_AGY"
+
+        event = {
+            "type": "app_mention",
+            "channel": "C_GENERAL",
+            "channel_type": "channel",
+            "ts": "960.001",
+            "text": "<@U_HERMES> please reboot homelab",
+        }
+        self.assertFalse(await app.should_process_ingress_event(event, client))
+
+        with patch.object(app, "process_user_prompt", new_callable=AsyncMock) as mock_prompt, \
+             patch.object(app.ingress_gateway, "handle_message", new_callable=AsyncMock) as mock_ingress:
+            await app.handle_app_mention(event, client)
+            mock_prompt.assert_not_called()
+            mock_ingress.assert_not_called()
+            client.reactions_add.assert_not_called()
+
+    async def test_handles_active_thread_followup_mentioning_human_teammate(self):
+        """Active thread follow-up that mentions a teammate (e.g. <@U_ALICE>) is processed."""
+        client = AsyncMock()
+        client.auth_test = AsyncMock(return_value={"user_id": "U_AGY"})
+        app.BOT_USER_ID = "U_AGY"
+
+        session_key = "C_GENERAL:750.001"
+        session = GatewaySession(
+            session_key=session_key,
+            agent_name="fm-test-agent",
+            target_cwd="/Users/hermes/projects/AGY",
+            channel="C_GENERAL",
+            thread_ts="750.001"
+        )
+        sessions[session_key] = session
+
+        event = {
+            "channel": "C_GENERAL",
+            "channel_type": "channel",
+            "ts": "750.002",
+            "thread_ts": "750.001",
+            "text": "<@U_ALICE> I have approved the PR, please deploy it now",
+        }
+        self.assertTrue(await app.should_process_ingress_event(event, client))
+
+        with patch.object(app, "process_user_prompt", new_callable=AsyncMock) as mock_prompt, \
+             patch.object(app.ingress_gateway, "handle_message", new_callable=AsyncMock) as mock_ingress:
+            await app.handle_message_events(event, client)
+            self.assertTrue(mock_prompt.called or mock_ingress.called)
+
+    async def test_handles_explicit_mention_with_display_label(self):
+        """Mentions with Slack label formatting like <@U_AGY|agy> are processed."""
+        client = AsyncMock()
+        client.auth_test = AsyncMock(return_value={"user_id": "U_AGY"})
+        app.BOT_USER_ID = "U_AGY"
+
+        event = {
+            "channel": "C_GENERAL",
+            "channel_type": "channel",
+            "ts": "760.001",
+            "text": "<@U_AGY|agy> please check system health",
+        }
+        self.assertTrue(await app.should_process_ingress_event(event, client))
+
+        with patch.object(app, "process_user_prompt", new_callable=AsyncMock) as mock_prompt, \
+             patch.object(app.ingress_gateway, "handle_message", new_callable=AsyncMock) as mock_ingress:
+            await app.handle_message_events(event, client)
+            self.assertTrue(mock_prompt.called or mock_ingress.called)
+
+    async def test_handles_message_mentioning_both_hermes_and_agy(self):
+        """When both Hermes and AGY are mentioned, AGY is addressed and processes the turn."""
+        client = AsyncMock()
+        client.auth_test = AsyncMock(return_value={"user_id": "U_AGY"})
+        app.BOT_USER_ID = "U_AGY"
+
+        event = {
+            "channel": "C_GENERAL",
+            "channel_type": "channel",
+            "ts": "770.001",
+            "text": "<@U_HERMES> and <@U_AGY> please coordinate the deployment",
+        }
+        self.assertTrue(await app.should_process_ingress_event(event, client))
+
+        with patch.object(app, "process_user_prompt", new_callable=AsyncMock) as mock_prompt, \
+             patch.object(app.ingress_gateway, "handle_message", new_callable=AsyncMock) as mock_ingress:
+            await app.handle_message_events(event, client)
+            self.assertTrue(mock_prompt.called or mock_ingress.called)
+
+    async def test_ignores_message_sent_by_other_bot_in_active_thread(self):
+        """Messages sent by other bots in an active thread are ignored without reactions."""
+        client = AsyncMock()
+        client.auth_test = AsyncMock(return_value={"user_id": "U_AGY"})
+        client.reactions_add = AsyncMock()
+        app.BOT_USER_ID = "U_AGY"
+
+        session_key = "C_GENERAL:780.001"
+        session = GatewaySession(
+            session_key=session_key,
+            agent_name="fm-test-agent",
+            target_cwd="/Users/hermes/projects/AGY",
+            channel="C_GENERAL",
+            thread_ts="780.001"
+        )
+        sessions[session_key] = session
+
+        for bot_event in (
+            {"channel": "C_GENERAL", "ts": "780.002", "thread_ts": "780.001", "user": "U_HERMES", "text": "Homelab report ready"},
+            {"channel": "C_GENERAL", "ts": "780.003", "thread_ts": "780.001", "user": "U_CI_BOT", "text": "Build passed"},
+            {"channel": "C_GENERAL", "ts": "780.004", "thread_ts": "780.001", "bot_id": "B9999", "text": "Webhook payload"},
+            {"channel": "C_GENERAL", "ts": "780.005", "thread_ts": "780.001", "bot_profile": {"name": "app"}, "text": "App alert"},
+            {"channel": "C_GENERAL", "ts": "780.006", "thread_ts": "780.001", "user": "U_AGY", "text": "Self message echo"},
+        ):
+            self.assertFalse(await app.should_process_ingress_event(bot_event, client))
+
+            with patch.object(app, "process_user_prompt", new_callable=AsyncMock) as mock_prompt, \
+                 patch.object(app.ingress_gateway, "handle_message", new_callable=AsyncMock) as mock_ingress:
+                await app.handle_message_events(bot_event, client)
+                mock_prompt.assert_not_called()
+                mock_ingress.assert_not_called()
+                client.reactions_add.assert_not_called()
+
+    async def test_ignores_plain_text_hermes_mention_in_active_thread(self):
+        """Plain text @hermes message in an active thread is ignored without reaction."""
+        client = AsyncMock()
+        client.auth_test = AsyncMock(return_value={"user_id": "U_AGY"})
+        client.reactions_add = AsyncMock()
+        app.BOT_USER_ID = "U_AGY"
+
+        session_key = "C_GENERAL:790.001"
+        session = GatewaySession(
+            session_key=session_key,
+            agent_name="fm-test-agent",
+            target_cwd="/Users/hermes/projects/AGY",
+            channel="C_GENERAL",
+            thread_ts="790.001"
+        )
+        sessions[session_key] = session
+
+        event = {
+            "channel": "C_GENERAL",
+            "channel_type": "channel",
+            "ts": "790.002",
+            "thread_ts": "790.001",
+            "text": "@hermes please reboot the server",
+        }
+        self.assertFalse(await app.should_process_ingress_event(event, client))
+
+        with patch.object(app, "process_user_prompt", new_callable=AsyncMock) as mock_prompt, \
+             patch.object(app.ingress_gateway, "handle_message", new_callable=AsyncMock) as mock_ingress:
+            await app.handle_message_events(event, client)
+            mock_prompt.assert_not_called()
+            mock_ingress.assert_not_called()
+            client.reactions_add.assert_not_called()
+
+    async def test_ignores_non_conversational_subtypes_without_reaction(self):
+        """Non-conversational message subtypes (message_replied, message_changed, etc.) are ignored."""
+        client = AsyncMock()
+        client.auth_test = AsyncMock(return_value={"user_id": "U_AGY"})
+        client.reactions_add = AsyncMock()
+        app.BOT_USER_ID = "U_AGY"
+
+        for subtype in ("message_replied", "message_changed", "channel_leave", "pinned_item"):
+            event = {
+                "channel": "C_GENERAL",
+                "channel_type": "channel",
+                "ts": "795.001",
+                "subtype": subtype,
+                "text": "subtype event text",
+            }
+            self.assertFalse(await app.should_process_ingress_event(event, client))
+
+            with patch.object(app, "process_user_prompt", new_callable=AsyncMock) as mock_prompt, \
+                 patch.object(app.ingress_gateway, "handle_message", new_callable=AsyncMock) as mock_ingress:
+                await app.handle_message_events(event, client)
+                mock_prompt.assert_not_called()
+                mock_ingress.assert_not_called()
+                client.reactions_add.assert_not_called()
+
+    async def test_active_thread_with_failed_prior_turn_still_accepts_followup(self):
+        """A thread whose previous turn failed is still active and accepts follow-up turns."""
+        client = AsyncMock()
+        client.auth_test = AsyncMock(return_value={"user_id": "U_AGY"})
+        app.BOT_USER_ID = "U_AGY"
+
+        session_key = "C_GENERAL:810.001"
+        session = GatewaySession(
+            session_key=session_key,
+            agent_name="fm-test-agent",
+            target_cwd="/Users/hermes/projects/AGY",
+            channel="C_GENERAL",
+            thread_ts="810.001"
+        )
+        session.status = "failed"
+        sessions[session_key] = session
+
+        event = {
+            "channel": "C_GENERAL",
+            "channel_type": "channel",
+            "ts": "810.002",
+            "thread_ts": "810.001",
+            "text": "try again with python3 instead",
+        }
+        self.assertTrue(await app.should_process_ingress_event(event, client))
+
+    async def test_closed_session_thread_requires_new_mention(self):
+        """A thread whose session was closed ignores messages without @AGY mention, but accepts with mention."""
+        client = AsyncMock()
+        client.auth_test = AsyncMock(return_value={"user_id": "U_AGY"})
+        client.reactions_add = AsyncMock()
+        app.BOT_USER_ID = "U_AGY"
+
+        mock_handle = MagicMock()
+        mock_handle.thread_ts = "820.001"
+        mock_handle.state = SessionState.CLOSED
+        mock_handle.channel = "C_GENERAL"
+        app.session_router.sessions["C_GENERAL:820.001"] = mock_handle
+
+        try:
+            # 1. Without mention -> ignored
+            ev_no_mention = {
+                "channel": "C_GENERAL",
+                "channel_type": "channel",
+                "ts": "820.002",
+                "thread_ts": "820.001",
+                "text": "can you hear me?",
+            }
+            self.assertFalse(await app.should_process_ingress_event(ev_no_mention, client))
+
+            with patch.object(app, "process_user_prompt", new_callable=AsyncMock) as mock_prompt, \
+                 patch.object(app.ingress_gateway, "handle_message", new_callable=AsyncMock) as mock_ingress:
+                await app.handle_message_events(ev_no_mention, client)
+                mock_prompt.assert_not_called()
+                mock_ingress.assert_not_called()
+                client.reactions_add.assert_not_called()
+
+            # 2. With mention -> processed
+            ev_with_mention = {
+                "channel": "C_GENERAL",
+                "channel_type": "channel",
+                "ts": "820.003",
+                "thread_ts": "820.001",
+                "text": "<@U_AGY> wake up and restart session",
+            }
+            self.assertTrue(await app.should_process_ingress_event(ev_with_mention, client))
+        finally:
+            app.session_router.sessions.pop("C_GENERAL:820.001", None)
+
+    async def test_text_delivered_immediately_when_background_task_active(self):
+        """Simulate agy outputting an authorization URL while a background process task remains running.
+        Assert the message is dispatched to Slack within 2 seconds without waiting for a 'result' event.
+        """
+        init_json = json.dumps({
+            "event": "init",
+            "conversation_id": "c-oauth-app-test",
+            "init": {"tools": ["run_command"]},
+        })
+
+        oauth_url = "http://127.0.0.1:53682/auth?state=xyz123"
+        stream_lines = [
+            # 1. Tool start
+            json.dumps({
+                "event": "step_update",
+                "step_update": {
+                    "step_type": "tool",
+                    "state": "ACTIVE",
+                    "tool_name": "run_command",
+                    "step_index": 1,
+                    "tool_info": {
+                        "parameters": {"CommandLine": "rclone config reconnect gdrive:"}
+                    },
+                }
+            }),
+            # 2. Tool completed as a background task
+            json.dumps({
+                "event": "step_update",
+                "step_update": {
+                    "step_type": "tool",
+                    "state": "DONE",
+                    "tool_name": "run_command",
+                    "step_index": 1,
+                    "tool_info": {
+                        "output": "Tool is running as a background task with task id: 555b9570/task-91\nTask logs are available at: file:///task-91.log",
+                        "status": "RUNNING",
+                    },
+                }
+            }),
+            # 3. Model speaks conversational text containing authorization URL
+            json.dumps({
+                "event": "step_update",
+                "step_update": {
+                    "step_type": "agent_response",
+                    "state": "ACTIVE",
+                    "step_index": 2,
+                    "text_delta": f"Please visit {oauth_url} to authorize Google Drive access.",
+                }
+            }),
+        ]
+
+        class BackgroundProcessMock:
+            def __init__(self):
+                self.stdin = MagicMock()
+                self.stdin.write = MagicMock()
+                self.stdin.drain = AsyncMock()
+                self.stdin.close = MagicMock()
+                self.stdin.wait_closed = AsyncMock()
+                self.stdin.is_closing = MagicMock(return_value=False)
+                self.stderr = MagicMock()
+                self.stderr.read = AsyncMock(return_value=b"")
+                self.returncode = None
+                self._lines = [init_json] + stream_lines
+
+            async def readline(self):
+                if self._lines:
+                    line = self._lines.pop(0)
+                    return line.encode("utf-8") + b"\n"
+                await asyncio.sleep(10.0)
+                return b""
+
+            async def wait(self):
+                return 0
+
+            def terminate(self):
+                self.returncode = 0
+
+            def kill(self):
+                self.returncode = -9
+
+        mock_proc = BackgroundProcessMock()
+        mock_proc.stdout = MagicMock()
+        mock_proc.stdout.readline = AsyncMock(side_effect=mock_proc.readline)
+
+        client = AsyncMock()
+        client.chat_postMessage = AsyncMock(return_value={"ok": True, "ts": "200.001"})
+        client.reactions_add = AsyncMock(return_value={"ok": True})
+        client.reactions_remove = AsyncMock(return_value={"ok": True})
+
+        from first_mate.gateway.router import SessionRouter
+        from first_mate.gateway.ingress import IngressGateway
+
+        router = SessionRouter(default_target_cwd="/Users/hermes/projects/first-mate")
+        gateway = IngressGateway(router=router)
+
+        event = {
+            "channel": "C_OAUTH_APP",
+            "ts": "100.999",
+            "thread_ts": "100.999",
+            "text": "ok, can you help me re-auth google drive?",
+        }
+
+        t_start = asyncio.get_event_loop().time()
+
+        with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec:
+            mock_exec.return_value = mock_proc
+            await asyncio.wait_for(gateway.handle_message(event, client), timeout=2.5)
+
+        t_elapsed = asyncio.get_event_loop().time() - t_start
+
+        self.assertLess(t_elapsed, 2.0, f"Turn took {t_elapsed:.2f}s, expected < 2.0s")
+        self.assertTrue(client.chat_postMessage.called)
+        posted_texts = [
+            call.kwargs.get("text") or (call.args[1] if len(call.args) > 1 else "")
+            for call in client.chat_postMessage.call_args_list
+        ]
+        combined_text = " ".join(posted_texts)
+        self.assertIn(oauth_url, combined_text)
+        self.assertEqual(len(client.chat_postMessage.call_args_list), 1)
+
+        await router.teardown("C_OAUTH_APP", "100.999")
+
 
 if __name__ == "__main__":
     unittest.main()
+

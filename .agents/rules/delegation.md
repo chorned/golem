@@ -76,3 +76,26 @@ These rules dictate how AGY (Chief of Staff) routes tasks across the fleet machi
 3. **Artifact Discovery:**
    - Code changes produce unified diffs.
    - Exfiltrate images (`.png`, `.jpg`, `.svg`) and export documents (`.pdf`, `.csv`, `.xlsx`, `.zip`) from remote workspaces to local Hermes before uploading to Slack.
+
+---
+
+## 3. Conversational Queries & Fleet Inquiries (Direct Handling)
+
+- **Broad Overview First:** When discussing infrastructure, jobs, scheduled cron tasks, or fleet architecture, provide a concise, high-level map (component names and core functions). Always pause and let the user guide where to dig deeper.
+- **Suppression of Unsolicited Incident Triage:** Never autonomously scrape logs, inspect non-zero exit codes, grep for tracebacks, or generate remedial action checklists unless the user explicitly requests troubleshooting, debugging, or fixing a broken component.
+- **Natural Voice & Clean Responses:** Do not echo, quote, or repeat the user's incoming message. Answer directly as a peer collaborator in natural Chief of Staff prose.
+- **Conversational & Status Inquiries:** Greetings, check-ins, conversational inquiries, and fleet status checks must be answered directly by AGY in its root pane without delegating to subagents.
+- **Fleet Inspection:** Run read-only inspection commands (`herdr machine list`, `tailscale status`, `herdr agent list`) directly in the root pane to synthesize real-time fleet health.
+- **Zero Inappropriate Delegation:** DO NOT spawn `opencode` or `hermes` workers for conversational queries or read-only fleet checks. Subagent worker panes must ONLY be created if AGY explicitly invokes `herdr_handoff` or `herdr_pane_run` for actual development or infrastructure tasks.
+
+---
+
+## 4. Heavy I/O, Media Tools & Network Volume Guardrails (`/Volumes/*`)
+
+- **Non-Interactive Media Execution:** Never invoke `ffmpeg`, `ffprobe`, or media decoders interactively. Always supply `-nostdin`, `-hide_banner`, and `-y`.
+- **Bounded Frame & Time Limits:** Media extraction from large files (especially on `/Volumes/CarlFlix` or remote SMB/NFS mounts) MUST explicitly constrain scope with `-frames:v 1` (for cover art) or `-t <seconds>` (for audio/video slicing). Never demux full gigabyte media streams into memory or pipes.
+- **SMB / Network Filesystem Execution:** All intensive I/O operations targeting `/Volumes/*` (including `find`, `grep -r`, `du`, `tar`, and media processing) are susceptible to `U+` uninterruptible kernel sleep. They MUST:
+  1. Be dispatched to the background runner pane via `herdr_pane_run` or executed with `IsDaemon=true` / background task flags, NEVER blocking the synchronous liaison turn.
+  2. Enforce strict bounded search limits (e.g. `find -maxdepth 3`).
+- **5-Second Rule:** Any command estimated to run for more than 5 seconds must be executed asynchronously in the background so the conversational session lock is not starved.
+

@@ -142,6 +142,67 @@ HERDR_TOOLS_DECLARATIONS = [
             },
             "required": ["pane_id"]
         }
+    },
+    {
+        "name": "herdr_pane_run",
+        "description": "Execute a shell command in the dedicated persistent runner pane (Pane 2) without blocking liaison reasoning.",
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "pane": {
+                    "type": "STRING",
+                    "description": "The pane identifier or label (default: 'runner')."
+                },
+                "command": {
+                    "type": "STRING",
+                    "description": "The shell command to execute in Pane 2."
+                }
+            },
+            "required": ["command"]
+        }
+    },
+    {
+        "name": "herdr_agent_read",
+        "description": "Inspect the terminal buffer of an agent or pane (e.g. runner) to observe interactive prompts, OAuth listeners, or build outputs.",
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "pane": {
+                    "type": "STRING",
+                    "description": "The pane or agent identifier (default: 'runner')."
+                },
+                "lines": {
+                    "type": "INTEGER",
+                    "description": "Number of terminal output lines to read (default: 30)."
+                }
+            }
+        }
+    },
+    {
+        "name": "herdr_handoff",
+        "description": "Handoff heavy coding or homelab execution to a specialized junior worker (OpenCode or Hermes).",
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "subagent": {
+                    "type": "STRING",
+                    "description": "The target worker subagent (e.g. opencode, opencode-dev, hermes)."
+                },
+                "task": {
+                    "type": "STRING",
+                    "description": "Detailed task instructions for the worker."
+                },
+                "cwd": {
+                    "type": "STRING",
+                    "description": "Target working directory."
+                },
+                "node": {
+                    "type": "STRING",
+                    "description": "Target fleet machine node (default: hermes)."
+                }
+            },
+            "required": ["subagent", "task"]
+        }
     }
 ]
 
@@ -149,7 +210,7 @@ HERDR_TOOLS_DECLARATIONS = [
 async def herdr_spawn(
     node: str = "hermes",
     cwd: str = "/Users/hermes",
-    worker: str = "opencode-dev",
+    worker: str = "",
     prompt: str = "",
     instructions: str = "",
     isolate_branch: bool = True
@@ -162,6 +223,8 @@ async def herdr_spawn(
        and configures FrugaLLM credentials (0.0.0.0:61721).
     4. Returns {"pane_id": "...", "node": node, "cwd": cwd, "branch": branch_name}.
     """
+    if not worker:
+        return {"error": "Explicit worker parameter (e.g. opencode-dev, hermes-worker) is required to spawn subagent."}
     effective_prompt = prompt or instructions
     herdr_bin = os.environ.get("HERDR_BIN") or HERDR_BIN_DEFAULT
     effective_cwd = os.path.realpath(os.path.abspath(os.path.expanduser(cwd)))
@@ -405,39 +468,253 @@ async def herdr_stop(pane_id: str, cwd: str = "", rollback: bool = False) -> str
     return f"Stopped agent pane `{pane_id}`.{rollback_detail}".strip()
 
 
-async def run_command(cmd: str, cwd: str = "/Users/hermes") -> str:
+async def run_command(
+    cmd: str,
+    cwd: str = "/Users/hermes",
+    pane: str = "runner",
+    yield_timeout: float = 3.0,
+) -> str:
     """
-    Runs a shell inspection command (e.g. lsof, git status, ls -la) in cwd and returns output.
+    Execute a shell inspection or diagnostic command without blocking the liaison loop.
+    Routes command execution through RunnerExecutor targeting Pane 2 (the runner pane)
+    with a strict <= 3.0s yield timeout ceiling so the liaison is never blocked by host subprocesses.
     """
     effective_cwd = os.path.realpath(os.path.abspath(os.path.expanduser(cwd))) if cwd else "/Users/hermes"
     if not os.path.isdir(effective_cwd):
         effective_cwd = "/Users/hermes"
 
+    sanitized_cmd = cmd
+    if re.search(r"\b(?:ffmpeg|ffprobe)\b", sanitized_cmd):
+        if "-nostdin" not in sanitized_cmd:
+            sanitized_cmd = re.sub(r"\b(ffmpeg|ffprobe)\b", r"\1 -nostdin", sanitized_cmd, count=1)
+        if "-hide_banner" not in sanitized_cmd:
+            sanitized_cmd = re.sub(r"\b(ffmpeg|ffprobe)\b", r"\1 -hide_banner", sanitized_cmd, count=1)
+
+    full_cmd = f"cd {effective_cwd} && {sanitized_cmd}" if effective_cwd != "/Users/hermes" else sanitized_cmd
+
+    from first_mate.execution.runner import RunnerExecutor
+    executor = RunnerExecutor()
+
     try:
-        proc = await asyncio.create_subprocess_shell(
-            cmd,
-            cwd=effective_cwd,
+        handle = await executor.run_command(pane=pane, command=full_cmd, yield_timeout=yield_timeout)
+        if handle.status == "completed":
+            return handle.stdout or "(No output)"
+        elif handle.status == "running":
+            try:
+                from first_mate.gateway.session import CURRENT_SESSION
+                session = CURRENT_SESSION.get()
+                if session is not None:
+                    session.active_execution = handle
+            except Exception as e:
+                logger.debug(f"Failed to record active_execution on CURRENT_SESSION: {e}")
+
+            return (
+                f"[Running in Pane 2 (pid={handle.pid})]: "
+                f"{handle.message or 'Command dispatched to runner pane; executing in background without blocking liaison.'}"
+            )
+        else:
+            combined = f"{handle.stdout}\n{handle.stderr}".strip()
+            return f"Command exited with code {handle.returncode}:\n{combined or handle.message}"
+    except Exception as e:
+        logger.error(f"Error executing command '{cmd}' via RunnerExecutor in pane {pane}: {e}")
+        return f"Error executing command '{cmd}': {e}"
+
+
+async def herdr_pane_run(
+    pane: str = "runner",
+    command: str = "",
+    workspace: Optional[str] = None,
+    yield_timeout: float = 3.0,
+) -> Dict[str, Any]:
+    """
+    Execute a shell command in the dedicated runner pane (Pane 2) without blocking liaison reasoning.
+    Enforces a strict <= 3.0s yield timeout ceiling and clamps auxiliary timeouts.
+    """
+    if not command:
+        return {"error": "Command string is required."}
+
+    dispatched_at = time.time()
+    herdr_bin = shutil.which("herdr") or HERDR_BIN_DEFAULT
+    cmd_args = [herdr_bin, "pane", "run", pane, command]
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd_args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=15.0)
-        out_text = stdout.decode("utf-8", errors="replace").strip()
-        err_text = stderr.decode("utf-8", errors="replace").strip()
-        if proc.returncode == 0:
-            return out_text or "(No output)"
-        else:
-            combined = f"{out_text}\n{err_text}".strip()
-            return f"Command exited with code {proc.returncode}:\n{combined}"
-    except asyncio.TimeoutError:
-        return f"Command '{cmd}' timed out after 15 seconds."
+        try:
+            rem_initial = max(0.05, yield_timeout - (time.time() - dispatched_at))
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=rem_initial)
+            code = proc.returncode if proc.returncode is not None else 0
+            out = stdout_bytes.decode("utf-8", errors="replace").strip()
+            err = stderr_bytes.decode("utf-8", errors="replace").strip()
+
+            # If pane run failed with pane_not_found, try resolving pane_id via herdr pane list
+            if code != 0 and ("pane_not_found" in err or "not found" in err.lower()):
+                try:
+                    rem_list = max(0.05, min(1.0, yield_timeout - (time.time() - dispatched_at)))
+                    list_proc = await asyncio.create_subprocess_exec(
+                        herdr_bin, "pane", "list",
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE
+                    )
+                    l_out, _ = await asyncio.wait_for(list_proc.communicate(), timeout=rem_list)
+                    if list_proc.returncode == 0 and l_out:
+                        data = json.loads(l_out.decode("utf-8", errors="replace"))
+                        panes_list = data.get("result", {}).get("panes", []) if isinstance(data, dict) else []
+                        for p_info in panes_list:
+                            if p_info.get("label") == pane or p_info.get("name") == pane:
+                                resolved_id = p_info.get("pane_id")
+                                if resolved_id:
+                                    rem_rerun = max(0.05, yield_timeout - (time.time() - dispatched_at))
+                                    r_proc = await asyncio.create_subprocess_exec(
+                                        herdr_bin, "pane", "run", resolved_id, command,
+                                        stdout=asyncio.subprocess.PIPE,
+                                        stderr=asyncio.subprocess.PIPE
+                                    )
+                                    r_out_b, r_err_b = await asyncio.wait_for(r_proc.communicate(), timeout=rem_rerun)
+                                    return {
+                                        "pane": resolved_id,
+                                        "command": command,
+                                        "status": "dispatched" if r_proc.returncode == 0 else "error",
+                                        "returncode": r_proc.returncode,
+                                        "stdout": r_out_b.decode("utf-8", errors="replace").strip(),
+                                        "stderr": r_err_b.decode("utf-8", errors="replace").strip()
+                                    }
+                except Exception:
+                    pass
+
+            return {
+                "pane": pane,
+                "command": command,
+                "status": "dispatched" if code == 0 else "error",
+                "returncode": code,
+                "stdout": out,
+                "stderr": err
+            }
+        except asyncio.TimeoutError:
+            try:
+                from first_mate.gateway.session import CURRENT_SESSION
+                from first_mate.execution.runner import ExecutionHandle
+                session = CURRENT_SESSION.get()
+                if session is not None:
+                    session.active_execution = ExecutionHandle(
+                        status="running",
+                        pane=pane,
+                        command=command,
+                        message=f"Command dispatched to {pane} pane; executing in background without blocking liaison."
+                    )
+            except Exception:
+                pass
+            return {
+                "pane": pane,
+                "command": command,
+                "status": "running",
+                "message": f"Command dispatched to {pane} pane; executing in background without blocking liaison."
+            }
     except Exception as e:
-        return f"Error executing command '{cmd}': {e}"
+        logger.error(f"Error in herdr_pane_run: {e}")
+        return {"error": str(e), "pane": pane, "command": command}
+
+
+async def herdr_agent_read(
+    pane: str = "runner",
+    lines: int = 30
+) -> str:
+    """
+    Read terminal output buffer from runner pane or agent via herdr agent read or herdr pane read.
+    """
+    herdr_bin = shutil.which("herdr") or HERDR_BIN_DEFAULT
+    cmd_args = [herdr_bin, "agent", "read", pane, "--lines", str(lines)]
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd_args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=5.0)
+        out = stdout_bytes.decode("utf-8", errors="replace").strip()
+        code = proc.returncode if proc.returncode is not None else 0
+
+        # If agent read succeeded and returned clean text (not error JSON), return it
+        if code == 0 and out and "error" not in out:
+            return out
+
+        # Fallback to pane read (for plain shell panes like 'runner')
+        pane_cmd = [herdr_bin, "pane", "read", pane, "--lines", str(lines)]
+        p_proc = await asyncio.create_subprocess_exec(
+            *pane_cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        p_stdout, p_stderr = await asyncio.wait_for(p_proc.communicate(), timeout=5.0)
+        p_out = p_stdout.decode("utf-8", errors="replace").strip()
+        p_code = p_proc.returncode if p_proc.returncode is not None else 0
+        if p_code == 0 and p_out and "error" not in p_out:
+            return p_out
+
+        # If pane read by label failed, try resolving pane_id via herdr pane list
+        try:
+            list_proc = await asyncio.create_subprocess_exec(
+                herdr_bin, "pane", "list",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            l_out, _ = await asyncio.wait_for(list_proc.communicate(), timeout=3.0)
+            if list_proc.returncode == 0 and l_out:
+                data = json.loads(l_out.decode("utf-8", errors="replace"))
+                panes_list = data.get("result", {}).get("panes", []) if isinstance(data, dict) else []
+                for p_info in panes_list:
+                    if p_info.get("label") == pane or p_info.get("name") == pane:
+                        resolved_id = p_info.get("pane_id")
+                        if resolved_id:
+                            r_proc = await asyncio.create_subprocess_exec(
+                                herdr_bin, "pane", "read", resolved_id, "--lines", str(lines),
+                                stdout=asyncio.subprocess.PIPE,
+                                stderr=asyncio.subprocess.PIPE
+                            )
+                            r_out, _ = await asyncio.wait_for(r_proc.communicate(), timeout=5.0)
+                            if r_proc.returncode == 0 and r_out:
+                                return r_out.decode("utf-8", errors="replace").strip()
+        except Exception:
+            pass
+
+        return p_out or out or f"No terminal output recorded for pane {pane}."
+    except Exception as e:
+        logger.error(f"Error in herdr_agent_read: {e}")
+        return f"Error reading pane {pane}: {e}"
+
+
+async def herdr_handoff(
+    subagent: str = "opencode",
+    task: str = "",
+    instructions: Optional[str] = None,
+    cwd: Optional[str] = None,
+    node: str = "hermes"
+) -> Dict[str, Any]:
+    """
+    Handoff heavy coding or homelab execution to a specialized junior worker (OpenCode or Hermes).
+    """
+    prompt = task or instructions or ""
+    target_cwd = cwd or "/Users/hermes"
+    return await herdr_spawn(
+        node=node,
+        cwd=target_cwd,
+        worker=subagent,
+        prompt=prompt,
+        instructions=prompt,
+        isolate_branch=True
+    )
 
 
 # Backwards compatibility aliases
 spawn_agent = herdr_spawn
 read_agent = herdr_read
 stop_agent = herdr_stop
+pane_run = herdr_pane_run
+agent_read = herdr_agent_read
+handoff = herdr_handoff
 
 BANNED_ACTION_PAYLOAD_PATTERNS = [
     re.compile(r"^\s*echo\s+['\"].*?['\"]\s*$", re.IGNORECASE),
@@ -460,4 +737,47 @@ def validate_action_payload(payload: Any, target_node: str = "hermes", worker_id
     elif target_node == "oci-machine":
         return "uptime && uname -a"
     return "git status -s"
+
+
+def build_agent_tool_dispatch_table() -> Dict[str, Any]:
+    """Build dispatch table mapping tool names to execution coroutines/functions."""
+    return {
+        "herdr_spawn": herdr_spawn,
+        "spawn_agent": spawn_agent,
+        "herdr_read": herdr_read,
+        "read_agent": read_agent,
+        "herdr_stop": herdr_stop,
+        "stop_agent": stop_agent,
+        "herdr_pane_run": herdr_pane_run,
+        "pane_run": pane_run,
+        "herdr_agent_read": herdr_agent_read,
+        "agent_read": agent_read,
+        "herdr_handoff": herdr_handoff,
+        "handoff": handoff,
+        "run_command": run_command,
+    }
+
+
+__all__ = [
+    "SPAWNED_AGENTS",
+    "HERDR_TOOLS_DECLARATIONS",
+    "HERDR_BIN_DEFAULT",
+    "herdr_spawn",
+    "spawn_agent",
+    "herdr_read",
+    "read_agent",
+    "herdr_stop",
+    "stop_agent",
+    "herdr_pane_run",
+    "pane_run",
+    "herdr_agent_read",
+    "agent_read",
+    "herdr_handoff",
+    "handoff",
+    "run_command",
+    "validate_action_payload",
+    "BANNED_ACTION_PAYLOAD_PATTERNS",
+    "build_agent_tool_dispatch_table",
+]
+
 

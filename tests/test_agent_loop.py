@@ -49,6 +49,12 @@ class TestAgentLoop(unittest.IsolatedAsyncioTestCase):
         self.assertIn("UNDO & ROLLBACK", prompt)
         self.assertIn("NO UNNECESSARY PRs", prompt)
 
+    def test_build_system_prompt_requires_immediate_acknowledgment(self):
+        """Verify agent_core.py prompt instructions require immediate natural acknowledgment before running multi-step tool calls in new sessions."""
+        prompt = build_system_prompt()
+        self.assertIn("Immediate Conversational Acknowledgment", prompt)
+        self.assertIn("acknowledgment before executing inspection tools", prompt)
+
     def test_format_for_slack_converts_bold_outside_code(self):
         """Verify double asterisks convert to single asterisks in Slack mrkdwn outside code blocks."""
         input_text = "This is **bold** text and `**not bold**` in code block."
@@ -492,6 +498,570 @@ class TestAgentLoop(unittest.IsolatedAsyncioTestCase):
             self.assertIn("http://localhost:8080", reply)
             self.assertNotIn("I'll retrieve that for you now", reply)
 
+    async def test_text_delivered_immediately_when_background_task_active(self):
+        """Simulate agy outputting an authorization URL while a background process task remains running.
+        Assert the message is dispatched to Slack within 2 seconds without waiting for a 'result' event.
+        """
+        init_json = json.dumps({
+            "event": "init",
+            "conversation_id": "c-oauth-reauth-agentloop",
+            "init": {"tools": ["run_command"]},
+        })
+
+        oauth_url = "http://127.0.0.1:53682/auth?state=xyz123"
+        stream_lines = [
+            # 1. Tool start
+            json.dumps({
+                "event": "step_update",
+                "step_update": {
+                    "step_type": "tool",
+                    "state": "ACTIVE",
+                    "tool_name": "run_command",
+                    "step_index": 1,
+                    "tool_info": {
+                        "parameters": {"CommandLine": "rclone config reconnect gdrive:"}
+                    },
+                }
+            }),
+            # 2. Tool completed as a background task
+            json.dumps({
+                "event": "step_update",
+                "step_update": {
+                    "step_type": "tool",
+                    "state": "DONE",
+                    "tool_name": "run_command",
+                    "step_index": 1,
+                    "tool_info": {
+                        "output": "Tool is running as a background task with task id: 555b9570/task-91\nTask logs are available at: file:///task-91.log",
+                        "status": "RUNNING",
+                    },
+                }
+            }),
+            # 3. Model speaks conversational text containing authorization URL
+            json.dumps({
+                "event": "step_update",
+                "step_update": {
+                    "step_type": "agent_response",
+                    "state": "ACTIVE",
+                    "step_index": 2,
+                    "text_delta": f"Please visit {oauth_url} to authorize Google Drive access.",
+                }
+            }),
+        ]
+
+        class BackgroundProcessMock:
+            def __init__(self):
+                self.stdin = MagicMock()
+                self.stdin.write = MagicMock()
+                self.stdin.drain = AsyncMock()
+                self.stdin.close = MagicMock()
+                self.stdin.wait_closed = AsyncMock()
+                self.stdin.is_closing = MagicMock(return_value=False)
+                self.stderr = MagicMock()
+                self.stderr.read = AsyncMock(return_value=b"")
+                self.returncode = None
+                self._lines = [init_json] + stream_lines
+
+            async def readline(self):
+                if self._lines:
+                    line = self._lines.pop(0)
+                    return line.encode("utf-8") + b"\n"
+                await asyncio.sleep(10.0)
+                return b""
+
+            async def wait(self):
+                return 0
+
+            def terminate(self):
+                self.returncode = 0
+
+            def kill(self):
+                self.returncode = -9
+
+        mock_proc = BackgroundProcessMock()
+        mock_proc.stdout = MagicMock()
+        mock_proc.stdout.readline = AsyncMock(side_effect=mock_proc.readline)
+
+        client = AsyncMock()
+        client.chat_postMessage = AsyncMock(return_value={"ok": True, "ts": "200.001"})
+        client.reactions_add = AsyncMock(return_value={"ok": True})
+        client.reactions_remove = AsyncMock(return_value={"ok": True})
+
+        from first_mate.gateway.router import SessionRouter
+        from first_mate.gateway.ingress import IngressGateway
+
+        router = SessionRouter(default_target_cwd="/Users/hermes/projects/first-mate")
+        gateway = IngressGateway(router=router)
+
+        event = {
+            "channel": "C_OAUTH_LOOP",
+            "ts": "100.999",
+            "thread_ts": "100.999",
+            "text": "ok, can you help me re-auth google drive?",
+        }
+
+        t_start = asyncio.get_event_loop().time()
+
+        with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec:
+            mock_exec.return_value = mock_proc
+            await asyncio.wait_for(gateway.handle_message(event, client), timeout=2.5)
+
+        t_elapsed = asyncio.get_event_loop().time() - t_start
+
+        self.assertLess(t_elapsed, 2.0, f"Turn took {t_elapsed:.2f}s, expected < 2.0s")
+        self.assertTrue(client.chat_postMessage.called)
+        posted_texts = [
+            call.kwargs.get("text") or (call.args[1] if len(call.args) > 1 else "")
+            for call in client.chat_postMessage.call_args_list
+        ]
+        combined_text = " ".join(posted_texts)
+        self.assertIn(oauth_url, combined_text)
+        self.assertEqual(len(client.chat_postMessage.call_args_list), 1)
+
+        await router.teardown("C_OAUTH_LOOP", "100.999")
+
+    async def test_text_delivered_immediately_when_generic_background_task_active(self):
+        """Simulate agy backgrounding a task via generic step update with state: RUNNING,
+        followed by agent_response with OAuth URL. Assert message is dispatched to Slack within 2.0s
+        without waiting for 'result' event.
+        """
+        init_json = json.dumps({
+            "event": "init",
+            "conversation_id": "c-oauth-generic-bg",
+            "init": {"tools": ["run_command"]},
+        })
+
+        oauth_url = "http://127.0.0.1:53682/auth?state=generic_bg_123"
+        stream_lines = [
+            # 1. Tool start
+            json.dumps({
+                "event": "step_update",
+                "step_update": {
+                    "step_type": "tool",
+                    "state": "ACTIVE",
+                    "tool_name": "run_command",
+                    "step_index": 1,
+                    "tool_info": {
+                        "parameters": {"CommandLine": "python3 scratch/reauth_gdrive.py"}
+                    },
+                }
+            }),
+            # 2. Command backgrounded by agy as generic step with state: RUNNING
+            json.dumps({
+                "event": "step_update",
+                "step_update": {
+                    "step_type": "generic",
+                    "state": "RUNNING",
+                    "step_index": 2,
+                    "content": "Created At: ...\nTool is running as a background task with task id: 4196c6fe/task-67\nTask Description: python3 scratch/reauth_gdrive.py\nTask logs are available at: file:///task-67.log",
+                }
+            }),
+            # 3. Model speaks conversational text containing authorization URL
+            json.dumps({
+                "event": "step_update",
+                "step_update": {
+                    "step_type": "agent_response",
+                    "state": "ACTIVE",
+                    "step_index": 3,
+                    "text_delta": f"I've opened the browser. If it did not open, click here: {oauth_url}",
+                }
+            }),
+            json.dumps({
+                "event": "step_update",
+                "step_update": {
+                    "step_type": "agent_response",
+                    "state": "DONE",
+                    "step_index": 3,
+                }
+            }),
+        ]
+
+        class GenericBackgroundMock:
+            def __init__(self):
+                self.stdin = MagicMock()
+                self.stdin.write = MagicMock()
+                self.stdin.drain = AsyncMock()
+                self.stdin.close = MagicMock()
+                self.stdin.wait_closed = AsyncMock()
+                self.stdin.is_closing = MagicMock(return_value=False)
+                self.stderr = MagicMock()
+                self.stderr.read = AsyncMock(return_value=b"")
+                self.returncode = None
+                self._lines = [init_json] + stream_lines
+
+            async def readline(self):
+                if self._lines:
+                    line = self._lines.pop(0)
+                    return line.encode("utf-8") + b"\n"
+                await asyncio.sleep(10.0)
+                return b""
+
+            async def wait(self):
+                return 0
+
+            def terminate(self):
+                self.returncode = 0
+
+            def kill(self):
+                self.returncode = -9
+
+        mock_proc = GenericBackgroundMock()
+        mock_proc.stdout = MagicMock()
+        mock_proc.stdout.readline = AsyncMock(side_effect=mock_proc.readline)
+
+        client = AsyncMock()
+        client.chat_postMessage = AsyncMock(return_value={"ok": True, "ts": "200.002"})
+        client.reactions_add = AsyncMock(return_value={"ok": True})
+        client.reactions_remove = AsyncMock(return_value={"ok": True})
+
+        from first_mate.gateway.router import SessionRouter
+        from first_mate.gateway.ingress import IngressGateway
+
+        router = SessionRouter(default_target_cwd="/Users/hermes/projects/first-mate")
+        gateway = IngressGateway(router=router)
+
+        event = {
+            "channel": "C_OAUTH_GENERIC",
+            "ts": "100.998",
+            "thread_ts": "100.998",
+            "text": "can you help me re-auth google drive?",
+        }
+
+        t_start = asyncio.get_event_loop().time()
+
+        with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec:
+            mock_exec.return_value = mock_proc
+            await asyncio.wait_for(gateway.handle_message(event, client), timeout=2.5)
+
+        t_elapsed = asyncio.get_event_loop().time() - t_start
+
+        self.assertLess(t_elapsed, 2.0, f"Turn took {t_elapsed:.2f}s, expected < 2.0s")
+        self.assertTrue(client.chat_postMessage.called)
+        posted_texts = [
+            call.kwargs.get("text") or (call.args[1] if len(call.args) > 1 else "")
+            for call in client.chat_postMessage.call_args_list
+        ]
+        combined_text = " ".join(posted_texts)
+        self.assertIn(oauth_url, combined_text)
+
+        await router.teardown("C_OAUTH_GENERIC", "100.998")
+
+    async def test_text_delivered_when_llm_thinks_longer_than_2s(self):
+        """Simulate agy backgrounding a task, taking 1.5s to formulate its response,
+        and verify that the response containing the OAuth URL is delivered without being truncated.
+        """
+        init_json = json.dumps({
+            "event": "init",
+            "conversation_id": "c-oauth-slow-llm",
+            "init": {"tools": ["run_command"]},
+        })
+
+        oauth_url = "http://127.0.0.1:53682/auth?state=slow_llm_999"
+        stream_lines = [
+            json.dumps({
+                "event": "step_update",
+                "step_update": {
+                    "step_type": "tool",
+                    "state": "ACTIVE",
+                    "tool_name": "run_command",
+                    "step_index": 1,
+                    "tool_info": {"parameters": {"CommandLine": "rclone config reconnect gdrive:"}},
+                }
+            }),
+            json.dumps({
+                "event": "step_update",
+                "step_update": {
+                    "step_type": "tool",
+                    "state": "DONE",
+                    "tool_name": "run_command",
+                    "step_index": 1,
+                    "tool_info": {
+                        "output": "Tool is running as a background task with task id: 555b9570/task-91",
+                        "status": "RUNNING",
+                    },
+                }
+            }),
+        ]
+        agent_msg = json.dumps({
+            "event": "step_update",
+            "step_update": {
+                "step_type": "agent_response",
+                "state": "ACTIVE",
+                "step_index": 2,
+                "text_delta": f"Please visit {oauth_url} to authorize Google Drive access.",
+            }
+        })
+
+        class SlowLLMProcessMock:
+            def __init__(self):
+                self.stdin = MagicMock()
+                self.stdin.write = MagicMock()
+                self.stdin.drain = AsyncMock()
+                self.stdin.close = MagicMock()
+                self.stdin.wait_closed = AsyncMock()
+                self.stdin.is_closing = MagicMock(return_value=False)
+                self.stderr = MagicMock()
+                self.stderr.read = AsyncMock(return_value=b"")
+                self.returncode = None
+                self._lines = [init_json] + stream_lines
+
+            async def readline(self):
+                if self._lines:
+                    line = self._lines.pop(0)
+                    return line.encode("utf-8") + b"\n"
+                if not hasattr(self, "_llm_spoken"):
+                    self._llm_spoken = True
+                    # LLM takes 1.5s to formulate its response after tool finishes
+                    await asyncio.sleep(1.5)
+                    return agent_msg.encode("utf-8") + b"\n"
+                await asyncio.sleep(10.0)
+                return b""
+
+            async def wait(self):
+                return 0
+
+            def terminate(self):
+                self.returncode = 0
+
+            def kill(self):
+                self.returncode = -9
+
+        mock_proc = SlowLLMProcessMock()
+        mock_proc.stdout = MagicMock()
+        mock_proc.stdout.readline = AsyncMock(side_effect=mock_proc.readline)
+
+        client = AsyncMock()
+        client.chat_postMessage = AsyncMock(return_value={"ok": True, "ts": "200.001"})
+        client.reactions_add = AsyncMock(return_value={"ok": True})
+        client.reactions_remove = AsyncMock(return_value={"ok": True})
+
+        from first_mate.gateway.router import SessionRouter
+        from first_mate.gateway.ingress import IngressGateway
+
+        router = SessionRouter(default_target_cwd="/Users/hermes/projects/first-mate")
+        gateway = IngressGateway(router=router)
+
+        event = {
+            "channel": "C_OAUTH_SLOW",
+            "ts": "100.999",
+            "thread_ts": "100.999",
+            "text": "ok, can you help me re-auth google drive?",
+        }
+
+        with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec:
+            mock_exec.return_value = mock_proc
+            await asyncio.wait_for(gateway.handle_message(event, client), timeout=5.0)
+
+        self.assertTrue(client.chat_postMessage.called)
+        posted_texts = [
+            call.kwargs.get("text") or (call.args[1] if len(call.args) > 1 else "")
+            for call in client.chat_postMessage.call_args_list
+        ]
+        combined_text = " ".join(posted_texts)
+        self.assertIn(oauth_url, combined_text)
+        await router.teardown("C_OAUTH_SLOW", "100.999")
+
+    async def test_investigation_with_backgrounded_command_and_pre_tool_text_not_prematurely_aborted(self):
+        """Verify that an investigation starting with pre-tool acknowledgment text,
+        experiencing a backgrounded task that is killed, and pausing between tools
+        is NOT prematurely aborted and successfully delivers its final executive briefing.
+        """
+        init_json = json.dumps({
+            "event": "init",
+            "conversation_id": "c-macbackup-investigation",
+            "init": {"tools": ["run_command", "manage_task"]},
+        })
+
+        briefing_text = "### Executive Briefing: macbackup\nVerdict: Failing Daily (Exit Code 1)"
+        stream_lines = [
+            # 1. Pre-tool acknowledgment
+            json.dumps({
+                "event": "step_update",
+                "step_update": {
+                    "step_type": "agent_response",
+                    "state": "ACTIVE",
+                    "step_index": 1,
+                    "text_delta": "Checking the launchd status now.",
+                }
+            }),
+            json.dumps({
+                "event": "step_update",
+                "step_update": {
+                    "step_type": "agent_response",
+                    "state": "DONE",
+                    "step_index": 1,
+                }
+            }),
+            # 2. Tool 1: run_command
+            json.dumps({
+                "event": "step_update",
+                "step_update": {
+                    "step_type": "tool",
+                    "state": "ACTIVE",
+                    "tool_name": "run_command",
+                    "step_index": 2,
+                    "tool_info": {"parameters": {"CommandLine": "launchctl list | grep macbackup"}},
+                }
+            }),
+            json.dumps({
+                "event": "step_update",
+                "step_update": {
+                    "step_type": "tool",
+                    "state": "DONE",
+                    "tool_name": "run_command",
+                    "step_index": 2,
+                    "tool_info": {"output": "123 1 com.user.macbackup"},
+                }
+            }),
+            # 3. Tool 2: find command that backgrounds
+            json.dumps({
+                "event": "step_update",
+                "step_update": {
+                    "step_type": "tool",
+                    "state": "ACTIVE",
+                    "tool_name": "run_command",
+                    "step_index": 3,
+                    "tool_info": {"parameters": {"CommandLine": "find ~ -name repository.config"}},
+                }
+            }),
+            json.dumps({
+                "event": "step_update",
+                "step_update": {
+                    "step_type": "tool",
+                    "state": "DONE",
+                    "tool_name": "run_command",
+                    "step_index": 3,
+                    "tool_info": {
+                        "output": "Tool is running as a background task with task id: conv/task-661",
+                        "status": "RUNNING",
+                    },
+                }
+            }),
+            # 4. Tool 3: manage_task kill task-661
+            json.dumps({
+                "event": "step_update",
+                "step_update": {
+                    "step_type": "tool",
+                    "state": "ACTIVE",
+                    "tool_name": "manage_task",
+                    "step_index": 4,
+                    "tool_info": {"parameters": {"Action": "kill", "TaskId": "conv/task-661"}},
+                }
+            }),
+            json.dumps({
+                "event": "step_update",
+                "step_update": {
+                    "step_type": "tool",
+                    "state": "DONE",
+                    "tool_name": "manage_task",
+                    "step_index": 4,
+                    "tool_info": {"output": "Task conv/task-661 cancelled."},
+                }
+            }),
+            # 5. Model takes 1.5s thinking between Tool 3 and Tool 4
+            # 6. Tool 4: run_command kopia status
+            json.dumps({
+                "event": "step_update",
+                "step_update": {
+                    "step_type": "tool",
+                    "state": "ACTIVE",
+                    "tool_name": "run_command",
+                    "step_index": 5,
+                    "tool_info": {"parameters": {"CommandLine": "kopia repository status"}},
+                }
+            }),
+            json.dumps({
+                "event": "step_update",
+                "step_update": {
+                    "step_type": "tool",
+                    "state": "DONE",
+                    "tool_name": "run_command",
+                    "step_index": 5,
+                    "tool_info": {"output": "open repository: repository is not connected."},
+                }
+            }),
+            # 7. Model generates final briefing
+            json.dumps({
+                "event": "step_update",
+                "step_update": {
+                    "step_type": "agent_response",
+                    "state": "ACTIVE",
+                    "step_index": 6,
+                    "text_delta": briefing_text,
+                }
+            }),
+            json.dumps({
+                "event": "result",
+                "result": {"status": "SUCCESS", "response": briefing_text},
+            }),
+        ]
+
+        class MultiStepProcessMock:
+            def __init__(self):
+                self.stdin = MagicMock()
+                self.stdin.write = MagicMock()
+                self.stdin.drain = AsyncMock()
+                self.stdin.close = MagicMock()
+                self.stdin.wait_closed = AsyncMock()
+                self.stdin.is_closing = MagicMock(return_value=False)
+                self.stderr = MagicMock()
+                self.stderr.read = AsyncMock(return_value=b"")
+                self.returncode = None
+                self._lines = [init_json] + stream_lines
+
+            async def readline(self):
+                if self._lines:
+                    line = self._lines.pop(0)
+                    if "kopia repository status" in line:
+                        await asyncio.sleep(1.5)
+                    return line.encode("utf-8") + b"\n"
+                await asyncio.sleep(5.0)
+                return b""
+
+            async def wait(self):
+                return 0
+
+            def terminate(self):
+                self.returncode = 0
+
+            def kill(self):
+                self.returncode = -9
+
+        mock_proc = MultiStepProcessMock()
+        mock_proc.stdout = MagicMock()
+        mock_proc.stdout.readline = AsyncMock(side_effect=mock_proc.readline)
+
+        client = AsyncMock()
+        client.chat_postMessage = AsyncMock(return_value={"ok": True, "ts": "200.001"})
+        client.reactions_add = AsyncMock(return_value={"ok": True})
+        client.reactions_remove = AsyncMock(return_value={"ok": True})
+
+        from first_mate.gateway.router import SessionRouter
+        from first_mate.gateway.ingress import IngressGateway
+
+        router = SessionRouter(default_target_cwd="/Users/hermes/projects/first-mate")
+        gateway = IngressGateway(router=router)
+
+        event = {
+            "channel": "C_MACBACKUP",
+            "ts": "100.999",
+            "thread_ts": "100.999",
+            "text": "can you check the macbackup job?",
+        }
+
+        with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec:
+            mock_exec.return_value = mock_proc
+            await asyncio.wait_for(gateway.handle_message(event, client), timeout=6.0)
+
+        posted_texts = [
+            call.kwargs.get("text") or (call.args[1] if len(call.args) > 1 else "")
+            for call in client.chat_postMessage.call_args_list
+        ]
+        combined_text = " ".join(posted_texts)
+        self.assertIn("Checking the launchd status now.", combined_text)
+        self.assertIn("Executive Briefing: macbackup", combined_text)
+        await router.teardown("C_MACBACKUP", "100.999")
+
 
 class TestIngressLifecycleStateMachine(unittest.IsolatedAsyncioTestCase):
     """
@@ -828,6 +1398,316 @@ class TestIngressLifecycleStateMachine(unittest.IsolatedAsyncioTestCase):
         self.assertIn("x", reacji_calls)
         client.chat_postMessage.assert_called()
         self.assertIn("timed out during initialization (>30s)", client.chat_postMessage.call_args_list[0][1]["text"])
+
+    async def test_complex_prompt_with_conflicting_keywords_routes_directly_to_agy(self):
+        """Verify complex prompts with conflicting keywords (e.g. code + docker + gpu) route directly to agy without pre-routing modification."""
+        client = AsyncMock()
+        client.reactions_add = AsyncMock()
+        client.chat_postMessage = AsyncMock()
+
+        prompt_text = "write code to mock docker on gpu"
+        event = {
+            "channel": "C_TEST_COMPLEX",
+            "ts": "400.111",
+            "thread_ts": "400.111",
+            "text": prompt_text,
+            "is_imessage": False
+        }
+
+        mock_ws_output = json.dumps({
+            "result": {
+                "workspace": {"workspace_id": "w_complex"},
+                "root_pane": {"pane_id": "w_complex:p1"}
+            }
+        })
+
+        cli_call_log = []
+
+        async def mock_run_cli(args, timeout=5.0):
+            cli_call_log.append(list(args))
+            sub = args[1] if len(args) > 1 else ""
+
+            if args[0] == "workspace" and sub == "create":
+                return 0, mock_ws_output, ""
+            elif args[0] == "agent" and sub == "start":
+                return 0, json.dumps({"result": {"type": "ok"}}), ""
+            elif args[0] == "agent" and sub == "get":
+                return 0, json.dumps({"result": {"agent": {"agent_status": "idle", "interactive_ready": True}}}), ""
+            elif args[0] == "agent" and sub == "read":
+                return 0, "Antigravity CLI ready\n>\n", ""
+            elif args[0] == "agent" and sub == "prompt":
+                return 0, json.dumps({"result": {"type": "ok"}}), ""
+            return 0, "", ""
+
+        with patch.object(app.herdr_client, "run_cli", side_effect=mock_run_cli):
+            await app.process_user_prompt(event, client)
+
+        session_key = "C_TEST_COMPLEX:400.111"
+        self.assertIn(session_key, app.sessions)
+        session = app.sessions[session_key]
+
+        # 1. Verify agent started as agy on localhost
+        start_calls = [c for c in cli_call_log if c[:2] == ["agent", "start"]]
+        self.assertEqual(len(start_calls), 1)
+        self.assertEqual(start_calls[0], [
+            "agent", "start", session.agent_name,
+            "--kind", "agy",
+            "--pane", "w_complex:p1"
+        ])
+
+        # 2. Verify agent prompt received the raw prompt without pre-routing modification or stripping
+        prompt_calls = [c for c in cli_call_log if c[:2] == ["agent", "prompt"]]
+        self.assertEqual(len(prompt_calls), 1)
+        self.assertEqual(prompt_calls[0][2], session.agent_name)
+        self.assertEqual(prompt_calls[0][3], prompt_text)
+
+        # Cleanup
+        if session.monitor_task and not session.monitor_task.done():
+            session.monitor_task.cancel()
+        if session.telemetry_observer:
+            await session.telemetry_observer.stop()
+
+    async def test_conversational_fleet_prompt_routes_directly_to_agy_without_canned_noise(self):
+        """Verify '@AGY Nice, how are you doing? How’s our fleet doing?' routes directly to agy with no canned noise and clean prose."""
+        client = AsyncMock()
+        client.reactions_add = AsyncMock()
+        client.chat_postMessage = AsyncMock(return_value={"ts": "msg_001"})
+
+        prompt_text = "@AGY Nice, how are you doing? How’s our fleet doing?"
+        clean_text = "Nice, how are you doing? How’s our fleet doing?"
+        event = {
+            "channel": "C_TEST_CONVERSATIONAL",
+            "ts": "500.222",
+            "thread_ts": "500.222",
+            "text": prompt_text,
+            "is_imessage": False
+        }
+
+        mock_ws_output = json.dumps({
+            "result": {
+                "workspace": {"workspace_id": "w_fleet"},
+                "root_pane": {"pane_id": "w_fleet:p1"}
+            }
+        })
+
+        cli_call_log = []
+
+        raw_terminal_output = (
+            "agy\n"
+            "hermes@hermes fm-500222 % agy\n\n"
+            "      ▄▀▀▄        Antigravity CLI 1.2.12\n"
+            "────────────────────────────────────────────────────────────\n"
+            "> Nice, how are you doing? How’s our fleet doing?\n\n"
+            "▸ Thought for 3s, 522 tokens\n"
+            "  Initial assessment: User is asking about the agent status...\n"
+            "● herdr-mesh/herdr_agent_list(Get fleet agents status)\n\n"
+            "▸ Thought for 2s, 477 tokens\n"
+            "  Fleet status is confirmed through Herdr Mesh...\n"
+            "  Doing great, thanks for asking! Everything across the fleet is green and quiet.\n\n"
+            "  Here is the current status across Herdr Mesh:\n\n"
+            "  ### 🟢 Active & In Progress\n\n"
+            "  • fm-500222 (w_fleet:p1): Currently active right here, checking in with you.\n"
+            "  ──────\n"
+            "  ### 🟡 Standing By / Idle\n\n"
+            "  • Chief of Staff (w6:p1 · fleet-control): AGY agent idle and awaiting assignments.\n"
+            "  • Hermes Worker (w7:p1 · homelab-ops): Hermes Agent loaded.\n"
+            "  • Cloud & Compute Nodes:\n"
+            "      • laptop-worker & Dev Grid (w4 · dev-grid): OpenCode workers idle and available.\n\n"
+            "  ### ⚪ Completed Workspaces\n\n"
+            "  • fm-58108949 (wS): Finished recent tasks (Google Drive startup script).\n\n"
+            "  All runners and hooks are healthy—what are we tackling next?\n"
+            "────────────────────────────────────────────────────────────\n"
+            ">\n"
+            "? for shortcuts                                                                                  Gemini 3.8 Flash · high"
+        )
+
+        async def mock_run_cli(args, timeout=5.0):
+            cli_call_log.append(list(args))
+            sub = args[1] if len(args) > 1 else ""
+
+            if args[0] == "workspace" and sub == "create":
+                return 0, mock_ws_output, ""
+            elif args[0] == "agent" and sub == "start":
+                return 0, json.dumps({"result": {"type": "ok"}}), ""
+            elif args[0] == "agent" and sub == "get":
+                return 0, json.dumps({"result": {"agent": {"agent_status": "idle", "interactive_ready": True}}}), ""
+            elif args[0] == "agent" and sub == "read":
+                return 0, raw_terminal_output, ""
+            elif args[0] == "agent" and sub == "prompt":
+                return 0, json.dumps({"result": {"type": "ok"}}), ""
+            return 0, "", ""
+
+        with patch.object(app.herdr_client, "run_cli", side_effect=mock_run_cli):
+            await app.process_user_prompt(event, client)
+
+        session_key = "C_TEST_CONVERSATIONAL:500.222"
+        self.assertIn(session_key, app.sessions)
+        session = app.sessions[session_key]
+
+        # 1. Non-verbal :gear: acknowledgment added, zero chat_postMessage on ingress
+        client.reactions_add.assert_called_once_with(channel="C_TEST_CONVERSATIONAL", timestamp="500.222", name="gear")
+        self.assertEqual(client.chat_postMessage.call_count, 0)
+
+        # 2. Started ONLY agy in root pane
+        start_calls = [c for c in cli_call_log if c[:2] == ["agent", "start"]]
+        self.assertEqual(len(start_calls), 1)
+        self.assertEqual(start_calls[0], [
+            "agent", "start", session.agent_name,
+            "--kind", "agy",
+            "--pane", "w_fleet:p1"
+        ])
+
+        # 3. Dispatched prompt without pre-routing OpenCode tampering
+        prompt_calls = [c for c in cli_call_log if c[:2] == ["agent", "prompt"]]
+        self.assertEqual(len(prompt_calls), 1)
+        self.assertEqual(prompt_calls[0][2], session.agent_name)
+        self.assertEqual(prompt_calls[0][3], clean_text)
+
+        # 4. Trigger completion briefing directly and verify conversational sanitization
+        await app.post_completion_briefing(session, client, raw_terminal_output)
+
+        self.assertEqual(client.chat_postMessage.call_count, 1)
+        final_msg = client.chat_postMessage.call_args[1]["text"]
+
+        # Assert no canned noise
+        self.assertNotIn("On it. Working on", final_msg)
+        self.assertNotIn("Handing this to OpenCode", final_msg)
+        self.assertNotIn("```Doing great", final_msg)  # Must NOT be wrapped in code block
+        self.assertNotIn("Initial assessment", final_msg)  # Thought preview stripped
+        self.assertNotIn("herdr_agent_list", final_msg)  # Tool calls stripped
+
+        # Assert clean prose and preserved capital-G words and markdown formatting
+        self.assertIn("Doing great, thanks for asking! Everything across the fleet is green and quiet.", final_msg)
+        self.assertIn("Dev Grid", final_msg)
+        self.assertIn("Google Drive", final_msg)
+        self.assertIn("*🟢 Active & In Progress*", final_msg)
+        self.assertNotIn("###", final_msg)
+        self.assertNotIn("*Task Completed via Herdr", final_msg)
+
+        # 5. Verify is_status_inquiry does not hijack fleet inquiries in active session
+        self.assertFalse(app.is_status_inquiry("What is our fleet status?"))
+        self.assertFalse(app.is_status_inquiry("How's our fleet doing?"))
+
+        # Cleanup
+        if session.monitor_task and not session.monitor_task.done():
+            session.monitor_task.cancel()
+        if session.telemetry_observer:
+            await session.telemetry_observer.stop()
+
+    def test_system_prompt_includes_conversational_pacing_and_triage_suppression(self):
+        """Verify Antigravity system prompt enforces broad overview first and suppresses unsolicited incident triage."""
+        prompt = build_system_prompt()
+        self.assertIn("Broad Overview First", prompt)
+        self.assertIn("Suppression of Unsolicited Incident Triage", prompt)
+        self.assertIn("Never autonomously scrape logs, inspect non-zero exit codes, grep for tracebacks", prompt)
+        self.assertIn("Natural Voice & Clean Responses", prompt)
+        self.assertIn("Direct Handling for Inquiries", prompt)
+
+    def test_split_message_boundary_aware(self):
+        """Verify boundary-aware message splitting splits on paragraphs and sentences without cutting words."""
+        from app import split_message_boundary_aware
+
+        # 1. Short message stays intact
+        short = "This is a short message."
+        self.assertEqual(split_message_boundary_aware(short, max_chars=100), [short])
+
+        # 2. Multi-paragraph message splits along paragraph boundaries
+        p1 = "Paragraph one with some details." * 5
+        p2 = "Paragraph two with more information." * 5
+        full_text = f"{p1}\n\n{p2}"
+        chunks = split_message_boundary_aware(full_text, max_chars=max(len(p1), len(p2)) + 10)
+        self.assertEqual(len(chunks), 2)
+        self.assertEqual(chunks[0], p1)
+        self.assertEqual(chunks[1], p2)
+
+        # 3. Long paragraph splits on sentence boundaries without mid-word slicing
+        s1 = "First sentence is fairly lengthy."
+        s2 = "Second sentence is also quite lengthy."
+        s3 = "Third sentence wraps up the thought."
+        full_sentence_text = f"{s1} {s2} {s3}"
+        chunks_s = split_message_boundary_aware(full_sentence_text, max_chars=len(s1) + len(s2) + 5)
+        self.assertEqual(len(chunks_s), 2)
+        self.assertEqual(chunks_s[0], f"{s1} {s2}")
+        self.assertEqual(chunks_s[1], s3)
+
+    async def test_conversational_query_omits_task_footer_and_raw_log_dumps(self):
+        """Verify conversational status/cronjob queries omit *Task Completed via Herdr* footer and raw log dumps."""
+        client = AsyncMock()
+        client.reactions_add = AsyncMock()
+        client.chat_postMessage = AsyncMock(return_value={"ts": "msg_002"})
+
+        prompt_text = "What cron jobs are currently running across the fleet?"
+        event = {
+            "channel": "C_TEST_CRON",
+            "ts": "600.111",
+            "thread_ts": "600.111",
+            "text": prompt_text,
+            "is_imessage": False
+        }
+
+        mock_ws_output = json.dumps({
+            "result": {
+                "workspace": {"workspace_id": "w_cron"},
+                "root_pane": {"pane_id": "w_cron:p1"}
+            }
+        })
+
+        raw_terminal_output = (
+            "agy\n"
+            "hermes@hermes fm-600111 % agy\n\n"
+            "> What cron jobs are currently running across the fleet?\n\n"
+            "▸ Thought for 2s, 340 tokens\n"
+            "  Reviewing active cron jobs across hosts...\n"
+            "Here is a high-level overview of our active scheduled jobs:\n\n"
+            "• *Hermes Backup:* Nightly ZFS snapshot at 02:00 UTC\n"
+            "• *Fleet Health Check:* Every 15 minutes on hermes\n"
+            "• *Cloud Sync:* Hourly rsync to OCI\n\n"
+            "Would you like to inspect logs or execution schedules for any of these?\n"
+            "────────────────────────────────────────────────────────────\n"
+            ">\n"
+        )
+
+        cli_call_log = []
+
+        async def fake_run_cli(args, timeout=None):
+            cli_call_log.append(args)
+            sub = args[1] if len(args) > 1 else ""
+            if args[0] == "workspace" and sub == "create":
+                return 0, mock_ws_output, ""
+            elif args[0] == "agent" and sub == "start":
+                return 0, "agent started", ""
+            elif args[0] == "agent" and sub == "prompt":
+                return 0, "prompt queued", ""
+            elif args[0] == "agent" and sub == "read":
+                return 0, raw_terminal_output, ""
+            elif args[0] == "agent" and sub == "get":
+                return 0, json.dumps({"result": {"agent": {"name": "fm-600111", "status": "idle"}}}), ""
+            return 0, "", ""
+
+        with patch.object(app.herdr_client, "run_cli", side_effect=fake_run_cli):
+            await app.process_user_prompt(event, client)
+
+            session_key = "C_TEST_CRON:600.111"
+            self.assertIn(session_key, app.sessions)
+            session = app.sessions[session_key]
+            if session.monitor_task and not session.monitor_task.done():
+                session.monitor_task.cancel()
+
+            # Trigger completion briefing directly
+            await app.post_completion_briefing(session, client, raw_terminal_output)
+
+        self.assertTrue(client.chat_postMessage.called)
+        final_msg = client.chat_postMessage.call_args[1]["text"]
+
+        # Assert no enterprise completion footer on conversational inquiry
+        self.assertNotIn("*Task Completed via Herdr", final_msg)
+        # Assert no raw thought or tool call leak
+        self.assertNotIn("Thought for 2s", final_msg)
+        self.assertIn("Here is a high-level overview of our active scheduled jobs:", final_msg)
+        self.assertIn("• *Hermes Backup:* Nightly ZFS snapshot at 02:00 UTC", final_msg)
+
+        if session.telemetry_observer:
+            await session.telemetry_observer.stop()
 
 
 if __name__ == "__main__":

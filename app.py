@@ -14,6 +14,7 @@ import json
 import signal
 import asyncio
 import logging
+import textwrap
 from typing import Dict, Any, Optional, Set, List, Tuple
 
 from dotenv import load_dotenv
@@ -26,6 +27,12 @@ from bluebubbles_transport import (
     BlueBubblesTransport,
     BlueBubblesClient,
     sanitize_for_imessage
+)
+from normalizer import (
+    sanitize_for_slack,
+    strip_ansi,
+    strip_tui_debris,
+    transpile_markdown_to_mrkdwn
 )
 from herdr_client import HerdrClient, InfrastructureError
 from herdr_fleet import HerdrFleet
@@ -43,7 +50,6 @@ from telemetry_observer import (
     resolve_machine_label,
     format_runner_label,
     format_terminal_tail,
-    format_startup_message,
     format_approval_blocks,
     format_completion_message,
     format_failure_message,
@@ -52,6 +58,18 @@ from telemetry_observer import (
     sanitize_scrollback,
     build_status_card_blocks
 )
+
+# First Mate 2.0 Modular Package Imports
+from first_mate.transport.chunker import split_message_boundary_aware
+from first_mate.gateway import SessionRouter, SessionHandle, SessionState
+from first_mate.gateway.ingress import (
+    IngressGateway,
+    add_reaction as add_reacji,
+    remove_reaction as remove_reacji,
+    swap_reaction as swap_reacji,
+    strip_bot_mentions,
+)
+from first_mate.execution.harness import DualPaneHarness
 
 # ------------------------------------------------------------------------------
 # Logging & Environment Setup
@@ -89,11 +107,22 @@ herdr_client = HerdrClient()
 fleet = HerdrFleet()
 herdr = fleet
 supervisor = AgentSupervisor()
+client_herdr = herdr_client
 
 app = AsyncApp(
     token=SLACK_BOT_TOKEN,
     signing_secret=SLACK_SIGNING_SECRET
 )
+
+# Attach monkey-patch targets to AsyncApp instance for test_supervisor.py compatibility
+app.supervisor = supervisor
+app.herdr_client = herdr_client
+app.fleet = fleet
+
+# First Mate 2.0 Core Singletons
+dual_pane_harness = DualPaneHarness(herdr_client=herdr_client, default_cwd=DEFAULT_TARGET_REPO)
+session_router = SessionRouter(default_target_cwd=DEFAULT_TARGET_REPO, harness=dual_pane_harness)
+ingress_gateway = IngressGateway(router=session_router, bot_user_id=None)
 
 BOT_USER_ID: Optional[str] = None
 processed_message_ids: Set[str] = set()
@@ -113,7 +142,10 @@ class GatewaySession:
         thread_ts: str,
         workspace_id: Optional[str] = None,
         pane_id: Optional[str] = None,
-        is_imessage: bool = False
+        is_imessage: bool = False,
+        runner_pane: Optional[str] = "runner",
+        liaison_agent: Optional[str] = None,
+        dual_pane: bool = False
     ):
         self.session_key = session_key
         self.agent_name = agent_name
@@ -123,6 +155,9 @@ class GatewaySession:
         self.workspace_id = workspace_id
         self.pane_id = pane_id
         self.is_imessage = is_imessage
+        self.dual_pane = dual_pane
+        self.runner_pane = runner_pane or "runner"
+        self.liaison_agent = liaison_agent or (f"{agent_name}-liaison" if dual_pane else agent_name)
         self.status = "starting"  # "starting" | "booting" | "working" | "blocked" | "done" | "failed"
         self.has_worked = False
         self.execution_steps = 0
@@ -132,6 +167,10 @@ class GatewaySession:
         self.monitor_task: Optional[asyncio.Task] = None
         self.telemetry_observer: Optional[SessionTelemetryObserver] = None
         self.created_at = time.time()
+
+    @property
+    def active_agent(self) -> str:
+        return self.liaison_agent if self.dual_pane and self.liaison_agent else self.agent_name
 
     @property
     def state(self) -> str:
@@ -165,13 +204,14 @@ ANSI_ESCAPE_PATTERN = re.compile(
     r"\x1b(?:"
     r"\[[0-?]*[ -/]*[@-~]"
     r"|\][^\x07\x1b]*(?:\x07|\x1b\\)"
-    r"|[@-Z\\-_]"
+    r"|[=><]"
+    r"|[78](?![0-9a-zA-Z])"
     r")"
 )
 
 def strip_ansi(text: str) -> str:
     """Strip all ANSI escape codes and terminal controls."""
-    return ANSI_ESCAPE_PATTERN.sub("", text)
+    return ANSI_ESCAPE_PATTERN.sub("", text).replace("\x1b", "")
 
 def parse_remote_hosts(raw_hosts: str) -> Dict[str, str]:
     """Parse comma-separated alias:ip pairs into an alias -> ip dictionary."""
@@ -289,45 +329,25 @@ def ensure_trusted_workspace(path: str) -> None:
         logger.debug(f"Could not update trustedWorkspaces: {e}")
 
 
-def format_agent_dispatch_prompt(prompt: str, target_cwd: str) -> str:
-    """
-    Format prompt for Antigravity CLI dispatch:
-    - If prompt references subagents, workers, or fleet tools (e.g. OpenCode, remote execution),
-      append context that herdr-mesh MCP tools (herdr_pane_run, herdr_handoff, herdr_agent_read)
-      are available for orchestration.
-    - Preserves repository hygiene and scratch sandbox rules.
-    """
-    clean = prompt.strip()
-    subagent_patterns = [
-        r"\bopencode\b", r"\bhermes\b", r"\bsubagent\b", r"\bworker\b",
-        r"\bfleet\b", r"\bremote\b", r"\bgrid\b", r"\bdelegate\b",
-        r"\bhand\s*off\b", r"\bhandoff\b"
-    ]
-    if any(re.search(pat, clean, re.IGNORECASE) for pat in subagent_patterns):
-        clean = (
-            f"{clean}\n\n"
-            "[Context: You are First Mate / Tech Lead. You have access to herdr-mesh MCP tools "
-            "(`herdr_pane_run`, `herdr_handoff`, `herdr_agent_read`, `herdr_workspace_create`, etc.) "
-            "to orchestrate subagents or worker panes if delegating work. "
-            "Keep prototypes, test servers, and standalone scripts strictly self-contained within "
-            f"the designated sandbox folder: {target_cwd}.]"
-        )
-    return clean
+def format_agent_dispatch_prompt(prompt: str, target_cwd: str = "") -> str:
+    """Pass user prompt directly to Antigravity CLI without pre-routing modification."""
+    return prompt.strip()
 
 
-def sanitize_terminal_output(raw_text: str) -> str:
+def sanitize_terminal_output(raw_text: str, user_prompt: str = "") -> str:
     """
     Filter raw terminal text from Antigravity CLI:
     - Strips ANSI escape codes, terminal device queries, and graphics protocol sequences.
     - Filters out ASCII art splash banners and TUI chrome.
     - Strips status bar lines ('? for shortcuts', 'esc to cancel', 'Last progress:').
-    - Returns clean substantive execution output and tool results.
+    - Filters out internal thought preview blocks, tool calls, and prompt echoes.
+    - Preserves clean substantive execution output and markdown prose formatting.
     """
     clean = strip_ansi(raw_text)
     # Strip terminal query responses and graphics sequences
     clean = re.sub(r"\^\[_G[^\^]*\^\\", "", clean)
     clean = re.sub(r"\x1b\[\?[0-9;]*[a-zA-Z]", "", clean)
-    clean = re.sub(r"G[a-z0-9_=,;+]+(?:==)?", "", clean)
+    clean = re.sub(r"_G[a-z0-9_=,;+]+(?:==)?", "", clean)
     clean = re.sub(r"\x1b[^\s]*", "", clean)
 
     splash_indicators = [
@@ -343,31 +363,59 @@ def sanitize_terminal_output(raw_text: str) -> str:
         "yes, i trust this folder"
     ]
 
+    clean_prompt = user_prompt.strip().lower() if user_prompt else ""
+
     filtered_lines = []
+    skip_thought_snippet = False
+
     for line in clean.splitlines():
         line_stripped = line.strip()
+        lower_line = line_stripped.lower()
+
         if not line_stripped:
+            # Preserve single blank lines between paragraphs
+            if filtered_lines and filtered_lines[-1] != "":
+                filtered_lines.append("")
             continue
+
         # Skip pure border/divider lines
         if all(c in "─━│┃-=_* " for c in line_stripped):
             continue
         # Skip ASCII art logo blocks
         if any(c in "▄▀█▌▐" for c in line_stripped):
             continue
-        lower_line = line_stripped.lower()
         # Skip splash / TUI footer lines
         if any(ind in lower_line for ind in splash_indicators):
             continue
-        # Skip bare prompt
-        if line_stripped in (">", "> "):
+        # Skip bare prompt or command
+        if line_stripped in (">", "> ", "agy"):
             continue
         # Skip shell command prompt invocation line (e.g. hermes@... % agy ...)
         if re.search(r"%\s+agy\b", line_stripped):
             continue
+        # Skip prompt echo
+        if clean_prompt and line_stripped.startswith(">") and clean_prompt in lower_line:
+            continue
+
+        # Skip TUI collapsible thoughts indicator
+        if line_stripped.startswith("▸ ") or lower_line.startswith("thought for ") or lower_line.startswith("thinking..."):
+            skip_thought_snippet = True
+            continue
+
+        # Skip tool invocations and collapsed control elements
+        if line_stripped.startswith("● ") or "(ctrl+o to expand)" in lower_line:
+            continue
+
+        # Skip the 1-line thought snippet following a collapsed thought header
+        if skip_thought_snippet:
+            skip_thought_snippet = False
+            continue
 
         filtered_lines.append(line.rstrip())
 
-    return "\n".join(filtered_lines).strip()
+    # Dedent terminal margin indentation while preserving relative indentations
+    dedented = textwrap.dedent("\n".join(filtered_lines)).strip()
+    return strip_tui_debris(dedented)
 
 
 def extract_operational_artifacts(text: str) -> Dict[str, Any]:
@@ -393,10 +441,15 @@ def extract_operational_artifacts(text: str) -> Dict[str, Any]:
 def normalize_for_bluebubbles(text: str) -> str:
     """
     Sanitize outbound text sent to BlueBubbles:
+    - Strip TUI debris without injecting Slack mrkdwn.
     - Convert <http://url|label> and <http://url> to clean URLs.
     - Convert Slack shortcodes (:white_check_mark:, :thumbsup:, :eyes:) to native Unicode.
     """
-    return sanitize_for_imessage(text)
+    cleaned = strip_tui_debris(text)
+    return sanitize_for_imessage(cleaned)
+
+
+# split_message_boundary_aware is re-exported from first_mate.transport.chunker above
 
 
 # ------------------------------------------------------------------------------
@@ -438,6 +491,9 @@ REJECTION_PATTERNS = [
 ]
 
 def is_status_inquiry(text: str) -> bool:
+    # Do not intercept fleet inquiries; AGY answers fleet queries directly in its root pane
+    if re.search(r"\bfleet\b", text, re.IGNORECASE):
+        return False
     return any(p.search(text.strip()) for p in STATUS_INQUIRY_PATTERNS)
 
 def is_approval_reply(text: str) -> bool:
@@ -510,26 +566,41 @@ async def ensure_session_agent(
     is_imessage: bool = False,
     agent_args: Optional[List[str]] = None,
     client: Any = None,
-    trigger_ts: Optional[str] = None
+    trigger_ts: Optional[str] = None,
+    dual_pane: Optional[bool] = None,
+    target_cwd_override: Optional[str] = None,
+    agent_name_override: Optional[str] = None
 ) -> GatewaySession:
     """Ensure a Herdr workspace and Antigravity CLI agent exist for this thread with readiness-gated handshake."""
     if session_key in sessions and sessions[session_key].status != "failed":
         return sessions[session_key]
 
+    if dual_pane is None:
+        dual_pane = os.environ.get("DUAL_PANE_WORKSPACE", "").lower() in ("1", "true", "yes")
+
     clean_ts = re.sub(r"[^0-9]", "", str(thread_ts or time.time()))[-8:]
-    agent_name = f"fm-{clean_ts}"
-    target_cwd = resolve_target_directory(prompt, task_id=agent_name)
+    agent_name = agent_name_override or f"fm-{clean_ts}"
+    target_cwd = target_cwd_override or resolve_target_directory(prompt, task_id=agent_name)
     ensure_trusted_workspace(target_cwd)
 
-    # 1. Spawn Herdr workspace: herdr workspace create --cwd <target_cwd> --label <task_name> --no-focus
+    # 1. Spawn Herdr workspace: herdr workspace create --label fm-<ts> --cwd <sandbox_or_project_cwd> --no-focus
     ws_id = None
     pane_id = None
-    code, out, err = await herdr_client.run_cli([
-        "workspace", "create",
-        "--cwd", target_cwd,
-        "--label", agent_name,
-        "--no-focus"
-    ])
+    if dual_pane:
+        ws_cmd = [
+            "workspace", "create",
+            "--label", agent_name,
+            "--cwd", target_cwd,
+            "--no-focus"
+        ]
+    else:
+        ws_cmd = [
+            "workspace", "create",
+            "--cwd", target_cwd,
+            "--label", agent_name,
+            "--no-focus"
+        ]
+    code, out, err = await herdr_client.run_cli(ws_cmd)
     if code == 0 and out:
         try:
             data = json.loads(out)
@@ -541,9 +612,12 @@ async def ensure_session_agent(
 
     # Fallback to fleet-control pane if workspace creation failed
     if not pane_id:
-        pane_id = "w6:p1"
+        pane_id = "1" if dual_pane else "w6:p1"
 
     scoped_prompt = scope_server_commands(prompt, target_cwd)
+
+    liaison_name = f"{agent_name}-liaison" if dual_pane else agent_name
+    runner_pane = "runner" if dual_pane else None
 
     session = GatewaySession(
         session_key=session_key,
@@ -553,7 +627,10 @@ async def ensure_session_agent(
         thread_ts=thread_ts,
         workspace_id=ws_id,
         pane_id=pane_id,
-        is_imessage=is_imessage
+        is_imessage=is_imessage,
+        runner_pane=runner_pane,
+        liaison_agent=liaison_name,
+        dual_pane=dual_pane
     )
     session.status = "starting"
     session.has_worked = False
@@ -562,19 +639,41 @@ async def ensure_session_agent(
 
     sessions[session_key] = session
     agent_name_to_session[agent_name] = session
+    if dual_pane:
+        agent_name_to_session[liaison_name] = session
 
     # 2. Clean Spawn: Launch agent with zero trailing prompt arguments
-    start_cmd = [
-        "agent", "start", agent_name,
-        "--kind", "agy",
-        "--pane", pane_id
-    ]
+    # Pane 1 (liaison): Launch agy via herdr agent start <name>-liaison --kind agy --pane 1
+    if dual_pane:
+        start_cmd = [
+            "agent", "start", liaison_name,
+            "--kind", "agy",
+            "--pane", "1"
+        ]
+    else:
+        start_cmd = [
+            "agent", "start", agent_name,
+            "--kind", "agy",
+            "--pane", pane_id
+        ]
     if agent_args:
         start_cmd.extend(["--"] + agent_args)
 
     start_code, start_out, start_err = await herdr_client.run_cli(start_cmd)
 
-    # 3. Fail-Fast Trap: Inspect process return code and error response immediately
+    # 3. Spawn Pane 2 (runner) if dual_pane:
+    # herdr pane create --workspace <name> --label runner
+    if dual_pane:
+        runner_cmd = [
+            "pane", "create",
+            "--workspace", agent_name,
+            "--label", "runner"
+        ]
+        await herdr_client.run_cli(runner_cmd)
+
+    target_agent = liaison_name if dual_pane else agent_name
+
+    # 3b. Fail-Fast Trap: Inspect process return code and error response immediately
     start_failed = False
     err_detail = ""
     if start_code != 0:
@@ -591,36 +690,36 @@ async def ensure_session_agent(
 
     if start_failed:
         session.status = "failed"
-        logger.error(f"herdr agent start failed for {agent_name}: {err_detail}")
+        logger.error(f"herdr agent start failed for {target_agent}: {err_detail}")
         if client:
             if trigger_ts and not is_imessage:
                 await swap_reacji(client, channel, trigger_ts, "gear", "x")
                 await swap_reacji(client, channel, trigger_ts, "eyes", "x")
-            err_msg = f":x: *Hit an issue running the server: Failed to spawn Antigravity agent (`{agent_name}`)*:\n```{err_detail}```"
+            err_msg = f":x: *Hit an issue running the server: Failed to spawn Antigravity agent (`{target_agent}`)*:\n```{err_detail}```"
             if is_imessage:
                 await client.chat_postMessage(channel=channel, text=normalize_for_bluebubbles(err_msg))
             else:
-                await client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=err_msg)
+                await client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=sanitize_for_slack(err_msg))
         if ws_id:
             await herdr_client.run_cli(["workspace", "close", ws_id])
         return session
 
     # 4. Readiness Watchdog (The TUI Handshake):
     # Monitor the pane buffer for up to 15s until agy displays ready indicator
-    is_ready = await wait_for_agent_readiness(agent_name, timeout_seconds=15.0)
+    is_ready = await wait_for_agent_readiness(target_agent, timeout_seconds=15.0)
     if not is_ready:
         session.status = "failed"
-        timeout_detail = f"Agent `{agent_name}` failed to reach readiness within 15 seconds."
+        timeout_detail = f"Agent `{target_agent}` failed to reach readiness within 15 seconds."
         logger.error(timeout_detail)
         if client:
             if trigger_ts and not is_imessage:
                 await swap_reacji(client, channel, trigger_ts, "gear", "x")
                 await swap_reacji(client, channel, trigger_ts, "eyes", "x")
-            timeout_msg = f":x: *Hit an issue running the server: Failed to start Antigravity agent (`{agent_name}`)*:\n```{timeout_detail}```"
+            timeout_msg = f":x: *Hit an issue running the server: Failed to start Antigravity agent (`{target_agent}`)*:\n```{timeout_detail}```"
             if is_imessage:
                 await client.chat_postMessage(channel=channel, text=normalize_for_bluebubbles(timeout_msg))
             else:
-                await client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=timeout_msg)
+                await client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=sanitize_for_slack(timeout_msg))
         if ws_id:
             await herdr_client.run_cli(["workspace", "close", ws_id])
         return session
@@ -628,12 +727,37 @@ async def ensure_session_agent(
     # 5. Prompt Delivery:
     # Once readiness is confirmed, dispatch the prompt via herdr agent prompt
     prompt_code, _, prompt_err = await herdr_client.run_cli([
-        "agent", "prompt", agent_name, scoped_prompt
+        "agent", "prompt", target_agent, scoped_prompt
     ])
     if prompt_code != 0:
         logger.warning(f"herdr agent prompt returned code {prompt_code}: {prompt_err}")
 
     return session
+
+
+async def init_dual_pane_workspace(
+    session_name: str,
+    cwd: str,
+    channel: str = "general",
+    thread_ts: Optional[str] = None,
+    client: Any = None,
+    agent_args: Optional[List[str]] = None,
+    prompt: str = ""
+) -> GatewaySession:
+    """Initialize a Dual-Pane Workspace operations session."""
+    ts = thread_ts or str(int(time.time()))
+    session_key = f"{channel}:{ts}"
+    return await ensure_session_agent(
+        session_key=session_key,
+        channel=channel,
+        thread_ts=ts,
+        prompt=prompt,
+        agent_args=agent_args,
+        client=client,
+        dual_pane=True,
+        target_cwd_override=cwd,
+        agent_name_override=session_name
+    )
 
 
 async def monitor_agent_lifecycle(
@@ -651,7 +775,7 @@ async def monitor_agent_lifecycle(
     - Completion: Only declare completion when child process exits cleanly OR agent returns to idle
       AFTER having logged active execution steps and substantive output.
     """
-    agent_name = session.agent_name
+    agent_name = session.active_agent
     logger.info(f"Lifecycle monitor active for agent {agent_name} (initial status: {session.status})...")
     consecutive_idle_ticks = 0
     boot_start_time = time.time()
@@ -678,7 +802,7 @@ async def monitor_agent_lifecycle(
                 if session.is_imessage:
                     await client.chat_postMessage(channel=session.channel, text=normalize_for_bluebubbles(timeout_msg))
                 else:
-                    await client.chat_postMessage(channel=session.channel, thread_ts=session.thread_ts, text=timeout_msg)
+                    await client.chat_postMessage(channel=session.channel, thread_ts=session.thread_ts, text=sanitize_for_slack(timeout_msg))
                 if session.workspace_id:
                     await herdr_client.run_cli(["workspace", "close", session.workspace_id])
                 break
@@ -757,14 +881,32 @@ async def monitor_agent_lifecycle(
 
         # 4. Completion Detection: ONLY valid if session.has_worked is True
         if session.has_worked and current_status in ("done", "idle") and not is_terminal_working:
-            sanitized = sanitize_terminal_output(read_out)
+            sanitized = sanitize_terminal_output(read_out, session.last_prompt)
             if sanitized:
+                # Buffer Settling: Verify the agent has returned completely to its idle prompt
+                # (prompt indicator `>` at the end of the terminal buffer or status `done`)
+                lines = [l.strip() for l in read_out.splitlines() if l.strip()]
+                has_returned_to_prompt = (
+                    current_status == "done"
+                    or any(l in (">", "> ") or l.startswith("> ") for l in lines[-4:])
+                )
+                if not has_returned_to_prompt:
+                    consecutive_idle_ticks = 0
+                    await asyncio.sleep(1.0)
+                    continue
+
                 consecutive_idle_ticks += 1
                 if consecutive_idle_ticks >= 2:
                     session.status = "done"
                     if trigger_ts and not session.is_imessage:
                         await swap_reacji(client, session.channel, trigger_ts, "gear", "white_check_mark")
-                    await post_completion_briefing(session, client, read_out)
+                    # Fetch broader buffer to capture full conversational briefings
+                    _, final_read, _ = await herdr_client.run_cli([
+                        "agent", "read", agent_name,
+                        "--source", "recent-unwrapped",
+                        "--lines", "80"
+                    ], timeout=5.0)
+                    await post_completion_briefing(session, client, final_read or read_out)
                     break
 
 
@@ -774,7 +916,6 @@ async def post_approval_card(session: GatewaySession, client: Any, terminal_snip
     runner = "OpenCode" if (
         re.search(r"\bopencode\b", session.agent_name, re.IGNORECASE)
         or (session.telemetry_observer and "opencode" in getattr(session.telemetry_observer, "last_runner_label", "").lower())
-        or re.search(r"\bopencode\b", session.last_prompt, re.IGNORECASE)
     ) else "Antigravity"
 
     if session.is_imessage:
@@ -791,7 +932,7 @@ async def post_approval_card(session: GatewaySession, client: Any, terminal_snip
         resp = await client.chat_postMessage(
             channel=session.channel,
             thread_ts=session.thread_ts,
-            text=f"{runner} wants to run `{cmd}`. Good to go? Approval required: reply approve or abort.",
+            text=sanitize_for_slack(f"{runner} wants to run `{cmd}`. Good to go? Approval required: reply approve or abort."),
             blocks=blocks
         )
         if isinstance(resp, dict):
@@ -800,7 +941,7 @@ async def post_approval_card(session: GatewaySession, client: Any, terminal_snip
 
 async def post_completion_briefing(session: GatewaySession, client: Any, terminal_output: str):
     """Post final completion output to chat in natural Chief of Staff voice."""
-    sanitized = sanitize_terminal_output(terminal_output)
+    sanitized = sanitize_terminal_output(terminal_output, getattr(session, "last_prompt", ""))
     artifacts = extract_operational_artifacts(terminal_output)
     ports = extract_listening_ports(terminal_output)
 
@@ -825,23 +966,31 @@ async def post_completion_briefing(session: GatewaySession, client: Any, termina
     endpoint_banner = f"*Live Endpoint:* {urls[0]}\n" if urls else ""
     files_banner = f"*Files Created:* {', '.join(files)}\n" if files else ""
 
-    clean_lines = [l for l in sanitized.splitlines() if l.strip()][-10:]
-    summary = "\n".join(clean_lines) if clean_lines else ""
-    summary_block = f"\n```{summary}```" if summary and summary != "Task completed successfully." else ""
-
-    msg = f"{conversational_lead}\n\n*Task Completed via Herdr (`{session.agent_name}`)*\n{endpoint_banner}{files_banner}{summary_block}".strip()
+    if urls or files:
+        clean_lines = [l for l in sanitized.splitlines() if l.strip()][-10:]
+        summary = "\n".join(clean_lines) if clean_lines else ""
+        summary_block = f"\n```{summary}```" if summary and summary != "Task completed successfully." else ""
+        msg = f"{conversational_lead}\n\n*Task Completed via Herdr (`{session.agent_name}`)*\n{endpoint_banner}{files_banner}{summary_block}".strip()
+    else:
+        # Direct conversational or status inquiry response: omit enterprise task footer
+        summary = sanitized.strip()
+        msg = summary or conversational_lead
 
     if session.is_imessage:
-        await client.chat_postMessage(
-            channel=session.channel,
-            text=normalize_for_bluebubbles(conversational_lead)
-        )
+        bb_text = normalize_for_bluebubbles(summary or conversational_lead)
+        for chunk in split_message_boundary_aware(bb_text, max_chars=3500):
+            await client.chat_postMessage(
+                channel=session.channel,
+                text=chunk
+            )
     else:
-        await client.chat_postMessage(
-            channel=session.channel,
-            thread_ts=session.thread_ts,
-            text=msg
-        )
+        sanitized_msg = sanitize_for_slack(msg)
+        for chunk in split_message_boundary_aware(sanitized_msg, max_chars=3800):
+            await client.chat_postMessage(
+                channel=session.channel,
+                thread_ts=session.thread_ts,
+                text=sanitize_for_slack(chunk)
+            )
 
 
 
@@ -890,7 +1039,7 @@ async def handle_bearings_request(
         await client.chat_postMessage(
             channel=channel,
             thread_ts=thread_ts,
-            text=briefing
+            text=sanitize_for_slack(briefing)
         )
     except Exception as e:
         logger.error(f"Error handling /bearings: {e}")
@@ -926,7 +1075,7 @@ async def handle_learn_request(
         await client.chat_postMessage(
             channel=channel,
             thread_ts=thread_ts,
-            text=msg
+            text=sanitize_for_slack(msg)
         )
     except Exception as e:
         logger.error(f"Error handling /learn: {e}")
@@ -934,17 +1083,17 @@ async def handle_learn_request(
 
 async def handle_ahoy_request(channel: str, thread_ts: Optional[str] = None, msg_ts: Optional[str] = None, client: Any = None):
     msg = "⚓ *Ahoy:* Session catch-up complete. All background Herdr agents settled."
-    await client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=msg)
+    await client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=sanitize_for_slack(msg))
 
 
 async def handle_wrapup_request(channel: str, thread_ts: Optional[str] = None, msg_ts: Optional[str] = None, client: Any = None):
     msg = "🧹 *Wrapup:* Housekeeping complete. Working directories clean."
-    await client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=msg)
+    await client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=sanitize_for_slack(msg))
 
 
 async def handle_update_request(channel: str, thread_ts: Optional[str] = None, msg_ts: Optional[str] = None, client: Any = None):
     msg = "🚀 *Update:* System update verified cleanly."
-    await client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=msg)
+    await client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=sanitize_for_slack(msg))
 
 
 # ------------------------------------------------------------------------------
@@ -961,11 +1110,12 @@ async def process_user_prompt(event: Dict[str, Any], client: Any) -> None:
     thread_ts = event.get("thread_ts") or ts
     is_imessage = bool(event.get("is_imessage", False))
 
-    # Strip bot user mention
+    # Strip bot user mention (@AGY or <@Uxxxx>)
     clean_text = raw_text
     if BOT_USER_ID:
         clean_text = re.sub(rf"<@{BOT_USER_ID}>", "", clean_text).strip()
-    clean_text = clean_text.strip()
+    clean_text = re.sub(r"<@[A-Za-z0-9_-]+>", "", clean_text).strip()
+    clean_text = re.sub(r"^@(?:AGY|agy|\w+)\b\s*", "", clean_text).strip()
     if not clean_text:
         return
 
@@ -995,36 +1145,36 @@ async def process_user_prompt(event: Dict[str, Any], client: Any) -> None:
     if session and getattr(session, "status", None) == "blocked":
         if is_approval_reply(clean_text):
             # User approved: send 'y enter' to agent PTY stdin
-            logger.info(f"Relaying approval ('y enter') to agent {session.agent_name}...")
-            await herdr_client.run_cli(["agent", "send-keys", session.agent_name, "y", "enter"])
+            logger.info(f"Relaying approval ('y enter') to agent {session.active_agent}...")
+            await herdr_client.run_cli(["agent", "send-keys", session.active_agent, "y", "enter"])
             session.status = "working"
             if is_imessage:
-                await client.chat_postMessage(channel=channel, text="👍 Approval relayed. Continuing execution...")
+                await client.chat_postMessage(channel=channel, text=normalize_for_bluebubbles("👍 Approval relayed. Continuing execution..."))
             else:
                 await add_reacji(client, channel, ts, "gear")
-                await client.chat_postMessage(channel=channel, thread_ts=thread_ts, text="👍 Relayed approval (`y`). Continuing...")
+                await client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=sanitize_for_slack("👍 Relayed approval (`y`). Continuing..."))
             return
 
         elif is_rejection_reply(clean_text):
             # User rejected: send 'n enter' to agent PTY stdin
-            logger.info(f"Relaying cancellation ('n enter') to agent {session.agent_name}...")
-            await herdr_client.run_cli(["agent", "send-keys", session.agent_name, "n", "enter"])
+            logger.info(f"Relaying cancellation ('n enter') to agent {session.active_agent}...")
+            await herdr_client.run_cli(["agent", "send-keys", session.active_agent, "n", "enter"])
             session.status = "idle"
             if is_imessage:
-                await client.chat_postMessage(channel=channel, text="❌ Cancellation relayed. Operation aborted.")
+                await client.chat_postMessage(channel=channel, text=normalize_for_bluebubbles("❌ Cancellation relayed. Operation aborted."))
             else:
                 await add_reacji(client, channel, ts, "x")
-                await client.chat_postMessage(channel=channel, thread_ts=thread_ts, text="❌ Relayed cancellation (`n`). Operation aborted.")
+                await client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=sanitize_for_slack("❌ Relayed cancellation (`n`). Operation aborted."))
             return
 
     # 2. Status Inquiry: If user asks for real-time status or running URLs
     if session and is_status_inquiry(clean_text):
         _, read_out, _ = await herdr_client.run_cli([
-            "agent", "read", session.agent_name,
+            "agent", "read", session.active_agent,
             "--lines", "30",
             "--source", "recent-unwrapped"
         ])
-        sanitized = sanitize_terminal_output(read_out)
+        sanitized = sanitize_terminal_output(read_out, session.last_prompt)
         artifacts = extract_operational_artifacts(read_out)
         ports = extract_listening_ports(read_out)
 
@@ -1034,18 +1184,18 @@ async def process_user_prompt(event: Dict[str, Any], client: Any) -> None:
 
         url_line = f"Live Endpoint: {urls[0]}\n" if urls else ""
         clean_lines = [l for l in sanitized.splitlines() if l.strip()][-6:]
-        summary = "\n".join(clean_lines) or f"Agent `{session.agent_name}` is currently {session.status}."
+        summary = "\n".join(clean_lines) or f"Agent `{session.active_agent}` is currently {session.status}."
         msg = f"*Status Update (`{session.agent_name}`)*\n{url_line}```{summary}```"
 
         if is_imessage:
             await client.chat_postMessage(channel=channel, text=normalize_for_bluebubbles(msg))
         else:
-            await client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=msg)
+            await client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=sanitize_for_slack(msg))
         return
 
-    # 3. New Task Dispatch / Follow-Up Prompt to Herdr Pane
+    # 3. New Task Dispatch / Follow-Up Prompt to Herdr Pane (Non-verbal :gear: ingress)
     if not is_imessage:
-        await add_reacji(client, channel, ts, "eyes")
+        await add_reacji(client, channel, ts, "gear")
 
     is_new_session = session_key not in sessions or sessions[session_key].status == "failed"
 
@@ -1065,9 +1215,6 @@ async def process_user_prompt(event: Dict[str, Any], client: Any) -> None:
     scoped_prompt = scope_server_commands(clean_text, session.target_cwd)
     session.last_prompt = scoped_prompt
 
-    if not is_imessage:
-        await swap_reacji(client, channel, ts, "eyes", "gear")
-
     # Start living status card & out-of-band PTY telemetry observer if not active
     if client and (not session.telemetry_observer or session.telemetry_observer.stop_event.is_set()):
         session.telemetry_observer = SessionTelemetryObserver(
@@ -1084,7 +1231,7 @@ async def process_user_prompt(event: Dict[str, Any], client: Any) -> None:
         session.status = "working"
         session.has_worked = False  # Reset working flag for the follow-up turn
         prompt_code, _, prompt_err = await herdr_client.run_cli([
-            "agent", "prompt", session.agent_name, scoped_prompt
+            "agent", "prompt", session.active_agent, scoped_prompt
         ])
         if prompt_code != 0:
             logger.warning(f"herdr agent prompt returned code {prompt_code}: {prompt_err}")
@@ -1097,27 +1244,218 @@ async def process_user_prompt(event: Dict[str, Any], client: Any) -> None:
 
 
 
+async def resolve_bot_user_id(client: Any = None) -> Optional[str]:
+    """Resolve AGY's bot user ID via client.auth_test()["user_id"] or cached BOT_USER_ID."""
+    global BOT_USER_ID
+    if isinstance(BOT_USER_ID, str) and BOT_USER_ID:
+        return BOT_USER_ID
+    if ingress_gateway is not None:
+        gw_bot_id = getattr(ingress_gateway, "bot_user_id", None)
+        if isinstance(gw_bot_id, str) and gw_bot_id:
+            BOT_USER_ID = gw_bot_id
+            return BOT_USER_ID
+    if client is not None and hasattr(client, "auth_test"):
+        try:
+            fn = getattr(client, "auth_test")
+            res = fn() if callable(fn) else fn
+            if asyncio.iscoroutine(res):
+                res = await res
+            if isinstance(res, dict):
+                bot_id = res.get("user_id")
+                if isinstance(bot_id, str) and bot_id:
+                    BOT_USER_ID = bot_id
+                    if ingress_gateway is not None and hasattr(ingress_gateway, "bot_user_id"):
+                        try:
+                            ingress_gateway.bot_user_id = bot_id
+                        except Exception:
+                            pass
+                    return BOT_USER_ID
+        except Exception as e:
+            logger.debug(f"Failed to resolve bot_user_id via auth_test: {e}")
+    return BOT_USER_ID if isinstance(BOT_USER_ID, str) else None
+
+
+def is_active_thread(channel: str, thread_ts: Optional[str]) -> bool:
+    """Check if thread_ts is part of an active session in session_router or sessions."""
+    if not thread_ts:
+        return False
+    chan_str = str(channel or "")
+    th_str = str(thread_ts)
+
+    if session_router is not None:
+        if hasattr(session_router, "has_thread") and session_router.has_thread(chan_str, th_str):
+            return True
+        if hasattr(session_router, "sessions"):
+            key = f"{chan_str}:{th_str}"
+        if key in session_router.sessions:
+            s = session_router.sessions[key]
+            state = getattr(s, "state", None)
+            state_val = getattr(state, "value", state)
+            if state_val != "closed":
+                return True
+        for s in session_router.sessions.values():
+            s_chan = getattr(s, "channel", None)
+            if (s_chan is None or str(s_chan) == chan_str) and str(getattr(s, "thread_ts", None)) == th_str:
+                state = getattr(s, "state", None)
+                state_val = getattr(state, "value", state)
+                if state_val != "closed":
+                    return True
+
+    key = f"{chan_str}:{th_str}"
+    if key in sessions:
+        s = sessions[key]
+        status = getattr(s, "status", getattr(s, "state", None))
+        if status != "closed":
+            return True
+    for s in sessions.values():
+        s_chan = getattr(s, "channel", None)
+        if (s_chan is None or str(s_chan) == chan_str) and str(getattr(s, "thread_ts", None)) == th_str:
+            status = getattr(s, "status", getattr(s, "state", None))
+            if status != "closed":
+                return True
+    return False
+
+
+async def should_process_ingress_event(event: Dict[str, Any], client: Any) -> bool:
+    """
+    Ingress Mention & DM Filter:
+    - Resolve AGY's bot user ID via client.auth_test()["user_id"].
+    - Ignore bot messages (subtype == "bot_message", event.get("bot_id"), or event.get("bot_profile")).
+    - Ignore messages sent by other bot users (e.g. Hermes or generic bot user accounts).
+    - Ignore non-conversational message subtypes (message_deleted, channel_join, message_replied, etc.).
+    - Ignore empty messages or standalone bot mentions without actionable text.
+    - Allow the event to proceed ONLY if:
+      1. channel_type == "im" or the channel ID starts with "D" (Direct Message), or is_imessage.
+      2. The message explicitly mentions AGY (<@{bot_user_id}>, @AGY, or app_mention)
+         AND does not target another bot (e.g. <@U_HERMES>).
+      3. The message is in an existing active thread (thread_ts in active sessions / router)
+         AND does not explicitly target another bot (e.g. <@U_HERMES>).
+    - If none of these match (e.g. general channel chatter, message targeting @Hermes), immediately return False.
+    """
+    if event.get("subtype") in (
+        "bot_message",
+        "message_deleted",
+        "channel_join",
+        "channel_leave",
+        "message_replied",
+        "message_changed",
+        "pinned_item",
+        "unpinned_item",
+    ):
+        return False
+    if event.get("bot_id"):
+        return False
+    if event.get("bot_profile"):
+        return False
+
+    raw_text = str(event.get("text", "") or "")
+    bot_id = await resolve_bot_user_id(client)
+    if not bot_id and event.get("type") == "app_mention":
+        first_mention = re.search(r"<@([A-Za-z0-9_-]+)(?:\|[^>]*)?>", raw_text)
+        if first_mention:
+            bot_id = first_mention.group(1)
+
+    user = str(event.get("user", "") or "")
+    if bot_id and user == bot_id:
+        return False
+    # If the message sender is another bot (e.g. Hermes or a bot user), do not process
+    if "hermes" in user.lower() or (user != bot_id and "bot" in user.lower()):
+        return False
+
+    has_files = bool(event.get("files")) or event.get("subtype") == "file_share"
+    clean_text = strip_bot_mentions(raw_text, bot_id)
+    if not clean_text and not has_files:
+        return False
+
+    channel = str(event.get("channel", ""))
+    channel_type = str(event.get("channel_type", ""))
+    thread_ts = event.get("thread_ts")
+
+    # 1. 1:1 Direct Message or iMessage
+    if channel_type == "im" or channel.startswith("D") or bool(event.get("is_imessage", False)):
+        return True
+
+    all_mentions = re.findall(r"<@([A-Za-z0-9_-]+)(?:\|[^>]*)?>", raw_text)
+    other_mentions = [m for m in all_mentions if m != bot_id]
+
+    is_agy_in_text = bool(
+        (bot_id and bool(re.search(rf"<@{re.escape(bot_id)}(?:\|[^>]*)?>", raw_text)))
+        or bool(re.search(r"<@[A-Za-z0-9_-]+\|(?:AGY|agy)\b[^>]*>", raw_text, re.IGNORECASE))
+        or bool(re.search(r"@(?:AGY|agy)\b", raw_text, re.IGNORECASE))
+    )
+
+    is_app_mention = event.get("type") == "app_mention"
+    is_agy_mentioned = is_agy_in_text or (is_app_mention and not any("hermes" in m.lower() for m in other_mentions))
+
+    # Check if message explicitly targets another entity/bot (e.g. <@U_HERMES> or @hermes)
+    # without explicitly mentioning AGY.
+    targets_other_bot = False
+    if not is_agy_in_text:
+        if other_mentions:
+            if any("hermes" in m.lower() for m in other_mentions) or any(m != bot_id and "bot" in m.lower() for m in other_mentions):
+                targets_other_bot = True
+            elif re.search(r"<@[A-Za-z0-9_-]+\|[^>]*(?:hermes|bot|slackbot)[^>]*>", raw_text, re.IGNORECASE):
+                targets_other_bot = True
+        if re.search(r"@(?:hermes|slackbot)\b", raw_text, re.IGNORECASE):
+            targets_other_bot = True
+
+    if targets_other_bot:
+        return False
+
+    # 2. Explicit @AGY mention (starts a thread or addresses AGY)
+    if is_agy_mentioned:
+        return True
+
+    # 3. Existing active thread: reply to ALL messages within that thread
+    # (does not require re-mentioning @AGY on follow-up turns)
+    if thread_ts and is_active_thread(channel, thread_ts):
+        return True
+
+    return False
+
+
+
 # ------------------------------------------------------------------------------
 # Slack Event Listeners
 # ------------------------------------------------------------------------------
+USE_HEADLESS_GATEWAY = os.environ.get("FIRST_MATE_HEADLESS", "1").lower() in ("1", "true", "yes")
+
 @app.event("app_mention")
 async def handle_app_mention(event: Dict[str, Any], client: AsyncWebClient):
-    ts = event.get("ts", "")
-    if ts in processed_message_ids:
+    if not await should_process_ingress_event(event, client):
         return
-    processed_message_ids.add(ts)
-    await process_user_prompt(event, client)
+    if USE_HEADLESS_GATEWAY and ingress_gateway is not None:
+        await ingress_gateway.handle_message(event, client)
+    else:
+        ts = event.get("ts", "")
+        if ts in processed_message_ids:
+            return
+        processed_message_ids.add(ts)
+        await process_user_prompt(event, client)
 
 
 @app.event("message")
 async def handle_message_events(event: Dict[str, Any], client: AsyncWebClient):
-    if event.get("subtype") in ("bot_message", "message_deleted", "channel_join"):
+    if not await should_process_ingress_event(event, client):
         return
-    ts = event.get("ts", "")
-    if ts in processed_message_ids:
-        return
-    processed_message_ids.add(ts)
-    await process_user_prompt(event, client)
+    if USE_HEADLESS_GATEWAY and ingress_gateway is not None:
+        await ingress_gateway.handle_message(event, client)
+    else:
+        ts = event.get("ts", "")
+        if ts in processed_message_ids:
+            return
+        processed_message_ids.add(ts)
+        await process_user_prompt(event, client)
+
+
+@app.event("file_shared")
+async def handle_file_shared_events(event: Dict[str, Any], client: AsyncWebClient):
+    """
+    Handle Slack file_shared events:
+    Pre-stage file metadata and download into slack_transfers/ via IngressGateway.
+    """
+    if ingress_gateway is not None:
+        await ingress_gateway.handle_file_shared(event, client)
 
 
 @app.event("reaction_added")
@@ -1139,14 +1477,14 @@ async def handle_reaction_added(event: Dict[str, Any], client: AsyncWebClient):
         return
 
     if reaction in ("thumbsup", "+1", "white_check_mark"):
-        logger.info(f"Relaying reaction approval ({reaction}) to agent {matched_session.agent_name}...")
-        await herdr_client.run_cli(["agent", "send-keys", matched_session.agent_name, "y", "enter"])
+        logger.info(f"Relaying reaction approval ({reaction}) to agent {matched_session.active_agent}...")
+        await herdr_client.run_cli(["agent", "send-keys", matched_session.active_agent, "y", "enter"])
         matched_session.status = "working"
         await add_reacji(client, channel, item_ts, "gear")
 
     elif reaction in ("thumbsdown", "-1", "x", "octagonal_sign"):
-        logger.info(f"Relaying reaction cancellation ({reaction}) to agent {matched_session.agent_name}...")
-        await herdr_client.run_cli(["agent", "send-keys", matched_session.agent_name, "n", "enter"])
+        logger.info(f"Relaying reaction cancellation ({reaction}) to agent {matched_session.active_agent}...")
+        await herdr_client.run_cli(["agent", "send-keys", matched_session.active_agent, "n", "enter"])
         matched_session.status = "idle"
         await add_reacji(client, channel, item_ts, "x")
 
@@ -1170,13 +1508,13 @@ async def handle_button_approve(ack, body, client):
                 break
 
     if matched_session and matched_session.status == "blocked":
-        logger.info(f"Relaying button approval to agent {matched_session.agent_name}...")
-        await herdr_client.run_cli(["agent", "send-keys", matched_session.agent_name, "y", "enter"])
+        logger.info(f"Relaying button approval to agent {matched_session.active_agent}...")
+        await herdr_client.run_cli(["agent", "send-keys", matched_session.active_agent, "y", "enter"])
         matched_session.status = "working"
         await client.chat_postMessage(
             channel=channel,
             thread_ts=thread_ts,
-            text="*Approved 👍. Continuing execution...*"
+            text=sanitize_for_slack("*Approved 👍. Continuing execution...*")
         )
 
 
@@ -1199,13 +1537,13 @@ async def handle_button_reject(ack, body, client):
                 break
 
     if matched_session and matched_session.status == "blocked":
-        logger.info(f"Relaying button rejection to agent {matched_session.agent_name}...")
-        await herdr_client.run_cli(["agent", "send-keys", matched_session.agent_name, "n", "enter"])
+        logger.info(f"Relaying button rejection to agent {matched_session.active_agent}...")
+        await herdr_client.run_cli(["agent", "send-keys", matched_session.active_agent, "n", "enter"])
         matched_session.status = "idle"
         await client.chat_postMessage(
             channel=channel,
             thread_ts=thread_ts,
-            text="*Cancelled ❌. Operation aborted.*"
+            text=sanitize_for_slack("*Cancelled ❌. Operation aborted.*")
         )
 
 
@@ -1286,9 +1624,12 @@ def on_signal_received(sig):
 
 
 async def main():
-    logger.info("Starting First Mate Thin Ingress Gateway (Herdr Runtime)...")
+    logger.info("Starting First Mate 2.0 Ingress Gateway (Herdr Runtime)...")
     loop = asyncio.get_running_loop()
     setup_signal_handlers(loop)
+
+    # Start 4-hour inactivity session router reaper
+    session_router.start_reaper()
 
     try:
         killed = await cleanup_rogue_servers()
@@ -1308,6 +1649,7 @@ async def main():
         auth_info = await app.client.auth_test()
         global BOT_USER_ID
         BOT_USER_ID = auth_info.get("user_id")
+        ingress_gateway.bot_user_id = BOT_USER_ID
         logger.info(f"Authenticated as @{auth_info.get('user')} ({BOT_USER_ID}) on team {auth_info.get('team')}")
     except Exception as e:
         logger.critical(f"Failed to authenticate with Slack API: {e}")
@@ -1331,6 +1673,11 @@ async def main():
     finally:
         logger.info("Performing graceful shutdown: disconnecting transports and closing client sessions...")
         try:
+            await session_router.stop_reaper()
+        except Exception as e:
+            logger.debug(f"Error stopping session router reaper: {e}")
+
+        try:
             await handler.close_async()
         except Exception as e:
             logger.debug(f"Error closing socket mode handler: {e}")
@@ -1346,6 +1693,63 @@ async def main():
         # Brief yield to let underlying SSL transports complete clean closure
         await asyncio.sleep(0.25)
         logger.info("First Mate Gateway shutdown completed cleanly.")
+
+
+__all__ = [
+    # First Mate 2.0 Core Singletons
+    "session_router",
+    "ingress_gateway",
+    "dual_pane_harness",
+    # Legacy Global State Registries
+    "sessions",
+    "agent_name_to_session",
+    "pending_alignment",
+    "pending_alignment_by_msg_ts",
+    "active_thread_sessions",
+    "active_tasks",
+    "active_subprocesses",
+    "workspace_locks",
+    # Legacy Classes
+    "GatewaySession",
+    # Legacy Functions & Shims
+    "ensure_session_agent",
+    "init_dual_pane_workspace",
+    "resolve_target_directory",
+    "scope_server_commands",
+    "normalize_for_bluebubbles",
+    "is_status_inquiry",
+    "is_approval_reply",
+    "is_rejection_reply",
+    "process_user_prompt",
+    "handle_reaction_added",
+    "handle_file_shared_events",
+    "fetch_recent_thread_context",
+    "monitor_agent_lifecycle",
+    "post_completion_briefing",
+    "split_message_boundary_aware",
+    "sanitize_for_slack",
+    "should_process_ingress_event",
+    "resolve_bot_user_id",
+    "is_active_thread",
+    # Executive Command Handlers
+    "handle_bearings_request",
+    "handle_learn_request",
+    "handle_ahoy_request",
+    "handle_wrapup_request",
+    "handle_update_request",
+    # Clients & Instances
+    "app",
+    "herdr_client",
+    "client_herdr",
+    "fleet",
+    "herdr",
+    "supervisor",
+    # Constants
+    "HOST_DIR",
+    "PROJECT_ROOT",
+    "DEFAULT_TARGET_REPO",
+    "DAEMON_LABEL",
+]
 
 
 if __name__ == "__main__":

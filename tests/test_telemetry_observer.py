@@ -229,21 +229,21 @@ class TestConversationalTelemetry(unittest.IsolatedAsyncioTestCase):
             client=client,
             herdr_client=herdr_client
         )
-        # Initialize startup milestone
+        # Initialize startup milestone (muted ingress: no canned message)
         await observer.initialize_dashboard()
         self.assertIn("startup", observer.milestones_posted)
-        self.assertEqual(client.chat_postMessage.call_count, 1)
+        self.assertEqual(client.chat_postMessage.call_count, 0)
 
         # Poll Turn 1: agy alone
         await observer.poll_and_update()
-        self.assertEqual(client.chat_postMessage.call_count, 1)
+        self.assertEqual(client.chat_postMessage.call_count, 0)
 
         # Poll Turn 2: OpenCode appears -> delegation notice posted
         turn[0] = 2
         await observer.poll_and_update()
         self.assertIn("delegation_opencode", observer.milestones_posted)
-        self.assertEqual(client.chat_postMessage.call_count, 2)
-        delegation_msg = client.chat_postMessage.call_args_list[1][1]["text"]
+        self.assertEqual(client.chat_postMessage.call_count, 1)
+        delegation_msg = client.chat_postMessage.call_args_list[0][1]["text"]
         self.assertIn("Handing this to OpenCode on `hermes`", delegation_msg)
 
     async def test_status_query_intercept_extracts_url(self):
@@ -291,6 +291,101 @@ class TestConversationalTelemetry(unittest.IsolatedAsyncioTestCase):
             client.chat_postMessage.assert_called_once()
             reply = client.chat_postMessage.call_args[1]["text"]
             self.assertIn("8090", reply)
+
+    async def test_settle_complete_does_not_emit_chat_postmessage(self):
+        """Verify settle_complete does NOT call chat_postMessage, leaving app.py as sole completion emitter."""
+        session = GatewaySession(
+            session_key="C_TEST:900.001",
+            agent_name="fm-test-settle",
+            target_cwd="/tmp/settle",
+            channel="C_TEST",
+            thread_ts="900.001",
+            workspace_id="w_settle"
+        )
+        client = AsyncMock()
+        client.chat_postMessage = AsyncMock()
+        herdr_client = MagicMock()
+
+        observer = SessionTelemetryObserver(
+            session=session,
+            client=client,
+            herdr_client=herdr_client
+        )
+        await observer.settle_complete(artifacts={"urls": ["http://localhost:8080"]}, terminal_output="Done")
+
+        # Must mark complete and stop event
+        self.assertTrue(observer.stop_event.is_set())
+        self.assertIn("complete", observer.milestones_posted)
+        # Must NOT call chat_postMessage (no double completion notice)
+        client.chat_postMessage.assert_not_called()
+
+    async def test_opencode_prompt_at_dispatch_does_not_prematurely_announce_delegation(self):
+        """Verify prompt mentioning OpenCode does not prematurely emit delegation notice on dispatch."""
+        session = GatewaySession(
+            session_key="C_TEST:950.001",
+            agent_name="fm-test-dispatch-opencode",
+            target_cwd="/tmp/dispatch",
+            channel="C_TEST",
+            thread_ts="950.001",
+            workspace_id="w_dispatch"
+        )
+        session.last_prompt = "@AGY Can you have OpenCode create a simple test page and host it?"
+
+        client = AsyncMock()
+        client.chat_postMessage = AsyncMock(return_value={"ts": "msg_001"})
+        herdr_client = MagicMock()
+
+        ws_inspect_turn1 = json.dumps({
+            "result": {
+                "workspace": {"workspace_id": "w_dispatch"},
+                "panes": [{"pane_id": "w_dispatch:p1", "agent": "agy", "machine": "hermes"}]
+            }
+        })
+        ws_inspect_turn2 = json.dumps({
+            "result": {
+                "workspace": {"workspace_id": "w_dispatch"},
+                "panes": [
+                    {"pane_id": "w_dispatch:p1", "agent": "agy", "machine": "hermes"},
+                    {"pane_id": "w_dispatch:p2", "agent": "opencode", "machine": "hermes", "name": "opencode-worker"}
+                ]
+            }
+        })
+
+        turn = [1]
+        async def mock_run_cli(args, timeout=5.0):
+            if args[:2] == ["workspace", "inspect"]:
+                out = ws_inspect_turn1 if turn[0] == 1 else ws_inspect_turn2
+                return 0, out, ""
+            elif args[:2] == ["agent", "inspect"]:
+                return 0, json.dumps({"foreground_process": {"cmdline": "python3 -m http.server 8090"}}), ""
+            elif args[:2] == ["agent", "list"]:
+                return 0, json.dumps({"result": {"agents": []}}), ""
+            elif args[:2] == ["agent", "read"]:
+                return 0, "Serving HTTP on 0.0.0.0 port 8090 ...\n", ""
+            return 0, "", ""
+
+        herdr_client.run_cli = AsyncMock(side_effect=mock_run_cli)
+
+        observer = SessionTelemetryObserver(
+            session=session,
+            client=client,
+            herdr_client=herdr_client
+        )
+
+        # 1. Dispatch / startup: MUST NOT announce delegation or emit canned startup text
+        await observer.initialize_dashboard()
+        self.assertEqual(client.chat_postMessage.call_count, 0)
+
+        # 2. Turn 1 (only agy pane in Herdr): NO delegation notice
+        await observer.poll_and_update()
+        self.assertEqual(client.chat_postMessage.call_count, 0)
+
+        # 3. Turn 2 (child pane appears in Herdr): SOLE emitter of delegation notice
+        turn[0] = 2
+        await observer.poll_and_update()
+        self.assertEqual(client.chat_postMessage.call_count, 1)
+        delegation_msg = client.chat_postMessage.call_args_list[0][1]["text"]
+        self.assertIn("Handing this to OpenCode on `hermes` to execute.", delegation_msg)
 
 
 if __name__ == "__main__":
