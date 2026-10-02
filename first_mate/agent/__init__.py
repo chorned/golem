@@ -27,11 +27,20 @@ from .calibration import (
     get_calibration_rules,
     build_calibrated_system_prompt,
 )
+from .mouth import (
+    generate_mouth_response,
+    is_cancellation_message,
+    is_status_inquiry,
+    is_conversational_checkin,
+    is_conversational_inquiry,
+    is_out_of_band_message,
+)
 from . import events
 from . import prompts
 from . import protocol
 from . import calibration
 from . import adapter
+from . import mouth
 
 __all__ = [
     # Submodules
@@ -40,6 +49,7 @@ __all__ = [
     "protocol",
     "calibration",
     "adapter",
+    "mouth",
     # Event protocol
     "AgentEvent",
     "AgentEventType",
@@ -60,4 +70,11 @@ __all__ = [
     "TRIAGE_SUPPRESSION_RULES",
     "get_calibration_rules",
     "build_calibrated_system_prompt",
+    # Mouth LLM & Out-of-Band Reactor
+    "generate_mouth_response",
+    "is_cancellation_message",
+    "is_status_inquiry",
+    "is_conversational_checkin",
+    "is_conversational_inquiry",
+    "is_out_of_band_message",
 ]

@@ -28,6 +28,7 @@ from first_mate.gateway.session import (
     is_conversational_checkin,
     is_out_of_band_message,
 )
+from first_mate.agent.mouth import generate_mouth_response
 from first_mate.transport.normalizer import sanitize_for_slack
 from first_mate.transport.chunker import split_message_boundary_aware
 from first_mate.transport.file_transfer import (
@@ -845,7 +846,7 @@ class IngressGateway:
             if is_cancellation_message(clean_text):
                 await self._handle_out_of_band_cancellation(session, client, channel, thread_ts, ts, is_imessage)
                 return
-            elif is_status_inquiry(clean_text) or is_conversational_checkin(clean_text):
+            elif is_out_of_band_message(clean_text, session=session):
                 await self._handle_out_of_band_status(session, client, channel, thread_ts, ts, is_imessage, clean_text)
                 return
 
@@ -1061,34 +1062,18 @@ class IngressGateway:
     ) -> None:
         """Handle out-of-band status query or check-in without acquiring session lock."""
         status_info = await session.get_runner_status()
+        msg = await generate_mouth_response(prompt_text, status_info, session=session)
+
         blocker = status_info.get("blocker")
         if not blocker and status_info.get("blockers"):
             b_list = status_info["blockers"]
             if b_list and isinstance(b_list, list):
                 blocker = b_list[0]
 
-        if blocker and blocker.get("type") == "oauth":
-            url = blocker.get("url")
-            msg = f"🔐 *Authentication Required:* Runner is waiting for OAuth authorization:\n<{url}|Click here to authenticate>"
-            if not is_imessage and ts:
+        if not is_imessage and ts:
+            if blocker and blocker.get("type") in ("oauth", "prompt"):
                 await swap_reaction(client, channel, ts, "gear", "warning")
-        elif blocker and blocker.get("type") == "prompt":
-            content = blocker.get("content")
-            msg = f"⚠️ *Confirmation Required:* Runner is waiting for input:\n> `{content}`"
-            if not is_imessage and ts:
-                await swap_reaction(client, channel, ts, "gear", "warning")
-        elif status_info.get("status") == "running" or session.is_executing:
-            pid = status_info.get("pid") or getattr(session.active_execution, "pid", None) or "active"
-            tail = status_info.get("buffer_tail") or status_info.get("output_tail") or ""
-            if is_conversational_checkin(prompt_text) and not is_status_inquiry(prompt_text):
-                msg = f"⚓ *Liaison Update:* Active execution is underway in Pane 2 (PID {pid}). Still working on your task."
             else:
-                msg = f"⚙️ *Runner In Progress (PID {pid}):*\n> {tail or 'Executing command in Pane 2...'}"
-            if not is_imessage and ts:
-                await swap_reaction(client, channel, ts, "gear", "white_check_mark")
-        else:
-            msg = "⚓ *Status Digest:* Runner pane is currently idle. No active background jobs."
-            if not is_imessage and ts:
                 await swap_reaction(client, channel, ts, "gear", "white_check_mark")
 
         await self._post_response(client, channel, thread_ts, msg, is_imessage)

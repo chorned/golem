@@ -22,69 +22,18 @@ from first_mate.agent.protocol import (
     TextDeltaEvent,
     StatusUpdateEvent,
 )
+from first_mate.agent.mouth import (
+    generate_mouth_response,
+    is_cancellation_message,
+    is_status_inquiry,
+    is_conversational_checkin,
+    is_conversational_inquiry,
+    is_out_of_band_message,
+)
 
 logger = logging.getLogger("FirstMate.Gateway.Session")
 
 CURRENT_SESSION: ContextVar[Optional["SessionHandle"]] = ContextVar("current_session", default=None)
-
-
-
-def is_cancellation_message(text: str) -> bool:
-    """Check if message expresses cancellation intent."""
-    clean = text.strip().lower()
-    stripped = clean.rstrip("?.!").strip()
-    if stripped in (
-        "/cancel", "!cancel", "/stop", "!stop", "/abort", "!abort",
-        "cancel", "stop", "abort", "kill", "quit", "interrupt",
-        "please cancel", "please stop", "please abort", "please interrupt",
-        "cancel please", "stop please", "abort please",
-    ):
-        return True
-    cancellation_patterns = [
-        r"^(please\s+)?(cancel|stop|abort|kill|terminate|interrupt)(\s+(that|this|it|the))?(\s+(task|command|execution|job|runner|process))?[\.!\?]?$",
-        r"^(can|could|would)\s+you\s+(please\s+)?(cancel|stop|abort|kill|terminate|interrupt)(\s+(that|this|it|the))?(\s+(task|command|execution|job|runner|process))?[\.!\?]?$",
-        r"^(please\s+)?(cancel|stop|abort)\s+(that|this|it|the\s+\w+|task|command|execution|job|runner|process)\b",
-        r"\b(can|could|would)\s+you\s+(please\s+)?(cancel|stop|abort)\b",
-        r"\bplease\s+(cancel|stop|abort|terminate)\b",
-        r"\b(cancel|stop|abort)\s+(the\s+)?(task|command|execution|job|runner|process)\b",
-    ]
-    return any(bool(re.search(p, clean)) for p in cancellation_patterns)
-
-
-def is_status_inquiry(text: str) -> bool:
-    """Check if message is inquiring about status, progress, buffer, or blockers."""
-    clean = text.strip().lower()
-    if clean in ("status", "progress", "url", "oauth", "link", "/status", "!status"):
-        return True
-    patterns = [
-        r"\b(status|progress|check\s+status|show\s+buffer)\b",
-        r"\b(what('?s|\s+is)\s+(the\s+)?(status|url|link|oauth|progress))\b",
-        r"\b(how('?s|\s+is)\s+it\s+going)\b",
-        r"\b(where\s+are\s+we|what('?s|\s+is)\s+happening)\b",
-        r"\b(what('?s|\s+is)\s+the\s+url)\b",
-    ]
-    return any(bool(re.search(p, clean)) for p in patterns)
-
-
-def is_conversational_checkin(text: str) -> bool:
-    """Check if message is a conversational check-in during background execution."""
-    clean = text.strip().lower()
-    if clean in ("ping", "update", "updates", "updates?"):
-        return True
-    patterns = [
-        r"\b(are\s+you\s+(still\s+)?(there|working|running))\b",
-        r"\b(is\s+it\s+(still\s+)?running)\b",
-        r"\b(still\s+running\??)\b",
-        r"\b(any\s+updates?\??)\b",
-        r"\b(what\s+are\s+you\s+doing\??)\b",
-        r"\b(are\s+we\s+done\??)\b",
-    ]
-    return any(bool(re.search(p, clean)) for p in patterns)
-
-
-def is_out_of_band_message(text: str) -> bool:
-    """Check if message qualifies for out-of-band processing while session is busy."""
-    return is_cancellation_message(text) or is_status_inquiry(text) or is_conversational_checkin(text)
 
 
 class SessionState(str, Enum):
@@ -345,41 +294,25 @@ class SessionHandle:
             yield FinishEvent(status="SUCCESS", response=msg)
             return
 
-        # Status inquiry or conversational check-in
+        # Status inquiry, conversational check-in, or mid-stream inquiry handled by Mouth LLM
         status_info = await self.get_runner_status()
+        msg = await generate_mouth_response(prompt, status_info, session=self)
+
         blocker = status_info.get("blocker")
         if not blocker and status_info.get("blockers"):
             b_list = status_info["blockers"]
             if b_list and isinstance(b_list, list):
                 blocker = b_list[0]
 
-        if blocker and blocker.get("type") == "oauth":
-            url = blocker.get("url")
-            msg = f"🔐 *Authentication Required:* Runner is waiting for OAuth authorization:\n<{url}|Click here to authenticate>"
+        if blocker and blocker.get("type") in ("oauth", "prompt"):
             yield StatusUpdateEvent(status="blocked")
-            yield TextDeltaEvent(text_delta=msg)
-            yield FinishEvent(status="SUCCESS", response=msg)
-        elif blocker and blocker.get("type") == "prompt":
-            content = blocker.get("content")
-            msg = f"⚠️ *Confirmation Required:* Runner is waiting for input:\n> `{content}`"
-            yield StatusUpdateEvent(status="blocked")
-            yield TextDeltaEvent(text_delta=msg)
-            yield FinishEvent(status="SUCCESS", response=msg)
         elif status_info.get("status") == "running" or self.is_executing:
-            pid = status_info.get("pid") or getattr(self.active_execution, "pid", None) or "active"
-            tail = status_info.get("buffer_tail") or status_info.get("output_tail") or ""
-            if is_conversational_checkin(prompt) and not is_status_inquiry(prompt):
-                msg = f"⚓ *Liaison Update:* Active execution is underway in Pane 2 (PID {pid}). Still working on your task."
-            else:
-                msg = f"⚙️ *Runner In Progress (PID {pid}):*\n> {tail or 'Executing command in Pane 2...'}"
             yield StatusUpdateEvent(status="running")
-            yield TextDeltaEvent(text_delta=msg)
-            yield FinishEvent(status="SUCCESS", response=msg)
         else:
-            msg = "⚓ *Status Digest:* Runner pane is currently idle. No active background jobs."
             yield StatusUpdateEvent(status="idle")
-            yield TextDeltaEvent(text_delta=msg)
-            yield FinishEvent(status="SUCCESS", response=msg)
+
+        yield TextDeltaEvent(text_delta=msg)
+        yield FinishEvent(status="SUCCESS", response=msg)
 
     async def send_user_message(self, prompt: str) -> AsyncGenerator[AgentEvent, None]:
         """
@@ -407,7 +340,7 @@ class SessionHandle:
         token = CURRENT_SESSION.set(self)
         try:
             # Out-of-band bypass check: never block behind lock if executing or busy and message is out-of-band
-            if (self.is_executing or self.lock.locked()) and is_out_of_band_message(prompt):
+            if (self.is_executing or self.lock.locked()) and is_out_of_band_message(prompt, session=self):
                 async for ev in self._stream_out_of_band_impl(prompt):
                     yield ev
                 return

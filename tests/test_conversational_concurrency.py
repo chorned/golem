@@ -155,6 +155,8 @@ class TestConversationalConcurrency(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(is_conversational_checkin("any updates?"))
         self.assertTrue(is_conversational_checkin("still running?"))
         self.assertTrue(is_out_of_band_message("ping"))
+        self.assertTrue(is_out_of_band_message("Can I ask you anything mid stream like this?"))
+        self.assertTrue(is_out_of_band_message("Can I ask a quick question?"))
         self.assertFalse(is_conversational_checkin("Deploy the container"))
 
     # =========================================================================
@@ -233,6 +235,110 @@ class TestConversationalConcurrency(unittest.IsolatedAsyncioTestCase):
         finally:
             if self.session.lock.locked():
                 self.session.lock.release()
+
+    async def test_natural_midstream_inquiry_while_pane2_executing_processed_immediately(self) -> None:
+        """
+        Verify natural mid-stream inquiry ('Can I ask you anything mid stream like this?')
+        is processed immediately out-of-band by the liaison without blocking behind session.lock.
+        """
+        self.session.active_execution = ExecutionHandle(
+            status="running",
+            pane="runner",
+            command="python3 generate_dossiers.py",
+            pid=8844,
+            message="Running Playwright automation in Pane 2",
+        )
+        self.assertTrue(self.session.is_executing)
+        self.assertTrue(self.session.is_busy)
+
+        t_start = time.time()
+        event = {
+            "channel": "test_channel",
+            "thread_ts": "100.1",
+            "ts": "100.2",
+            "text": "Can I ask you anything mid stream like this?",
+        }
+        await self.gateway.handle_message(event, self.client)
+        elapsed = time.time() - t_start
+
+        # Must execute immediately (< 0.25s) without waiting behind lock
+        self.assertLess(elapsed, 0.25)
+        self.assertGreaterEqual(len(self.client.posted_messages), 1)
+        last_msg = self.client.posted_messages[-1]["text"]
+        self.assertIn("Liaison Update", last_msg)
+        self.assertIn("PID 8844", last_msg)
+
+    async def test_natural_midstream_inquiry_bypasses_lock_when_busy(self) -> None:
+        """
+        Verify session.send_user_message('Can I ask you anything mid stream like this?')
+        bypasses session.lock immediately when lock is held by an ongoing turn.
+        """
+        await self.session.lock.acquire()
+        self.assertTrue(self.session.lock.locked())
+
+        self.session.active_execution = ExecutionHandle(
+            status="running",
+            pane="runner",
+            command="playwright test",
+            pid=7766,
+        )
+
+        try:
+            t_start = time.time()
+            events: List[AgentEvent] = []
+            async for ev in self.session.send_user_message("Can I ask you anything mid stream like this?"):
+                events.append(ev)
+            elapsed = time.time() - t_start
+
+            self.assertLess(elapsed, 0.15)
+            self.assertGreaterEqual(len(events), 2)
+            finish_ev = next(e for e in events if getattr(e, "event_type", None) == "finish")
+            self.assertIn("Liaison Update", finish_ev.response)
+            self.assertIn("PID 7766", finish_ev.response)
+        finally:
+            if self.session.lock.locked():
+                self.session.lock.release()
+
+    async def test_natural_conversational_statement_without_question_mark_or_starter_processed_immediately(self) -> None:
+        """
+        Verify natural conversational statements that do not contain '?' or standard question starters
+        (e.g. 'I was wondering if the podcast scraper is almost done', 'Just checking in on things')
+        are processed immediately out-of-band by the liaison without blocking behind session.lock.
+        """
+        self.session.active_execution = ExecutionHandle(
+            status="running",
+            pane="runner",
+            command="python3 generate_dossiers.py",
+            pid=8844,
+            message="Running Playwright automation in Pane 2",
+        )
+        self.assertTrue(self.session.is_executing)
+        self.assertTrue(self.session.is_busy)
+
+        test_phrases = [
+            "I was wondering if the podcast scraper is almost done",
+            "Let me know if you run into any issues",
+            "Just checking in on things",
+            "FYI I need this in 10 minutes",
+            "Looks like it is taking a while",
+        ]
+        for phrase in test_phrases:
+            with self.subTest(phrase=phrase):
+                t_start = time.time()
+                event = {
+                    "channel": "test_channel",
+                    "thread_ts": "100.1",
+                    "ts": f"100.{time.time()}",
+                    "text": phrase,
+                }
+                await self.gateway.handle_message(event, self.client)
+                elapsed = time.time() - t_start
+
+                self.assertLess(elapsed, 0.25)
+                self.assertGreaterEqual(len(self.client.posted_messages), 1)
+                last_msg = self.client.posted_messages[-1]["text"]
+                self.assertIn("Liaison Update", last_msg)
+                self.assertIn("PID 8844", last_msg)
 
     # =========================================================================
     # 3. Out-of-Band Blocker Extraction (OAuth & Prompts)
