@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
+# Golem: Autonomous Fleet Chief of Staff
+# Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 app.py
-First Mate Thin Ingress Gateway & Herdr PTY Relay.
+Golem Thin Ingress Gateway & Herdr PTY Relay.
 Connects Slack Socket Mode and BlueBubbles iMessage to Herdr PTYs and Antigravity CLI (agy).
 Eliminates bespoke JSON classifiers, Mad Libs f-string generators, and canned polling loops.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import os
@@ -14,62 +18,114 @@ import json
 import signal
 import asyncio
 import logging
+import argparse
 import textwrap
 from typing import Dict, Any, Optional, Set, List, Tuple
 
 from dotenv import load_dotenv
+from golem.config import is_webui_enabled, get_webui_host, get_webui_port
+from golem.webui import start_webui_server, stop_webui_server, webui_broadcast
 from slack_bolt.async_app import AsyncApp
 from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
 from slack_sdk.web.async_client import AsyncWebClient
 from slack_sdk.errors import SlackApiError
 
-from bluebubbles_transport import (
-    BlueBubblesTransport,
-    BlueBubblesClient,
-    sanitize_for_imessage
-)
-from normalizer import (
-    sanitize_for_slack,
-    strip_ansi,
-    strip_tui_debris,
-    transpile_markdown_to_mrkdwn
-)
-from herdr_client import HerdrClient, InfrastructureError
-from herdr_fleet import HerdrFleet
-from herdr_tools import (
-    validate_action_payload,
-    BANNED_ACTION_PAYLOAD_PATTERNS,
-    run_command
-)
-from supervisor import AgentSupervisor, cleanup_rogue_servers, summarize_terminal_activity
-from memory_manager import MemoryManager
-from telemetry_observer import (
-    SessionTelemetryObserver,
-    extract_listening_ports,
-    resolve_machine_name,
-    resolve_machine_label,
-    format_runner_label,
-    format_terminal_tail,
-    format_approval_blocks,
-    format_completion_message,
-    format_failure_message,
-    extract_pending_command,
-    is_plumbing_command,
-    sanitize_scrollback,
-    build_status_card_blocks
-)
+try:
+    from bluebubbles_transport import (
+        BlueBubblesTransport,
+        BlueBubblesClient,
+        sanitize_for_imessage
+    )
+except ImportError:
+    BlueBubblesTransport = None  # type: ignore
+    BlueBubblesClient = None  # type: ignore
+    def sanitize_for_imessage(s: str) -> str: return s  # type: ignore
 
-# First Mate 2.0 Modular Package Imports
-from first_mate.transport.chunker import split_message_boundary_aware
-from first_mate.gateway import SessionRouter, SessionHandle, SessionState
-from first_mate.gateway.ingress import (
+try:
+    from normalizer import (
+        sanitize_for_slack,
+        strip_ansi,
+        strip_tui_debris,
+        transpile_markdown_to_mrkdwn
+    )
+except ImportError:
+    from golem.transport.normalizer import (
+        sanitize_for_slack,
+        strip_ansi,
+        strip_tui_debris,
+        transpile_markdown_to_mrkdwn
+    )
+
+try:
+    from herdr_client import HerdrClient, InfrastructureError
+except ImportError:
+    HerdrClient = None  # type: ignore
+    InfrastructureError = Exception  # type: ignore
+
+try:
+    from herdr_fleet import HerdrFleet
+except ImportError:
+    HerdrFleet = None  # type: ignore
+
+try:
+    from herdr_tools import (
+        validate_action_payload,
+        BANNED_ACTION_PAYLOAD_PATTERNS,
+        run_command
+    )
+except ImportError:
+    validate_action_payload = None  # type: ignore
+    BANNED_ACTION_PAYLOAD_PATTERNS = []  # type: ignore
+    run_command = None  # type: ignore
+
+try:
+    from supervisor import AgentSupervisor, cleanup_rogue_servers, summarize_terminal_activity
+except ImportError:
+    AgentSupervisor = None  # type: ignore
+    cleanup_rogue_servers = None  # type: ignore
+    summarize_terminal_activity = None  # type: ignore
+
+try:
+    from memory_manager import MemoryManager
+except ImportError:
+    MemoryManager = None  # type: ignore
+
+try:
+    from telemetry_observer import (
+        SessionTelemetryObserver,
+        extract_listening_ports,
+        resolve_machine_name,
+        resolve_machine_label,
+        format_runner_label,
+        format_terminal_tail,
+        format_approval_blocks,
+        format_completion_message,
+        format_failure_message,
+        extract_pending_command,
+        is_plumbing_command,
+        sanitize_scrollback,
+        build_status_card_blocks
+    )
+except ImportError:
+    SessionTelemetryObserver = None  # type: ignore
+
+
+# Golem Core Modular Package Imports
+from golem.transport.chunker import split_message_boundary_aware
+from golem.gateway import SessionRouter, SessionHandle, SessionState
+from golem.gateway.ingress import (
     IngressGateway,
     add_reaction as add_reacji,
     remove_reaction as remove_reacji,
     swap_reaction as swap_reacji,
     strip_bot_mentions,
 )
-from first_mate.execution.harness import DualPaneHarness
+from golem.execution.harness import DualPaneHarness
+from golem.sensory import (
+    NoseSentinel,
+    get_default_event_bus,
+    set_default_nose_sentinel,
+)
 
 # ------------------------------------------------------------------------------
 # Logging & Environment Setup
@@ -81,10 +137,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger("AGY")
 
-HOST_DIR = os.environ.get("FIRST_MATE_HOST_DIR", os.path.dirname(os.path.abspath(__file__)))
+HOST_DIR = (os.environ.get("GOLEM_HOST_DIR") or "").strip() or (os.environ.get("FIRST_MATE_HOST_DIR") or "").strip() or os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = HOST_DIR
 DEFAULT_TARGET_REPO = os.environ.get("DEFAULT_TARGET_REPO", "/Users/hermes/projects/AGY").strip()
-DAEMON_LABEL = os.environ.get("DAEMON_LABEL", "com.user.first-mate").strip()
+DAEMON_LABEL = (os.environ.get("GOLEM_DAEMON_LABEL") or "").strip() or (os.environ.get("DAEMON_LABEL") or "").strip() or "com.user.golem"
 
 env_file = os.path.join(HOST_DIR, ".env")
 if os.path.isfile(env_file):
@@ -103,10 +159,10 @@ if not SLACK_APP_TOKEN or not SLACK_BOT_TOKEN:
 # ------------------------------------------------------------------------------
 # Herdr Runtime & Fleet Clients
 # ------------------------------------------------------------------------------
-herdr_client = HerdrClient()
-fleet = HerdrFleet()
+herdr_client = HerdrClient() if HerdrClient is not None else None
+fleet = HerdrFleet() if HerdrFleet is not None else None
 herdr = fleet
-supervisor = AgentSupervisor()
+supervisor = AgentSupervisor() if AgentSupervisor is not None else None
 client_herdr = herdr_client
 
 app = AsyncApp(
@@ -119,10 +175,19 @@ app.supervisor = supervisor
 app.herdr_client = herdr_client
 app.fleet = fleet
 
+# First Mate 2.0 Sensory Organ Singletons
+nose_sentinel = NoseSentinel(
+    fleet=fleet,
+    bus=get_default_event_bus(),
+    bot_err_path=os.path.join(HOST_DIR, "bot.err"),
+)
+app.nose_sentinel = nose_sentinel
+set_default_nose_sentinel(nose_sentinel)
+
 # First Mate 2.0 Core Singletons
 dual_pane_harness = DualPaneHarness(herdr_client=herdr_client, default_cwd=DEFAULT_TARGET_REPO)
 session_router = SessionRouter(default_target_cwd=DEFAULT_TARGET_REPO, harness=dual_pane_harness)
-ingress_gateway = IngressGateway(router=session_router, bot_user_id=None)
+ingress_gateway = IngressGateway(router=session_router, bot_user_id=None, nose_sentinel=nose_sentinel)
 
 BOT_USER_ID: Optional[str] = None
 processed_message_ids: Set[str] = set()
@@ -461,6 +526,7 @@ async def add_reacji(client: Any, channel: str, timestamp: str, name: str) -> No
     try:
         if hasattr(client, "reactions_add"):
             await client.reactions_add(channel=channel, timestamp=timestamp, name=name)
+            webui_broadcast("eye_log", {"type": "reacji_add", "reacji": name, "channel": channel, "ts": timestamp})
     except Exception as e:
         logger.debug(f"Reaction add error ({name}): {e}")
 
@@ -468,6 +534,7 @@ async def remove_reacji(client: Any, channel: str, timestamp: str, name: str) ->
     try:
         if hasattr(client, "reactions_remove"):
             await client.reactions_remove(channel=channel, timestamp=timestamp, name=name)
+            webui_broadcast("eye_log", {"type": "reacji_remove", "reacji": name, "channel": channel, "ts": timestamp})
     except Exception as e:
         logger.debug(f"Reaction remove error ({name}): {e}")
 
@@ -1418,7 +1485,7 @@ async def should_process_ingress_event(event: Dict[str, Any], client: Any) -> bo
 # ------------------------------------------------------------------------------
 # Slack Event Listeners
 # ------------------------------------------------------------------------------
-USE_HEADLESS_GATEWAY = os.environ.get("FIRST_MATE_HEADLESS", "1").lower() in ("1", "true", "yes")
+USE_HEADLESS_GATEWAY = (os.environ.get("GOLEM_HEADLESS") or os.environ.get("FIRST_MATE_HEADLESS", "1")).lower() in ("1", "true", "yes")
 
 @app.event("app_mention")
 async def handle_app_mention(event: Dict[str, Any], client: AsyncWebClient):
@@ -1623,13 +1690,45 @@ def on_signal_received(sig):
     shutdown_event.set()
 
 
-async def main():
+def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
+    """Parse CLI arguments for Golem / First Mate gateway."""
+    parser = argparse.ArgumentParser(description="Golem Ingress Gateway")
+    parser.add_argument(
+        "--webUI", "--webui",
+        dest="webui",
+        action="store_true",
+        help="Launch real-time observability WebUI server",
+    )
+    parser.add_argument(
+        "--host",
+        dest="host",
+        default=None,
+        help="Custom WebUI host address (e.g. 0.0.0.0 or 127.0.0.1)",
+    )
+    parser.add_argument(
+        "--port",
+        dest="port",
+        type=int,
+        default=None,
+        help="Custom WebUI port number (e.g. 8765)",
+    )
+    parsed, _ = parser.parse_known_args(argv if argv is not None else sys.argv[1:])
+    return parsed
+
+
+async def main(args: Optional[argparse.Namespace] = None):
     logger.info("Starting First Mate 2.0 Ingress Gateway (Herdr Runtime)...")
+    if args is None:
+        args = parse_args()
     loop = asyncio.get_running_loop()
     setup_signal_handlers(loop)
 
     # Start 4-hour inactivity session router reaper
     session_router.start_reaper()
+
+    # Start The Nose 24/7 Evergreen Health Sentinel coroutine
+    sentinel_task = nose_sentinel.start()
+    logger.info("The Nose 24/7 Fleet Health Sentinel active.")
 
     try:
         killed = await cleanup_rogue_servers()
@@ -1657,6 +1756,18 @@ async def main():
 
     await start_bluebubbles_transport()
 
+    # Start Observability WebUI if requested via CLI flag or environment variable
+    webui_active = getattr(args, "webui", False) or is_webui_enabled()
+    if webui_active:
+        try:
+            default_daemon_host = "0.0.0.0" if (os.environ.get("DAEMON_LABEL") or os.environ.get("GOLEM_DAEMON_LABEL")) else get_webui_host()
+            webui_host = getattr(args, "host", None) or os.environ.get("GOLEM_WEBUI_HOST") or default_daemon_host
+            webui_port = getattr(args, "port", None) or get_webui_port()
+            await start_webui_server(host=webui_host, port=webui_port)
+            logger.info(f"Golem Observability WebUI active on http://{webui_host}:{webui_port}")
+        except Exception as e:
+            logger.error(f"Failed to start Observability WebUI server: {e}")
+
     handler = AsyncSocketModeHandler(app, SLACK_APP_TOKEN)
     logger.info("First Mate Gateway ready. Listening for Slack & iMessage events...")
 
@@ -1672,6 +1783,16 @@ async def main():
             t.cancel()
     finally:
         logger.info("Performing graceful shutdown: disconnecting transports and closing client sessions...")
+        try:
+            await stop_webui_server()
+        except Exception as e:
+            logger.debug(f"Error stopping WebUI server: {e}")
+
+        try:
+            await nose_sentinel.stop()
+        except Exception as e:
+            logger.debug(f"Error stopping NoseSentinel: {e}")
+
         try:
             await session_router.stop_reaper()
         except Exception as e:
@@ -1695,11 +1816,32 @@ async def main():
         logger.info("First Mate Gateway shutdown completed cleanly.")
 
 
+def cli() -> None:
+    """Synchronous CLI entrypoint for app.py."""
+    args = parse_args()
+    try:
+        res = asyncio.run(main(args))
+        sys.exit(res if isinstance(res, int) else 0)
+    except KeyboardInterrupt:
+        sys.exit(0)
+    except SystemExit as exc:
+        sys.exit(exc.code)
+
+
 __all__ = [
     # First Mate 2.0 Core Singletons
     "session_router",
     "ingress_gateway",
     "dual_pane_harness",
+    "nose_sentinel",
+    # CLI Entrypoints
+    "main",
+    "cli",
+    "parse_args",
+    # WebUI Observability
+    "start_webui_server",
+    "stop_webui_server",
+    "webui_broadcast",
     # Legacy Global State Registries
     "sessions",
     "agent_name_to_session",
@@ -1753,7 +1895,5 @@ __all__ = [
 
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except (KeyboardInterrupt, SystemExit):
-        pass
+    cli()
+

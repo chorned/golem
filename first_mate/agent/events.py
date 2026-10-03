@@ -1,28 +1,11 @@
 #!/usr/bin/env python3
 """
 first_mate/agent/events.py
-Re-exports AgentEvent and all typed event classes from first_mate.agent.protocol.
-Shim to satisfy PROJECT.md interface contract.
+Backwards compatibility mirror shim for golem.agent.events.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
+from golem.agent.events import *  # noqa: F401, F403
+import golem.agent.events as _canonical
 
-from .protocol import (
-    AgentEvent,
-    AgentEventType,
-    TextDeltaEvent,
-    StatusUpdateEvent,
-    ToolStartEvent,
-    ToolEndEvent,
-    AwaitingInputEvent,
-    FinishEvent,
-)
-
-__all__ = [
-    "AgentEvent",
-    "AgentEventType",
-    "TextDeltaEvent",
-    "StatusUpdateEvent",
-    "ToolStartEvent",
-    "ToolEndEvent",
-    "AwaitingInputEvent",
-    "FinishEvent",
-]
+__all__ = getattr(_canonical, "__all__", [k for k in dir(_canonical) if not k.startswith("_")])

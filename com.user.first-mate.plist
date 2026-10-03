@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh. -->
 <plist version="1.0">
 <dict>
     <key>Label</key>
@@ -27,16 +28,18 @@
         <string>com.user.first-mate</string>
         <key>PYTHONPATH</key>
         <string>/Users/hermes/projects/first-mate</string>
+        <key>GOLEM_DEFAULT_HAND_WORKER</key>
+        <string>agy</string>
         <key>AGY_BIN</key>
         <string>/Users/hermes/.local/bin/agy</string>
         <key>PATH</key>
         <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:~/.antigravity/bin:/Users/hermes/.local/bin:/Users/hermes/.antigravity/bin</string>
         <key>SLACK_APP_TOKEN</key>
-        <string>YOUR_SLACK_APP_TOKEN_HERE</string>
+        <string>YOUR_SLACK_APP_TOKEN</string>
         <key>SLACK_BOT_TOKEN</key>
-        <string>YOUR_SLACK_BOT_TOKEN_HERE</string>
+        <string>YOUR_SLACK_BOT_TOKEN</string>
         <key>SLACK_SIGNING_SECRET</key>
-        <string>YOUR_SLACK_SIGNING_SECRET_HERE</string>
+        <string>YOUR_SLACK_SIGNING_SECRET</string>
         <key>FIRST_MATE_HOST_DIR</key>
         <string>/Users/hermes/projects/first-mate</string>
         <key>DEFAULT_TARGET_REPO</key>
@@ -44,7 +47,7 @@
         <key>DEFAULT_WORKSPACE_PATH</key>
         <string>/Users/hermes/projects/AGY</string>
         <key>GEMINI_API_KEY</key>
-        <string>YOUR_GEMINI_API_KEY_HERE</string>
+        <string>YOUR_GEMINI_API_KEY</string>
         <key>HERDR_SESSION</key>
         <string>default</string>
         <key>HERDR_SOCKET_PATH</key>
@@ -56,7 +59,7 @@
         <key>BLUEBUBBLES_URL</key>
         <string>http://127.0.0.1:1234</string>
         <key>BLUEBUBBLES_PASSWORD</key>
-        <string>!Fulurban88</string>
+        <string>YOUR_BLUEBUBBLES_PASSWORD</string>
         <key>BLUEBUBBLES_WEBHOOK_PORT</key>
         <string>8646</string>
         <key>BLUEBUBBLES_WEBHOOK_HOST</key>

@@ -16,8 +16,8 @@ from typing import Dict, Any, Optional, List, Tuple
 
 logger = logging.getLogger("AGY.HerdrFleet")
 
-# Re-exports from first_mate.execution.mesh for canonical object identity
-from first_mate.execution.mesh import (
+# Re-exports from golem.execution.mesh for canonical object identity
+from golem.execution.mesh import (
     TOPOLOGY_SPECS,
     NODE_ALIASES,
     wrap_windows_command,

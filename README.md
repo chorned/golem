@@ -1,261 +1,305 @@
-# First Mate: Fleet-Wide Agentic Orchestration Companion
+# Golem: Autonomous Fleet Chief of Staff
 
-> **"A first-mate virtual companion that can achieve any objective across the fleet through agentic orchestration."**
+> **"Golem is the open-source evolution of First Mate, built on Herdr's distributed PTY mesh."**
 
-First Mate (operated by **AGY**, Carl's Chief of Staff) is an autonomous, distributed operations companion built on the **FirstMate Pattern** ([`kunchenguid/firstmate`](https://github.com/kunchenguid/firstmate)). It serves as a persistent pair-programming partner, homelab operator, and fleet orchestrator across heterogeneous machines, transforming high-level conversational intent into verified, hardened backstage execution without exposing terminal noise or raw scratchpads to the user.
-
----
-
-## 1. The FirstMate Pattern: One Captain, One Liaison
-
-The foundational rule of First Mate is strict separation between conversational liaison and backstage execution:
-
-1. **One Captain, One Liaison:**
-   - **The Captain (Carl):** Interacts exclusively with AGY via natural chat ([Slack Socket Mode](file:///Users/hermes/projects/first-mate/app.py), [BlueBubbles iMessage](file:///Users/hermes/projects/first-mate/bluebubbles_transport.py)).
-   - **The Crew (Backstage Workers):** Specialized workers (`hermes`, `laptop-worker`, `pc-worker`, `oci-worker`, `opencode`) operate strictly in the background. They never talk directly to Slack, leak raw terminal box-drawing glyphs, or output prompt echoes.
-   - **Executive Briefings:** Raw tool outputs, exit codes, and diffs are triaged, interpreted, and synthesized by AGY into structured, high-signal briefings (verdict first, metrics/diffs, file transfers, and clear decisions).
-
-2. **Brain, Soul & Body Architecture:**
-   - **The Soul:** Declarative operational policies defined in [`AGENTS.md`](file:///Users/hermes/projects/first-mate/AGENTS.md), [`GEMINI.md`](file:///Users/hermes/projects/first-mate/GEMINI.md), and [`.agents/rules/`](file:///Users/hermes/projects/first-mate/.agents/rules/delegation.md).
-   - **The Brain:** The local `agy` CLI binary (`~/.local/bin/agy`) executed headlessly in stream-json mode.
-   - **The Body:** Thin Ingress Gateway ([`app.py`](file:///Users/hermes/projects/first-mate/app.py) / [`first_mate/gateway`](file:///Users/hermes/projects/first-mate/first_mate/gateway/ingress.py)) managing socket connections, thread session handles, and reacji state lifecycles.
-   - **The Machinery:** Herdr daemon managing PTY persistence, dual-pane workspaces, and cross-machine mesh connectivity.
+**Golem** is an open-source coordinator and personal Chief of Staff designed to run across multiple machines. It pairs a conversational liaison (accessible via Slack and BlueBubbles) with a headless, distributed pseudo-terminal (PTY) execution grid that spans local machines, homelab servers, GPU workstations, and cloud VPS instances.
 
 ---
 
-## 2. Dual-Pane Architecture: "Mouth vs Hands"
+## Design Motivation: The Pitfalls of Raw Terminal Scraping
 
-A key operational lesson in building autonomous fleet agents is that **reasoning and conversational loops must never be serialized behind blocking command execution**.
+Many terminal-agent setups take a straightforward approach: spin up a subshell, scrape visible screen characters or periodically dump the terminal buffer, and feed the raw output back into an LLM prompt.
 
-First Mate enforces a strict **Dual-Pane Separation** ([`DualPaneHarness`](file:///Users/hermes/projects/first-mate/first_mate/execution/harness.py)):
+In real-world multi-node workflows, directly scraping interactive PTYs introduces several practical issues:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                             Dual-Pane Workspace                             │
+│                    NAIVE PTY SCRAPING (FAILURE MODES)                       │
 │                                                                             │
-│   ┌───────────────────────────────┐     ┌───────────────────────────────┐   │
-│   │    Pane 1: Liaison ("Mouth")   │     │     Pane 2: Runner ("Hands")  │   │
-│   │                               │     │                               │   │
-│   │ • Dedicated Chief of Staff    │     │ • Dedicated interactive shell │   │
-│   │   engine (agy headless)       │     │   (zsh/bash/PowerShell)       │   │
-│   │ • Handles planning, reasoning,│     │ • Executes compilers, builds, │   │
-│   │   conversation, & triage      │     │   ffmpeg, docker, tests       │   │
-│   │ • Dispatches tasks to runner  │──┐  │ • Bounded yield timeout (3s)  │   │
-│   │ • Uninterruptible & responsive│  │  │ • Non-blocking handles:       │   │
-│   │   to user queries/status      │  │  │   ExecutionHandle(status)     │   │
-│   └───────────────────────────────┘  │  └───────────────────────────────┘   │
-│                                      │                  ▲                   │
-│                                      └──────────────────┘                   │
-│                                        Async Dispatch                       │
+│  [User Chat] ───► [Single Agent Loop] ───► [Blocking Subprocess / PTY]      │
+│                            │                         │                      │
+│               Context Bloat│  Visual Scraping        ▼                      │
+│               from Scraped │  Desync & ANSI Debris  [Corrupted Terminal]    │
+│               Buffers      ▼                         │                      │
+│                [Raw Full-Screen Frames] ─────────────┘                      │
+│                (24x80 cells x many turns = High Latency & Deadlocks)        │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-- **Pane 1: Liaison ("The Mouth"):**
-  - Runs the conversational reasoning engine (`agy`).
-  - Evaluates user intent, plans workflows, monitors execution handles, and posts updates.
-  - Releases conversational session locks immediately upon dispatching long-running work.
-  - Remains permanently responsive to conversational inquiries, status checks, and cancel commands.
+### 1. Buffer Polling Desynchronization
+Polling a rendered character matrix at arbitrary intervals frequently misses transient output from fast-moving commands (compilers, test runners, or build scripts). The agent ends up evaluating stale snapshots rather than the actual sequence of events or specific exit transitions.
 
-- **Pane 2: Runner ("The Hands"):**
-  - Runs commands via [`RunnerExecutor`](file:///Users/hermes/projects/first-mate/first_mate/execution/runner.py) inside an isolated Herdr PTY.
-  - If a command completes within the yield timeout (e.g., 3.0s), it returns immediately.
-  - If execution exceeds the yield timeout, it yields an `ExecutionHandle(status="running", pid=...)` and continues in the background, freeing the Liaison to confirm receipt and keep conversing.
+### 2. ANSI Control Codes and Escape Noise
+Interactive terminal applications emit raw ANSI color sequences (`\x1b[38;2;...m`), cursor repositioning instructions (`\x1b[H`, `\x1b[2J`), alternate screen buffer triggers (`smcup`/`rmcup`), and box-drawing glyphs. Feeding this uncleaned stream to an LLM adds unnecessary token overhead, degrades attention, and can interfere with strict JSON parsing during tool calls.
+
+### 3. Artificial Screen Wrapping
+Fixed-width virtual terminals (typically 80 or 120 columns) force trailing line breaks on long strings. URLs, base64 strings, file paths, and compiler flags get split across lines with trailing whitespace or wrapping markers, making reliable path extraction and link resolution harder than it needs to be.
+
+### 4. Interactive Input and Subshell Blocking
+When a CLI tool prompts for input (`[y/N]`, a confirmation prompt, or an OAuth flow), an agent blocked on synchronous pipe reads will stall the entire runloop. If the main thread is tied up waiting for stdout, inbound user messages (like checking status or requesting a cancel) get delayed or dropped.
+
+### 5. Context Window Bloat
+Re-ingesting full visual terminal screens (around 2,000 characters per standard 24×80 frame) on every turn inflates conversational history with static headers, curses borders, and shell prompts, steadily eating into available reasoning context over long sessions.
 
 ---
 
-## 3. Fleet Machine Topology & Node Profiles
+## Architecture: Decoupled Sensory Model
 
-First Mate orchestrates tasks across a 5-node distributed topology:
+To solve these constraints, Golem separates high-level conversational flow from backend terminal execution, using background watchers to keep track of state:
 
-| Workspace / Target | Host / Target Machine | Role & Responsibilities | Execution Mode | Guardrails & Policies |
+```
+┌─────────────────────────────────────────────────────────────────────────────────────────────┐
+│                        GOLEM TRIPARTITE SENSORY ARCHITECTURE                                │
+│                                                                                             │
+│   Slack / BlueBubbles Ingress                                                               │
+│              │                                                                              │
+│              ▼                                                                              │
+│   ┌─────────────────────────────────────────────────────────────────────────────────────┐   │
+│   │                         FRONT-OF-HOUSE MOUTH (Pane 1)                               │   │
+│   │                                                                                     │   │
+│   │  • Conversational liaison (MOUTH_MODEL: Gemini 3.8 Flash)                           │   │
+│   │  • Session isolation; formatted Slack mrkdwn output                                 │   │
+│   │  • Dispatches background work via structured tool calls (dispatch_task)             │   │
+│   │  • Reads sensory status on-demand (check_eyes, check_nose)                          │   │
+│   │  • Non-blocking: Keeps conversation responsive while tasks execute backstage        │   │
+│   └──────────────┬──────────────────────────────────────────────────────▲───────────────┘   │
+│                  │                                                      │                   │
+│         dispatch_task                                           ShoulderTapEventBus         │
+│         (Tool Call)                                             (Async Event Alerts)        │
+│                  │                                                      │                   │
+│                  ▼                                                      │                   │
+│   ┌──────────────────────────────────────────────────┐   ┌──────────────┴───────────────┐   │
+│   │           BACKSTAGE HANDS (Pane 2..N)            │   │        SENSORY PLANE         │   │
+│   │                                                  │   │                              │   │
+│   │  • RunnerExecutor in isolated Herdr PTY panes    │   │  • THE EYES (Task Observer)  │   │
+│   │  • Default Engine: Local AGY CLI (worker="agy")  │◄──┤    Inspects active buffer    │   │
+│   │  • Pluggable Hand Routing:                       │   │    every 15–30s; hashes      │   │
+│   │    - opencode: Isolated git worktree sandbox     │   │    deltas to avoid redundant │   │
+│   │    - hermes: Homelab Docker & system maintenance │   │    calls; flags blockers     │   │
+│   │  • 3.0s Yield Timeout: ExecutionHandle(running)  │   │    and completions.          │   │
+│   │    ensures liaison loop is never starved         │   │                              │   │
+│   │  • Stream Normalization: Automatic filtering     │   │  • THE NOSE (Sentinel)       │   │
+│   │    of ANSI escapes and terminal chrome           │   │    Periodic health check     │   │
+│   └──────────────────────────────────────────────────┘   │    auditing logs, services,  │   │
+│                                                          │    and node reachability.    │   │
+│                                                          └──────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+1. **Front-of-House Mouth (Liaison):** Runs in Pane 1 (`{session_id}-liaison`). Communicates directly with the user via Slack or BlueBubbles. Because it does not run terminal processes in its own thread, questions asked while long jobs are running are answered promptly.
+2. **Backstage Hands (Worker Grid):** Operates in Pane 2 (`runner`) and dedicated subagent sandboxes. Runs commands headlessly—using the local AGY CLI by default (`GOLEM_DEFAULT_HAND_WORKER=agy`)—and yields execution handles after 3 seconds so the main conversation remains interactive. Output is normalized and stripped of ANSI noise before logging or handoff.
+3. **Sensory Observers (Eyes & Nose):**
+   - **The Eyes (`EyesTaskObserver`):** Checks running terminal buffers on a 15–30 second interval. It uses SHA-256 delta hashing to skip LLM calls entirely if output is unchanged, pinging the Mouth only when user action is required (such as an auth prompt) or when a task finishes.
+   - **The Nose (`NoseSentinel`):** A lightweight background check that runs every 15 minutes to review error logs, container status, and machine reachability, alerting the Mouth if an anomaly is detected.
+
+---
+
+## Fleet Topology
+
+Golem coordinates a multi-node fleet linked over an encrypted Tailscale network using Herdr:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────────────────┐
+│                              GOLEM FLEET MACHINE TOPOLOGY                                   │
+│                                                                                             │
+│                 ┌─────────────────────────────────────────────────────────┐                 │
+│                 │               fleet-control (localhost)                 │                 │
+│                 │   macOS Anchor (Always-on local daemon)                 │                 │
+│                 │   • Headless AGY CLI & Golem Ingress Daemon             │                 │
+│                 │   • Real-Time WebUI (http://127.0.0.1:8765)             │                 │
+│                 │   • Git worktrees, tests, and build packaging           │                 │
+│                 └────────────────────────────┬────────────────────────────┘                 │
+│                                              │ Tailscale Mesh                               │
+│                        ┌─────────────────────┼─────────────────────┐                        │
+│                        ▼                     ▼                     ▼                        │
+│             ┌────────────────────┐ ┌────────────────────┐ ┌────────────────────┐            │
+│             │    homelab-ops     │ │    compute-grid    │ │      dev-grid      │            │
+│             │     (hermes)       │ │    (desktop-pc)    │ │ (personal-laptop)  │            │
+│             │  • Docker & ZFS    │ │  • Windows + CUDA  │ │  • Active Laptop   │            │
+│             │  • Media streaming │ │  • PyTorch & GPUs  │ │  • Ad-hoc only     │            │
+│             │  • Storage/Backups │ │  • Model workloads │ │  • Powers down     │            │
+│             └────────────────────┘ └────────────────────┘ └────────────────────┘            │
+│                                              │                                              │
+│                                              ▼                                              │
+│                                    ┌────────────────────┐                                   │
+│                                    │     cloud-ops      │                                   │
+│                                    │   (oci-machine)    │                                   │
+│                                    │  • Oracle VPS      │                                   │
+│                                    │  • Public Ingress  │                                   │
+│                                    │  • WireGuard & SSL │                                   │
+│                                    └────────────────────┘                                   │
+└─────────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+| Node / Target | Host Address | Role & Workload | Execution Engine | Operating Notes |
 | :--- | :--- | :--- | :--- | :--- |
-| **`fleet-control`** | `localhost` (`/Users/hermes`) | **Antigravity Chief of Staff & Primary Dev Anchor:** 24/7 uptime local hub. All code refactoring, Git commits, PRs, test suites (`pytest`), and planning. | Headless `agy` CLI | Primary development anchor. Zero unsolicited sleeps. |
-| **`homelab-ops`** | `localhost` (`hermes`) | **Hermes Butler:** Docker containers, storage pools (ZFS, TrueNAS), backups, media stacks (CarlFlix, Plex, Jellyfin, *arr). | Headless `hermes -z` / scripts | Isolated from dev worktrees. Never edit `.env` or service plists without prompt. |
-| **`compute-grid`** | `desktop-pc` (`100.80.59.45`) | **Compute Grid (Windows):** NVIDIA GPU / CUDA workloads, PyTorch, model evaluations, local LLM quantization. | Remote SSH + `cmd.exe /c` wrapping | POSIX scripts wrapped for Windows. Dedicated `CUDA_VISIBLE_DEVICES`. |
-| **`dev-grid`** | `personal-laptop` (`100.96.38.5`) | **Carl's Active Workstation (Strict Ad-Hoc):** Sensitive workstation; sleeps frequently. | Remote SSH (strict ad-hoc, 3s timeout) | **Strictly Ad-Hoc:** Never run background jobs here. Explicit requests only ("on my laptop"). Graceful fallback if asleep. |
-| **`cloud-ops`** | `oci-machine` (`100.113.173.33`) | **Cloud Operations (Linux aarch64):** Production Oracle Cloud VPS. Ingress, public WireGuard, DNS, SSL. | Remote SSH (strict guardrails) | Strictly reserved for live production infrastructure. No generic compute or test scripts. |
+| **`fleet-control`** | `localhost` | **Primary Anchor:** Local orchestration hub, repo management, test execution, and WebUI host. | Headless `agy` CLI | Primary local node; kept running continuously. |
+| **`homelab-ops`** | `localhost` (`hermes`) | **Homelab Operations:** Docker containers, storage pools, media services, and system maintenance. | Headless `hermes -z` | Sandboxed service management. |
+| **`compute-grid`** | `desktop-pc` (`100.80.59.45`) | **GPU Compute (Windows):** NVIDIA CUDA workloads, model training, and quantization tasks. | Remote SSH + `cmd.exe /c` | POSIX command wrapping for Windows environments. |
+| **`dev-grid`** | `personal-laptop` (`100.96.38.5`) | **Workstation:** Daily development machine. | Remote SSH (ad-hoc only) | **Ad-hoc use only:** Machine frequently sleeps; no persistent background services. |
+| **`cloud-ops`** | `oci-machine` (`100.113.173.33`) | **Cloud VPS (Linux aarch64):** Production server for ingress routing, WireGuard endpoints, and DNS. | Remote SSH | Reserved for production services and infrastructure tasks. |
 
 ---
 
-## 4. Reacji State Lifecycle & Executive Command Suite
+## Observability WebUI
 
-Conversational turns are tracked non-verbally with zero greeting spam or robotic canned footers:
+Golem includes a local dashboard built on `aiohttp.web` running on port `8765`:
 
-### Reacji State Lifecycle
-- `:eyes:` — Message received and queued (< 200ms non-verbal ingress ack).
-- `:gear:` — Task dispatched backstage to Herdr runner or fleet machine.
-- `:warning:` — Crewmate blocked or approval required (posted with a natural question in thread).
-- `:white_check_mark:` — Task completed successfully; synthesized executive briefing posted.
-- `:x:` — Task failed; concise failure diagnosis posted.
-
-### Executive Command Suite
-- **`/bearings` (Fleet Digest):** Concurrently gathers high-level 4-node fleet state telemetry (disk, Docker, GPU, laptop awake state, cloud uptime) and delivers a crisp 4-bullet executive briefing.
-- **`/ahoy` (Session Catch-Up & Decision Resolver):** Audits active panes for blocked states or pending confirmations, resolves open decisions, and summarizes background progress.
-- **`/wrapup` (Session Housekeeping):** Audits git worktrees across `hermes` and awake laptop, sweeps stale task buffers/locks, analyzes recent logs for recurring quirks, and proposes reviewable rule diffs for Carl's approval.
-- **`/update` (Safe Full-Stack Self-Update):** Pre-flight active task gate, `git pull origin main`, automated test verification gate (`pytest`), automatic rollback on failure, binary audit, and clean daemon reload.
-- **`/learn` (Operational Memory Crystallization):** Distills thread operational traces into permanent node rules (`.agents/rules/<node>.md`) or skills (`.agents/skills/<skill>/SKILL.md`).
-
----
-
-## 5. System Architecture & Modular Package Layout
-
-```
-first-mate/
-├── app.py                         # Thin Ingress Gateway & Socket Mode Entrypoint
-├── supervisor.py                  # Process supervisor & rogue server cleanup
-├── herdr_client.py                # Asynchronous JSON-RPC / CLI wrapper for Herdr daemon
-├── herdr_fleet.py                 # Cross-machine SSH & Tailscale node router
-├── herdr_tools.py                 # Tool dispatcher, action payload validator & runner
-├── telemetry_observer.py          # Real-time terminal tail observer & milestone reporter
-│
-└── first_mate/                    # Core Modular Architecture (v2.0)
-    ├── agent/                     # Subprocess adapter & stream-json protocol
-    │   ├── adapter.py             # HeadlessAgentAdapter with NDJSON streaming
-    │   ├── calibration.py         # Subprocess environment calibration & checks
-    │   ├── events.py              # Event definitions & schemas
-    │   ├── prompts.py             # System prompt templates & context loaders
-    │   └── protocol.py            # Strongly typed AgentEvent models
-    │
-    ├── execution/                 # Dual-Pane & Mesh Execution Engine
-    │   ├── buffer.py              # RunnerBufferObserver (PTY scrollback monitor)
-    │   ├── delegation.py          # WorkerDelegator (Isolated branch/worktree sandboxes)
-    │   ├── harness.py             # DualPaneHarness (Liaison Pane 1 + Runner Pane 2)
-    │   ├── mesh.py                # Fleet topology & per-pane locking integration
-    │   └── runner.py              # RunnerExecutor (Non-blocking yield timeouts)
-    │
-    ├── gateway/                   # Ingress Gateway & Session Management
-    │   ├── ingress.py             # IngressGateway (Reacji, deduplication, commands)
-    │   ├── router.py              # SessionRouter (Warm session cache & reaper)
-    │   └── session.py             # SessionHandle (Thread-scoped state machine & turn loop)
-    │
-    └── transport/                 # Wire Normalization & Communication
-        ├── chunker.py             # Boundary-aware Slack mrkdwn splitter (<4000 chars)
-        ├── milestone.py           # Conversational milestone updater
-        ├── normalizer.py          # Terminal chrome, ANSI, and TUI debris stripping
-        └── slack_client.py        # Robust async Slack SDK client wrapper
-```
-
----
-
-## 6. Operational Guardrails & Beta Hardening
-
-To ensure uninterrupted uptime and absolute conversational responsiveness:
-
-1. **Volume & I/O Protection (`/Volumes/*`, SMB/NFS):**
-   - Media commands (`ffmpeg`, `ffprobe`, `mediainfo`) MUST run non-interactively (`-nostdin`, `-hide_banner`, `-y`) and with explicit extraction bounds (`-frames:v 1`, `-t 30`).
-   - File sweeps over network volumes (`find`, `grep`, `du`) must specify depth boundaries (`-maxdepth 3`) or run asynchronously in Pane 2.
-2. **Subprocess Execution Watchdogs:**
-   - Synchronous tool calls enforce a hard wall-clock timeout.
-   - Processes entering uninterruptible I/O wait (`U+`) trigger alerts and fail-fast timeouts rather than hanging the agent turn.
-3. **Conversational Non-Blocking Guarantee:**
-   - Ingress messages are never locked behind blocking background jobs.
-   - User status check-ins ("did you figure it out?", "are we stuck?") query the active runner state out-of-band and reply immediately.
-4. **NDJSON Stream Integrity:**
-   - Turn demarcations are driven exclusively by protocol events (`result`, `awaiting_input`) rather than arbitrary idle timers, preventing off-by-one stdout pipe phase shifts.
-
-## 7. Branching, Release & Emergency Rollback Strategy
-
-To maintain zero downtime and prevent regressions as First Mate scales toward Beta, development and deployment follow a strict 4-tier branching and verification lifecycle:
+- **CLI Flag:** `golem --webUI` (or `python3 app.py --webUI`)
+- **Environment Toggle:** `GOLEM_ENABLE_WEBUI=1` (or `GOLEM_WEBUI=1`)
+- **URL:** [`http://127.0.0.1:8765`](http://127.0.0.1:8765)
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                 Production & Branch Lifecycle Architecture                  │
-│                                                                             │
-│   [main] (Golden Production)                                                │
-│     │ • Bound directly to LaunchAgent daemon (com.user.first-mate)          │
-│     │ • 100% test-verified (920+ unit & integration tests)                 │
-│     │ • Tagged releases (e.g. v0.2.0-beta)                                 │
-│     │                                                                       │
-│     ▲ Fast-forward merge only after ./scripts/safe_update.sh passes         │
-│     │                                                                       │
-│   [dev] (Staging & Integration)                                             │
-│     │ • Staging branch for integrating tested feature branches              │
-│     │                                                                       │
-│     ▲ Merged from feature worktrees                                         │
-│     │                                                                       │
-│   [feat/*, fix/*] (Isolated Git Worktrees)                                  │
-│     • Developed in ../first-mate-<feature> outside the live daemon tree     │
-│     • Live daemon remains 100% untouched during active development          │
-└─────────────────────────────────────────────────────────────────────────────┘
+│               GOLEM OBSERVABILITY COMMAND CENTER (PORT 8765)                │
+├───────────────────────────────┬─────────────────────────────────────────────┤
+│ 👁️ EYE AGENT PANE             │ 👃 NOSE AGENT PANE                           │
+│ • Ingress event monitor       │ • Background health check telemetry         │
+│ • Runner buffer activity      │ • Container, disk, and network status       │
+│ • Interactive prompt alerts   │ • Anomaly warning logs                      │
+├───────────────────────────────┼─────────────────────────────────────────────┤
+│ 👄 MOUTH AGENT PANE            │ ✋ DYNAMIC HAND GRID (PANES 0–9)             │
+│ • Liaison conversation stream │ • Hand 0: AGY Runner (Pane 2 stream)        │
+│ • Prompt trace logs           │ • Hand 1: opencode (Git worktree sandbox)   │
+│ • Outbound message drafts     │ • Hand 2: hermes (Homelab ops container)    │
+│ • File upload activity        │ • Dynamic worker allocation display         │
+└───────────────────────────────┴─────────────────────────────────────────────┘
 ```
 
-### 1. Worktree Isolation Workflow
-Because the live background daemon (`com.user.first-mate`) runs continuously out of `/Users/hermes/projects/first-mate`, modifying files directly on `main` risks breaking active Socket Mode threads mid-turn. All active development uses isolated git worktrees:
-```bash
-# 1. Create an isolated worktree for your feature
-git worktree add ../first-mate-myfeature -b feat/myfeature
-
-# 2. Develop and test in the isolated directory
-cd ../first-mate-myfeature
-pytest
-
-# 3. Merge into dev when clean, test integration, and clean up worktree
-cd /Users/hermes/projects/first-mate
-git merge feat/myfeature
-git worktree remove ../first-mate-myfeature
-```
-
-### 2. Pre-Flight Test Gate (`scripts/safe_update.sh`)
-Before merging to `main` or reloading the live daemon, the automated pre-flight gate must be executed:
-```bash
-./scripts/safe_update.sh
-```
-- **Stash Safety:** Automatically stashes uncommitted changes to preserve working tree integrity.
-- **Verification Gate:** Executes all 920+ tests (`./.venv/bin/python3 -m unittest discover tests`). If any test fails, the update **aborts immediately** with an error code, preventing regression deployment.
-- **Atomic Daemon Reload:** If and only if all tests pass, the LaunchAgent (`com.user.first-mate`) is reloaded via `launchctl kickstart -k -p` and verifies the running PID.
-
-### 3. Instant Emergency Rollback (`scripts/rollback.sh`)
-If an unexpected edge case or regression occurs in production, First Mate can be restored to a known golden release in under 3 seconds:
-```bash
-# Roll back to the golden beta baseline (default: v0.2.0-beta)
-./scripts/rollback.sh
-
-# Or roll back to any specific commit or release tag
-./scripts/rollback.sh <git-ref-or-tag>
-```
-- Saves the pre-rollback commit SHA to `/tmp/first_mate_pre_rollback_sha`.
-- Stashes any uncommitted state.
-- Checks out the target ref, executes immediate smoke tests, and restarts the daemon cleanly.
+- **Event Streaming:** Real-time log updates are served via Server-Sent Events (`/events`) without interrupting chat listeners.
+- **Status Endpoint:** Machine health and sensory state can be queried via `GET /api/status`.
+- **UI Fallback:** Defaults to a clean, self-contained HTML5/CSS interface with zero external CDN dependencies, while supporting custom design templates when present.
 
 ---
 
-## 8. Quickstart & Verification
+## Backwards Compatibility: First Mate Migration Shim
+
+To support existing automation scripts, test suites, and workflows developed for First Mate, Golem provides an in-memory compatibility shim:
+
+```python
+# Both import paths resolve to the exact same module:
+import golem.gateway.ingress
+import first_mate.gateway.ingress
+
+assert first_mate.gateway.ingress is golem.gateway.ingress
+```
+
+1. **Meta-Path Finder (`_FirstMateAliasFinder`):** Configured on `sys.meta_path` in `golem/__init__.py`. Intercepts `import first_mate.*` calls and routes them directly to `golem.*`, registering both namespaces under the same module instance in `sys.modules`.
+2. **Mock Redirection:** Tests patching paths such as `unittest.mock.patch("first_mate.gateway.ingress.call_gemini_api")` correctly update the underlying `golem` module.
+3. **Static Mirror Files:** Mirror files in `first_mate/` re-export symbols using `from golem.<module> import *`, ensuring type checkers (mypy, pyright) and editor autocompletion work without configuration changes.
+
+---
+
+## Quickstart Guide
 
 ### Prerequisites
-- Python 3.11+
-- `agy` CLI binary (`~/.local/bin/agy`)
-- `herdr` daemon installed and running (`herdr daemon status`)
-- Tailscale connected fleet machines
+- **Python:** Version 3.11, 3.12, or 3.13.
+- **Herdr:** Daemon installed and running (`herdr daemon status`).
+- **Tailscale:** Active connection between fleet machines.
 
-### Setup
+### 1. Installation
+Clone the repository and install Golem in editable mode:
+
 ```bash
-# Clone and enter directory
-cd /Users/hermes/projects/first-mate
+# Clone the repository
+git clone https://github.com/kunchenguid/firstmate.git
+cd first-mate
 
-# Install dependencies
-pip install -r requirements.txt
+# Set up a virtual environment
+python3 -m venv .venv
+source .venv/bin/activate
 
-# Configure environment
+# Install the base package
+pip install -e .
+
+# Or install with test dependencies
+pip install -e ".[dev]"
+```
+
+Installed entrypoints:
+- `golem`: Primary CLI binary (`golem --help`, `golem --webUI`)
+- `first-mate`: Compatibility alias
+
+### 2. Configuration
+Copy the template configuration file:
+
+```bash
 cp .env.example .env
-# Edit .env with SLACK_APP_TOKEN, SLACK_BOT_TOKEN, etc.
 ```
 
-### Running Tests
-The test suite contains over 920 unit, boundary, and adversarial stress tests:
+Add your environment variables to `.env`:
 ```bash
-# Run entire test suite
-./.venv/bin/python3 -m unittest discover tests
+# Slack Socket Mode
+SLACK_APP_TOKEN=xapp-your-app-token-here
+SLACK_BOT_TOKEN=xoxb-your-bot-token-here
+SLACK_SIGNING_SECRET=your-signing-secret-here
 
-# Or run with pytest
-pytest
+# Google Gemini API
+GEMINI_API_KEY=your-gemini-api-key-here
+
+# Model Selection
+MOUTH_MODEL=gemini-3.8-flash
+EYES_MODEL=gemini-flash-lite-latest
+NOSE_MODEL=gemini-flash-lite-latest
+
+# Worker Execution
+FIRST_MATE_ENGINE=antigravity
+GOLEM_DEFAULT_HAND_WORKER=agy
+ANTIGRAVITY_MODEL=gemini-3.8-flash-high
 ```
 
-### Launching the Daemon
+### 3. Running the Gateway
+Start the service from your terminal:
+
 ```bash
-# Direct run
-python3 app.py
+# Launch with the WebUI enabled
+golem --webUI
 
-# Or via launchd service
-launchctl load ~/Library/LaunchAgents/com.user.first-mate.plist
+# Or launch directly via Python
+python3 app.py --webUI
 ```
 
+### 4. Running as a macOS `launchd` Service
+To run Golem as a background daemon on macOS:
+
+```bash
+# Copy the launchd definition
+cp com.user.golem.plist ~/Library/LaunchAgents/
+
+# Load the service
+launchctl load ~/Library/LaunchAgents/com.user.golem.plist
+
+# Start or restart the service
+launchctl kickstart -k -p gui/$(id -u)/com.user.golem
+```
+
+---
+
+## Test Suite
+
+The test suite covers unit logic, system boundaries, and end-to-end integration across the sensory plane, PTY runners, and compatibility shims:
+
+```bash
+# Run documentation and operating manual validation
+python3 -m unittest tests/test_documentation_and_manuals.py
+
+# Run repository hygiene and CI checks
+python3 -m unittest tests/test_ci_and_repo_hygiene.py
+
+# Run Tier 1 feature verification
+python3 -m unittest tests/e2e/test_e2e_tier1_features.py
+
+# Discover and run the full test suite
+python3 -m unittest discover tests
+```
+
+---
+
+## Project Lineage
+
+Golem is the open-source continuation of **First Mate**, powered by Herdr's distributed PTY mesh.
+First Mate was originally created by Carl ([`kunchenguid/firstmate`](https://github.com/kunchenguid/firstmate)) as a personal assistant framework. Golem refactors that foundation into a generalized coordinator designed for multi-machine task execution and fleet management.
+
+- **Operating Guidelines:** [`AGENTS.md`](AGENTS.md)
+- **Contributing:** [`CONTRIBUTING.md`](CONTRIBUTING.md)
+- **License:** [Apache License, Version 2.0](LICENSE)

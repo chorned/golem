@@ -1,0 +1,60 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "golem"
+version = "2.1.0"
+description = "Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+authors = [
+    { name = "Carl & Team", email = "k.horned@gmail.com" }
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: System :: Distributed Computing",
+    "Topic :: Communications :: Chat",
+]
+dependencies = [
+    "aiohappyeyeballs>=2.7.1",
+    "aiohttp>=3.14.3",
+    "aiosignal>=1.4.0",
+    "attrs>=26.1.0",
+    "frozenlist>=1.8.0",
+    "idna>=3.20",
+    "multidict>=6.8.0",
+    "propcache>=0.5.4",
+    "python-dotenv>=1.2.3",
+    "PyYAML>=6.0.3",
+    "slack_bolt>=1.30.0",
+    "slack_sdk>=3.44.1",
+    "yarl>=1.25.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "coverage>=7.16.2",
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+]
+
+[project.scripts]
+golem = "golem.cli:main"
+first-mate = "golem.cli:main"
+
+[tool.setuptools]
+py-modules = ["app"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["golem*", "first_mate*"]
+

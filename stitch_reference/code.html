@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>STONEFORGE // Agentic Golem Terminal Matrix</title>
+<!-- Tailwind CSS v3 CDN -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<!-- Retro Fonts: Press Start 2P & VT323 & Space Grotesk -->
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&amp;family=Space+Grotesk:wght@500;700&amp;family=VT323&amp;display=swap" rel="stylesheet"/>
+<!-- Tailwind Configuration -->
+<script data-purpose="tailwind-config">
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            stone: {
+              850: '#171920',
+              900: '#0f1117',
+              950: '#07080c',
+            },
+            runic: {
+              cyan: '#00f0ff',
+              cyanDim: '#009bb3',
+              glow: '#00f3ff',
+              crimson: '#e60000',
+              crimsonDark: '#600000',
+              gold: '#ffd700',
+            }
+          },
+          fontFamily: {
+            pixel: ['"Press Start 2P"', 'monospace'],
+            crt: ['"VT323"', 'monospace'],
+            space: ['"Space Grotesk"', 'sans-serif'],
+          }
+        }
+      }
+    }
+  </script>
+<!-- BEGIN: Custom Retro Styles -->
+<style data-purpose="retro-crt-screen">
+    /* Scanlines and CRT curvature overlay */
+    .crt-overlay {
+      background: linear-gradient(rgba(18, 16, 20, 0) 50%, rgba(0, 0, 0, 0.45) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.04), rgba(0, 255, 128, 0.02), rgba(0, 200, 255, 0.04));
+      background-size: 100% 3px, 6px 100%;
+      pointer-events: none;
+    }
+
+    /* Metallic Girder Bevel Borders like SNES Arcade frames */
+    .arcade-girder-left {
+      background: repeating-linear-gradient(180deg, #373e4b 0px, #20242e 6px, #4a5468 10px, #11141b 16px);
+      box-shadow: inset -3px 0 6px rgba(0,0,0,0.9), 4px 0 12px rgba(0,0,0,0.85);
+    }
+    .arcade-girder-right {
+      background: repeating-linear-gradient(180deg, #373e4b 0px, #20242e 6px, #4a5468 10px, #11141b 16px);
+      box-shadow: inset 3px 0 6px rgba(0,0,0,0.9), -4px 0 12px rgba(0,0,0,0.85);
+    }
+
+    /* 16-bit SNES Arcade Window Styling */
+    .arcade-window-red {
+      box-shadow: 
+        inset 1px 1px 0px rgba(255, 160, 160, 0.8),
+        inset -2px -2px 0px #300000,
+        0 8px 24px rgba(0, 0, 0, 0.95),
+        0 0 14px rgba(230, 0, 0, 0.25);
+      border: 2px solid #140103;
+    }
+    
+    .arcade-header-red {
+      background: linear-gradient(180deg, #ff2a2a 0%, #b80000 55%, #7a0000 100%);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.45), inset 0 -1px 0 rgba(0,0,0,0.8);
+      text-shadow: 1px 1px 0px #240003;
+    }
+
+    /* Glow utilities */
+    .text-glow-cyan {
+      text-shadow: 0 0 6px #00f0ff, 0 0 12px rgba(0, 240, 255, 0.6);
+    }
+    .text-glow-gold {
+      text-shadow: 0 0 6px #ffd700, 0 0 12px rgba(255, 215, 0, 0.5);
+    }
+    .text-glow-red {
+      text-shadow: 0 0 6px #ff2222, 0 0 10px rgba(255, 0, 0, 0.6);
+    }
+    .glow-border-cyan {
+      box-shadow: 0 0 12px rgba(0, 240, 255, 0.4), inset 0 0 8px rgba(0, 240, 255, 0.2);
+    }
+
+    /* Terminal scrollbars */
+    ::-webkit-scrollbar {
+      width: 4px;
+      height: 4px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #090b10;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #b80000;
+    }
+  </style>
+<style data-purpose="retro-animations">
+    @keyframes pulseCyan {
+      0%, 100% { opacity: 0.8; filter: drop-shadow(0 0 4px #00f0ff); }
+      50% { opacity: 1; filter: drop-shadow(0 0 12px #00f3ff); }
+    }
+    .pulse-cyan {
+      animation: pulseCyan 2.4s infinite ease-in-out;
+    }
+
+    @keyframes blinkCursor {
+      0%, 49% { opacity: 1; }
+      50%, 100% { opacity: 0; }
+    }
+    .blink-caret {
+      animation: blinkCursor 0.85s infinite step-start;
+    }
+
+    @keyframes eqBar1 { 0%, 100% { height: 30%; } 50% { height: 85%; } }
+    @keyframes eqBar2 { 0%, 100% { height: 80%; } 50% { height: 25%; } }
+    @keyframes eqBar3 { 0%, 100% { height: 50%; } 50% { height: 95%; } }
+    .eq-1 { animation: eqBar1 0.7s infinite ease-in-out; }
+    .eq-2 { animation: eqBar2 0.5s infinite ease-in-out; }
+    .eq-3 { animation: eqBar3 0.65s infinite ease-in-out; }
+  </style>
+<!-- END: Custom Retro Styles -->
+</head>
+<body class="bg-black text-gray-200 overflow-hidden font-space select-none h-screen w-screen flex flex-col justify-between relative">
+<!-- CRT Scanline Overlay -->
+<div class="crt-overlay absolute inset-0 z-50 pointer-events-none"></div>
+<!-- Background Image: Ancient Robotic Stone Golem Colossus -->
+<div class="absolute inset-0 z-0 overflow-hidden" data-purpose="retro-golem-background">
+<img alt="Ancient Stone Colossus Mech" class="w-full h-full object-cover object-center filter brightness-[0.78] contrast-[1.12]" src="https://lh3.googleusercontent.com/aida-public/AB6AXuA4Jgw1eXJlvBwSqK6sDC7VciFOG1o1NspfLW24_agYnlP1p73bulLcUFIT1Cb-I-M5xXQzqrdLuLIh9k5YYpxQNkGKmzIzmBWpHbsYxXdrqMMOeZWtRJEGLCirSZqNIOwle3UNf6gX2jj2epF-arrCbenp5tmFBCS0heP5IoIAjd6db-Ijh2yJCq2HWvdvJnvxBNxFkeA9ojdibJN4wiVlB3nAui1L4lIojddG8_twoRY-r5tHAW7HbA"/>
+<!-- Subtle dark vignette & radiant cyan-magma atmosphere gradient -->
+<div class="absolute inset-0 bg-gradient-to-t from-[#06070a]/90 via-[#0a0c13]/55 to-[#06070a]/85 pointer-events-none"></div>
+<div class="absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_30%,#000000_95%)] pointer-events-none opacity-80"></div>
+</div>
+<!-- Left Girder Bevel (SNES arcade cabinet side trim) -->
+<div class="arcade-girder-left absolute left-0 top-0 bottom-0 w-7 z-40 hidden md:flex flex-col justify-around items-center py-6 border-r-2 border-black/90">
+<div class="w-3 h-3 rounded-full bg-stone-700 border border-stone-900 shadow-inner"></div>
+<div class="w-3 h-3 rounded-full bg-stone-700 border border-stone-900 shadow-inner"></div>
+<div class="w-3 h-3 rounded-full bg-stone-700 border border-stone-900 shadow-inner"></div>
+<div class="w-3 h-3 rounded-full bg-stone-700 border border-stone-900 shadow-inner"></div>
+<div class="w-3 h-3 rounded-full bg-stone-700 border border-stone-900 shadow-inner"></div>
+</div>
+<!-- Right Girder Bevel -->
+<div class="arcade-girder-right absolute right-0 top-0 bottom-0 w-7 z-40 hidden md:flex flex-col justify-around items-center py-6 border-l-2 border-black/90">
+<div class="w-3 h-3 rounded-full bg-stone-700 border border-stone-900 shadow-inner"></div>
+<div class="w-3 h-3 rounded-full bg-stone-700 border border-stone-900 shadow-inner"></div>
+<div class="w-3 h-3 rounded-full bg-stone-700 border border-stone-900 shadow-inner"></div>
+<div class="w-3 h-3 rounded-full bg-stone-700 border border-stone-900 shadow-inner"></div>
+<div class="w-3 h-3 rounded-full bg-stone-700 border border-stone-900 shadow-inner"></div>
+</div>
+<!-- BEGIN: Top Arcade HUD Header -->
+<header class="relative z-30 bg-[#0d0f16]/95 border-b-2 border-stone-700/80 px-4 md:px-8 py-2 flex flex-wrap items-center justify-between text-xs font-pixel shadow-2xl backdrop-blur-sm ml-0 md:ml-7 mr-0 md:mr-7" data-purpose="arcade-header">
+<div class="flex items-center space-x-3">
+<!-- Golem Core Emblem -->
+<div class="flex items-center space-x-2.5">
+<div class="w-7 h-7 bg-stone-900 border-2 border-cyan-400 rounded flex items-center justify-center glow-border-cyan">
+<span class="text-cyan-400 text-sm font-pixel leading-none">ᛏ</span>
+</div>
+<div>
+<div class="flex items-center space-x-2">
+<span class="text-cyan-300 text-glow-cyan text-[11px] tracking-widest font-bold">STONEFORGE</span>
+<span class="text-[9px] bg-red-950/80 text-red-400 border border-red-700 px-1.5 py-0.2 rounded font-pixel">MATRIX v2.4</span>
+</div>
+<span class="text-[8px] text-stone-400 block font-space font-medium tracking-wider">AGENTIC ROBOTIC COLOSSUS WORKSPACE</span>
+</div>
+</div>
+<!-- Sync status badge -->
+<div class="hidden lg:flex items-center space-x-2 bg-stone-950/90 border border-cyan-900/60 px-2.5 py-1 rounded">
+<span class="w-2 h-2 rounded-full bg-cyan-400 animate-ping"></span>
+<span class="text-stone-300 text-[9px] tracking-wide">CHASSIS: TITAN-VII [<span class="text-cyan-400 font-bold">SYNC 100%</span>]</span>
+</div>
+</div>
+<!-- Retro Arcade Gauges & Counters -->
+<div class="flex items-center space-x-3 md:space-x-5 text-[10px]">
+<!-- Credits Counter -->
+<div class="bg-stone-950/90 border border-stone-700 px-3 py-1 rounded flex items-center space-x-2 shadow-inner">
+<span class="text-yellow-400 text-glow-gold">CREDITS:</span>
+<span class="text-green-400 tracking-wider font-crt text-base font-bold leading-none">$84,200</span>
+</div>
+<!-- Rune Mana Gauge -->
+<div class="bg-stone-950/90 border border-stone-700 px-3 py-1 rounded flex items-center space-x-2 shadow-inner">
+<span class="text-cyan-400 text-glow-cyan">RUNE_MANA:</span>
+<div class="w-24 md:w-32 bg-stone-900 h-3 border border-cyan-700/80 rounded-sm overflow-hidden p-[1px] relative">
+<div class="bg-gradient-to-r from-cyan-600 via-cyan-400 to-cyan-200 h-full w-[84%] shadow-[0_0_8px_#00f0ff]"></div>
+</div>
+<span class="text-cyan-300 font-crt text-base font-bold leading-none">8,420/10k</span>
+</div>
+<!-- Overclock Toggle -->
+<button class="hidden sm:flex items-center space-x-1.5 bg-gradient-to-r from-rose-950 to-red-900 border border-rose-500 hover:border-yellow-400 text-rose-200 px-2.5 py-1 rounded text-[9px] active:scale-95 transition-all">
+<span class="w-1.5 h-1.5 rounded-full bg-yellow-400 animate-pulse"></span>
+<span class="tracking-wider">OVERCLOCK [ON]</span>
+</button>
+</div>
+</header>
+<!-- END: Top Arcade HUD Header -->
+<!-- BEGIN: Main Canvas & Floating Agent Terminal Workspace -->
+<main class="relative flex-1 w-full max-w-[1720px] mx-auto px-2 md:px-8 py-2 md:py-3 flex flex-col items-center justify-center overflow-hidden z-20" data-purpose="wireframe-workspace"><div class="relative w-full h-full max-w-5xl mx-auto flex flex-col items-center justify-between py-2">
+<!-- Eye Agent Terminal (Positioned over glowing cyan runic eyes) -->
+<div class="w-full max-w-lg mt-2 sm:mt-4 px-2 z-20">
+<article class="arcade-window-red bg-[#090b10]/95 backdrop-blur-md rounded transition-all duration-150 hover:scale-[1.01] hover:border-red-400 shadow-2xl">
+<div class="arcade-header-red px-2.5 py-1 flex items-center justify-between text-[10px] text-white font-pixel font-bold">
+<div class="flex items-center space-x-2">
+<span class="w-2 h-2 bg-yellow-300 rounded-full inline-block shadow-[0_0_6px_#ffd700]"></span>
+<span class="tracking-wide">Eye Agent</span>
+<span class="text-[8px] text-yellow-200/90 font-space font-semibold tracking-wider">[OCULAR_STREAM]</span>
+</div>
+<div class="flex items-center space-x-1.5 text-[9px]">
+<span class="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping"></span>
+<span class="cursor-pointer hover:text-yellow-200">_</span>
+<span class="cursor-pointer hover:text-white">□</span>
+<span class="cursor-pointer hover:text-black">×</span>
+</div>
+</div>
+<div class="px-2.5 py-1.5 font-crt text-sm md:text-base leading-none bg-[#07090e]/95 text-stone-200 flex items-center justify-between border-t border-stone-800">
+<div class="truncate flex items-center space-x-1.5">
+<span class="text-rose-400 font-bold">&gt; DETECTED:</span>
+<span class="text-green-400">MULTIMODAL_FRAME_DIFF</span>
+<span class="text-cyan-300 font-mono text-xs md:text-sm">[CONFIDENCE: 99.4%]</span>
+<span class="text-stone-400 text-xs hidden sm:inline">| BBOX: {x:140, y:88}</span>
+</div>
+<div class="flex items-center space-x-1 ml-2">
+<span class="w-2 h-2 rounded bg-cyan-400 shadow-[0_0_6px_#00f0ff] animate-pulse"></span>
+<span class="inline-block w-1.5 h-3.5 bg-green-400 blink-caret"></span>
+</div>
+</div>
+</article>
+</div>
+<!-- Nose Agent Terminal (Positioned over carved stone nose ridge) -->
+<div class="w-full max-w-md px-2 z-20 mt-1">
+<article class="arcade-window-red bg-[#090b10]/95 backdrop-blur-md rounded transition-all duration-150 hover:scale-[1.01] hover:border-red-400 shadow-2xl">
+<div class="arcade-header-red px-2.5 py-1 flex items-center justify-between text-[10px] text-white font-pixel font-bold">
+<div class="flex items-center space-x-2">
+<span class="w-2 h-2 bg-cyan-300 rounded-full inline-block shadow-[0_0_6px_#00f0ff]"></span>
+<span class="tracking-wide">Nose Agent</span>
+<span class="text-[8px] text-cyan-200/90 font-space font-semibold tracking-wider">[HEURISTIC_SNIFFER]</span>
+</div>
+<div class="flex items-center space-x-1.5 text-[9px]">
+<span class="cursor-pointer hover:text-yellow-200">_</span>
+<span class="cursor-pointer hover:text-white">□</span>
+<span class="cursor-pointer hover:text-black">×</span>
+</div>
+</div>
+<div class="px-2.5 py-1.5 font-crt text-sm md:text-base leading-none bg-[#07090e]/95 text-stone-200 flex items-center justify-between border-t border-stone-800">
+<div class="truncate flex items-center space-x-1.5">
+<span class="text-rose-400 font-bold">&gt; SNIFF_LATENCY:</span>
+<span class="text-cyan-300">0.02ms</span>
+<span class="text-emerald-400">|| CODE_SMELL: CLEAN</span>
+<span class="text-stone-400 text-xs hidden sm:inline">| DRIFT: 0.00%</span>
+</div>
+<span class="text-[9px] bg-cyan-950/90 text-cyan-300 px-1.5 py-0.5 border border-cyan-600 rounded font-pixel leading-tight">ACTIVE</span>
+</div>
+</article>
+</div>
+<!-- Mouth Agent Terminal (Positioned over magma tooth mechanical mouth) -->
+<div class="w-full max-w-lg px-2 z-20 mt-1 mb-2">
+<article class="arcade-window-red bg-[#090b10]/95 backdrop-blur-md rounded transition-all duration-150 hover:scale-[1.01] hover:border-red-400 shadow-2xl">
+<div class="arcade-header-red px-2.5 py-1 flex items-center justify-between text-[10px] text-white font-pixel font-bold">
+<div class="flex items-center space-x-2">
+<span class="w-2 h-2 bg-emerald-400 rounded-full inline-block shadow-[0_0_6px_#00e676]"></span>
+<span class="tracking-wide">Mouth Agent</span>
+<span class="text-[8px] text-emerald-200/90 font-space font-semibold tracking-wider">[VOICE_SYNTH_DISPATCH]</span>
+</div>
+<div class="flex items-center space-x-1.5 text-[9px]">
+<span class="cursor-pointer hover:text-yellow-200">_</span>
+<span class="cursor-pointer hover:text-white">□</span>
+<span class="cursor-pointer hover:text-black">×</span>
+</div>
+</div>
+<div class="px-2.5 py-1.5 font-crt text-sm md:text-base leading-none bg-[#07090e]/95 text-yellow-300 flex items-center justify-between border-t border-stone-800">
+<div class="truncate flex items-center space-x-1.5">
+<span class="text-rose-400 font-bold">&gt; TTS_BUFFER:</span>
+<span class="text-yellow-200">READY</span>
+<span class="text-stone-300 text-xs md:text-sm font-space">&gt; "Pipeline execution armed and ready."</span>
+</div>
+<div class="flex items-end space-x-0.5 h-3.5 px-1 bg-stone-900 border border-stone-700 rounded-sm">
+<span class="w-1 bg-cyan-400 rounded-t-sm eq-1"></span>
+<span class="w-1 bg-emerald-400 rounded-t-sm eq-2"></span>
+<span class="w-1 bg-yellow-400 rounded-t-sm eq-3"></span>
+<span class="w-1 bg-rose-400 rounded-t-sm eq-1"></span>
+</div>
+</div>
+</article>
+</div>
+<!-- Bottom Cradled Hand Terminals (Nestled in the cupped open stone palms) -->
+<div class="w-full max-w-4xl grid grid-cols-1 md:grid-cols-3 gap-2 px-2 z-20 pb-1" data-purpose="chest-hand-cluster">
+<!-- [HAND AGENT 01] -->
+<article class="arcade-window-red bg-[#090b10]/95 backdrop-blur-md rounded flex flex-col h-[118px] md:h-[126px] hover:border-red-400 transition-all group shadow-xl">
+<div class="arcade-header-red px-2 py-0.5 flex items-center justify-between text-[9px] text-white font-pixel font-bold">
+<div class="flex items-center space-x-1">
+<span class="w-1.5 h-1.5 bg-yellow-300 rounded-full"></span>
+<span>Hand 01 [L_GAUNTLET]</span>
+</div>
+<span class="text-[8px] bg-red-950/80 px-1 border border-red-700/80 text-yellow-300">PYTEST</span>
+</div>
+<div class="p-1.5 flex-1 font-crt text-xs md:text-sm text-stone-300 bg-[#07090e]/95 flex flex-col justify-between border-t border-stone-800">
+<div class="space-y-0.5">
+<div class="text-emerald-400 font-bold">&gt; pytest tests/colossus.py</div>
+<div class="text-stone-400 text-xs">running test_runic_bus...</div>
+<div class="text-green-300 font-bold">&gt;&gt; 3 passed, 0 failed [14ms]</div>
+</div>
+<div class="text-[10px] text-stone-400 border-t border-stone-800/80 pt-0.5 flex justify-between items-center font-pixel">
+<span class="text-stone-400 text-[8px]">STATUS: IDLE</span>
+<span class="text-emerald-400 text-[8px] bg-emerald-950/70 border border-emerald-700 px-1">EXIT_0</span>
+</div>
+</div>
+</article>
+<!-- [HAND AGENT 02] -->
+<article class="arcade-window-red bg-[#090b10]/95 backdrop-blur-md rounded flex flex-col h-[118px] md:h-[126px] hover:border-red-400 transition-all group shadow-xl">
+<div class="arcade-header-red px-2 py-0.5 flex items-center justify-between text-[9px] text-white font-pixel font-bold">
+<div class="flex items-center space-x-1">
+<span class="w-1.5 h-1.5 bg-cyan-300 rounded-full"></span>
+<span>Hand 02 [L_CORE]</span>
+</div>
+<span class="text-[8px] bg-red-950/80 px-1 border border-red-700/80 text-cyan-300">DOM_WORKER</span>
+</div>
+<div class="p-1.5 flex-1 font-crt text-xs md:text-sm text-stone-300 bg-[#07090e]/95 flex flex-col justify-between border-t border-stone-800">
+<div class="space-y-0.5">
+<div class="text-cyan-300 font-bold">&gt; git commit -m 'sync'</div>
+<div class="text-stone-300 text-xs">DOM nodes injected: 14</div>
+<div class="text-yellow-300 font-bold">&gt;&gt; Virtual DOM hydrated</div>
+</div>
+<div class="text-[10px] text-stone-400 border-t border-stone-800/80 pt-0.5 flex justify-between items-center font-pixel">
+<span class="text-stone-400 text-[8px]">WORKER: ACTIVE</span>
+<span class="text-cyan-400 text-[8px] bg-cyan-950/70 border border-cyan-700 px-1">RE-RENDER</span>
+</div>
+</div>
+</article>
+<!-- [HAND AGENT 03] -->
+<article class="arcade-window-red bg-[#090b10]/95 backdrop-blur-md rounded flex flex-col h-[118px] md:h-[126px] hover:border-red-400 transition-all group shadow-xl">
+<div class="arcade-header-red px-2 py-0.5 flex items-center justify-between text-[9px] text-white font-pixel font-bold">
+<div class="flex items-center space-x-1">
+<span class="w-1.5 h-1.5 bg-yellow-300 rounded-full"></span>
+<span>Hand 03 [L_CLAW]</span>
+</div>
+<span class="text-[8px] bg-red-950/80 px-1 border border-red-700/80 text-yellow-300">SQL_RUNES</span>
+</div>
+<div class="p-1.5 flex-1 font-crt text-xs md:text-sm text-stone-300 bg-[#07090e]/95 flex flex-col justify-between border-t border-stone-800">
+<div class="space-y-0.5">
+<div class="text-yellow-300 font-bold">&gt; VACUUM ANALYZE runes;</div>
+<div class="text-stone-300 text-xs">Indexed 2,048 records</div>
+<div class="text-emerald-400 font-bold">&gt;&gt; Query duration: 1.2ms</div>
+</div>
+<div class="text-[10px] text-stone-400 border-t border-stone-800/80 pt-0.5 flex justify-between items-center font-pixel">
+<span class="text-stone-400 text-[8px]">DB: ONLINE</span>
+<span class="text-yellow-400 text-[8px] bg-amber-950/70 border border-amber-700 px-1">COMMITTED</span>
+</div>
+</div>
+</article>
+<!-- [HAND AGENT 04] -->
+<article class="arcade-window-red bg-[#090b10]/95 backdrop-blur-md rounded flex flex-col h-[118px] md:h-[126px] hover:border-red-400 transition-all group shadow-xl">
+<div class="arcade-header-red px-2 py-0.5 flex items-center justify-between text-[9px] text-white font-pixel font-bold">
+<div class="flex items-center space-x-1">
+<span class="w-1.5 h-1.5 bg-rose-400 rounded-full"></span>
+<span>Hand 04 [R_GAUNTLET]</span>
+</div>
+<span class="text-[8px] bg-red-950/80 px-1 border border-red-700/80 text-rose-300">BASH_SHELL</span>
+</div>
+<div class="p-1.5 flex-1 font-crt text-xs md:text-sm text-stone-300 bg-[#07090e]/95 flex flex-col justify-between border-t border-stone-800">
+<div class="space-y-0.5">
+<div class="text-rose-400 font-bold">&gt; docker exec -it golem</div>
+<div class="text-stone-400 text-xs">spawn PID 4409 [pts/2]</div>
+<div class="text-stone-200">&gt;&gt; ready for instruction...</div>
+</div>
+<div class="text-[10px] text-stone-400 border-t border-stone-800/80 pt-0.5 flex justify-between items-center font-pixel">
+<span class="text-stone-400 text-[8px]">TTY: ATTACHED</span>
+<span class="inline-block w-2 h-2.5 bg-rose-400 blink-caret"></span>
+</div>
+</div>
+</article>
+<!-- [HAND AGENT 05] -->
+<article class="arcade-window-red bg-[#090b10]/95 backdrop-blur-md rounded flex flex-col h-[118px] md:h-[126px] hover:border-red-400 transition-all group shadow-xl">
+<div class="arcade-header-red px-2 py-0.5 flex items-center justify-between text-[9px] text-white font-pixel font-bold">
+<div class="flex items-center space-x-1">
+<span class="w-1.5 h-1.5 bg-emerald-400 rounded-full"></span>
+<span>Hand 05 [R_CORE]</span>
+</div>
+<span class="text-[8px] bg-red-950/80 px-1 border border-red-700/80 text-emerald-300">AST_LINTER</span>
+</div>
+<div class="p-1.5 flex-1 font-crt text-xs md:text-sm text-stone-300 bg-[#07090e]/95 flex flex-col justify-between border-t border-stone-800">
+<div class="space-y-0.5">
+<div class="text-emerald-400 font-bold">&gt; tree-walk lint --strict</div>
+<div class="text-stone-300 text-xs">Found 0 syntax errors</div>
+<div class="text-amber-300 font-bold">&gt;&gt; 1 warn: unused rune ref</div>
+</div>
+<div class="text-[10px] text-stone-400 border-t border-stone-800/80 pt-0.5 flex justify-between items-center font-pixel">
+<span class="text-stone-400 text-[8px]">LINT: VALID</span>
+<span class="text-emerald-400 text-[8px] bg-emerald-950/70 border border-emerald-700 px-1">100% PASS</span>
+</div>
+</div>
+</article>
+<!-- [HAND AGENT 06] -->
+<article class="arcade-window-red bg-[#090b10]/95 backdrop-blur-md rounded flex flex-col h-[118px] md:h-[126px] hover:border-red-400 transition-all group shadow-xl">
+<div class="arcade-header-red px-2 py-0.5 flex items-center justify-between text-[9px] text-white font-pixel font-bold">
+<div class="flex items-center space-x-1">
+<span class="w-1.5 h-1.5 bg-purple-400 rounded-full"></span>
+<span>Hand 06 [R_CLAW]</span>
+</div>
+<span class="text-[8px] bg-red-950/80 px-1 border border-red-700/80 text-purple-300">WEBSOCKET</span>
+</div>
+<div class="p-1.5 flex-1 font-crt text-xs md:text-sm text-stone-300 bg-[#07090e]/95 flex flex-col justify-between border-t border-stone-800">
+<div class="space-y-0.5">
+<div class="text-purple-300 font-bold">&gt; ws://broadcast.stone:9</div>
+<div class="text-stone-400 text-xs">PING latency 12ms</div>
+<div class="text-cyan-300 font-bold">&gt;&gt; 142.8 Tok/s</div>
+</div>
+<div class="text-[10px] text-stone-400 border-t border-stone-800/80 pt-0.5 flex justify-between items-center font-pixel">
+<span class="text-stone-400 text-[8px]">STREAM: SYNC</span>
+<span class="text-purple-300 text-[8px] bg-purple-950/70 border border-purple-700 px-1">PUMPING</span>
+</div>
+</div>
+</article>
+</div>
+</div></main>
+<!-- END: Main Canvas & Floating Agent Terminal Workspace -->
+<!-- BEGIN: Bottom Retro Controller Command Legend (SNES Button Prompt Bar) -->
+<footer class="relative z-30 bg-[#0c0e14]/95 border-t-2 border-stone-700/80 px-4 md:px-8 py-2 ml-0 md:ml-7 mr-0 md:mr-7 flex flex-wrap items-center justify-between text-xs font-pixel shadow-2xl backdrop-blur-sm" data-purpose="arcade-control-legend">
+<!-- SNES Controller Action Buttons -->
+<div class="flex items-center space-x-4 md:space-x-6 text-[9px] text-stone-300 overflow-x-auto py-1">
+<!-- Y Button (Green) -->
+<div class="flex items-center space-x-1.5 cursor-pointer hover:text-white transition-colors">
+<span class="w-4 h-4 rounded-full bg-emerald-600 text-emerald-100 font-bold flex items-center justify-center text-[8px] border-2 border-emerald-400 shadow-[0_0_6px_#00e676]">Y</span>
+<span class="tracking-wide">MAXIMIZE</span>
+</div>
+<!-- X Button (Blue) -->
+<div class="flex items-center space-x-1.5 cursor-pointer hover:text-white transition-colors">
+<span class="w-4 h-4 rounded-full bg-blue-600 text-blue-100 font-bold flex items-center justify-center text-[8px] border-2 border-cyan-400 shadow-[0_0_6px_#00f0ff]">X</span>
+<span class="tracking-wide">KILL AGENT</span>
+</div>
+<!-- B Button (Yellow) -->
+<div class="flex items-center space-x-1.5 cursor-pointer hover:text-white transition-colors">
+<span class="w-4 h-4 rounded-full bg-amber-500 text-amber-950 font-bold flex items-center justify-center text-[8px] border-2 border-yellow-300 shadow-[0_0_6px_#ffd700]">B</span>
+<span class="tracking-wide">DETACH</span>
+</div>
+<!-- A Button (Red) -->
+<div class="flex items-center space-x-1.5 cursor-pointer hover:text-white transition-colors">
+<span class="w-4 h-4 rounded-full bg-red-600 text-red-100 font-bold flex items-center justify-center text-[8px] border-2 border-rose-400 shadow-[0_0_6px_#ff2222]">A</span>
+<span class="tracking-wide">SEND STDIN</span>
+</div>
+</div>
+<!-- Center/Right Arcade Function Buttons -->
+<div class="flex items-center space-x-3 text-[9px] mt-1 sm:mt-0">
+<button class="bg-stone-900 hover:bg-stone-800 border border-stone-600 px-3 py-1 rounded text-stone-300 active:scale-95 transition-transform flex items-center space-x-1.5 shadow-md">
+<span class="text-[8px] text-stone-400 font-mono">[SELECT]</span>
+<span>PAUSE ALL</span>
+</button>
+<button class="bg-gradient-to-b from-red-600 to-red-800 hover:from-red-500 hover:to-red-700 border border-red-400 px-3 py-1 rounded text-white shadow-[0_0_12px_rgba(230,0,0,0.5)] active:scale-95 transition-transform flex items-center space-x-1.5">
+<span class="text-[8px] text-yellow-300 font-mono">[START]</span>
+<span class="text-yellow-300 font-bold tracking-wider">EXECUTE PIPELINE</span>
+</button>
+</div>
+</footer>
+<!-- END: Bottom Retro Controller Command Legend -->
+<!-- BEGIN: Interactive Terminal Sounds & Console Interactions -->
+<script data-purpose="retro-terminal-interactions">
+  // Lightweight retro feedback on terminal focus/click
+  document.querySelectorAll('article').forEach(terminal => {
+    terminal.addEventListener('click', () => {
+      terminal.classList.add('ring-2', 'ring-cyan-400');
+      setTimeout(() => {
+        terminal.classList.remove('ring-2', 'ring-cyan-400');
+      }, 250);
+    });
+  });
+</script>
+<!-- END: Interactive Terminal Sounds & Console Interactions -->
+</body></html>

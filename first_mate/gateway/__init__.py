@@ -1,47 +1,11 @@
 #!/usr/bin/env python3
 """
-first_mate/gateway
-Ingress gateway, thread-scoped session handles, and asynchronous session router for First Mate 2.0.
+first_mate/gateway/__init__.py
+Backwards compatibility mirror shim for golem.gateway.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
+from golem.gateway import *  # noqa: F401, F403
+import golem.gateway as _canonical
 
-from .session import (
-    SessionState,
-    SessionHandle,
-)
-from .router import (
-    SessionRouter,
-)
-from .ingress import (
-    IngressGateway,
-    add_reaction,
-    remove_reaction,
-    swap_reaction,
-    strip_bot_mentions,
-    strip_flushed_chunks,
-    process_slack_message,
-    IGNORABLE_REACTION_ERRORS,
-)
-from . import session
-from . import router
-from . import ingress
-
-__all__ = [
-    # Submodules
-    "session",
-    "router",
-    "ingress",
-    # Session
-    "SessionState",
-    "SessionHandle",
-    # Router
-    "SessionRouter",
-    # Ingress
-    "IngressGateway",
-    "add_reaction",
-    "remove_reaction",
-    "swap_reaction",
-    "strip_bot_mentions",
-    "strip_flushed_chunks",
-    "process_slack_message",
-    "IGNORABLE_REACTION_ERRORS",
-]
+__all__ = getattr(_canonical, "__all__", [k for k in dir(_canonical) if not k.startswith("_")])

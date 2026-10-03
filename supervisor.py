@@ -81,11 +81,18 @@ async def get_listening_ports_in_cwd(cwd: Optional[str]) -> List[Dict[str, Any]]
     listening_ports = []
     try:
         proc = await asyncio.create_subprocess_exec(
-            "lsof", "-iTCP", "-sTCP:LISTEN", "-n", "-P",
+            "lsof", "-b", "-iTCP", "-sTCP:LISTEN", "-n", "-P",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         )
-        stdout, _ = await proc.communicate()
+        try:
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=2.0)
+        except (asyncio.TimeoutError, TimeoutError, Exception):
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            return []
         lines = stdout.decode("utf-8", errors="replace").splitlines()
         for line in lines[1:]:
             parts = line.split()
@@ -104,11 +111,18 @@ async def get_listening_ports_in_cwd(cwd: Optional[str]) -> List[Dict[str, Any]]
                     is_match = False
                     try:
                         cwd_proc = await asyncio.create_subprocess_exec(
-                            "lsof", "-a", "-p", pid, "-d", "cwd", "-Fn",
+                            "lsof", "-b", "-a", "-p", pid, "-d", "cwd", "-Fn",
                             stdout=asyncio.subprocess.PIPE,
                             stderr=asyncio.subprocess.PIPE
                         )
-                        cwd_out, _ = await cwd_proc.communicate()
+                        try:
+                            cwd_out, _ = await asyncio.wait_for(cwd_proc.communicate(), timeout=1.0)
+                        except (asyncio.TimeoutError, TimeoutError, Exception):
+                            try:
+                                cwd_proc.kill()
+                            except Exception:
+                                pass
+                            continue
                         for cline in cwd_out.decode("utf-8", errors="replace").splitlines():
                             if cline.startswith("n"):
                                 p_cwd = os.path.realpath(cline[1:])
@@ -156,11 +170,18 @@ async def cleanup_rogue_servers(banned_ports: Optional[List[int]] = None) -> Lis
     killed = []
     try:
         proc = await asyncio.create_subprocess_exec(
-            "lsof", "-iTCP", "-sTCP:LISTEN", "-n", "-P",
+            "lsof", "-b", "-iTCP", "-sTCP:LISTEN", "-n", "-P",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL
         )
-        out, _ = await proc.communicate()
+        try:
+            out, _ = await asyncio.wait_for(proc.communicate(), timeout=2.0)
+        except (asyncio.TimeoutError, TimeoutError, Exception):
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            return []
         lines = out.decode("utf-8", errors="replace").splitlines()
         for line in lines:
             parts = line.split()

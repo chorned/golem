@@ -6,12 +6,15 @@ Verifies that the Liaison Mouth in Slack behaves like a real human:
 always responsive, able to converse mid-stream without hardcoded regex gates.
 """
 
+import os
 import unittest
 from unittest.mock import patch, MagicMock, AsyncMock
 from typing import Dict, Any
 
 from first_mate.agent.mouth import (
     generate_mouth_response,
+    get_mouth_model,
+    MOUTH_MODEL_DEFAULT,
     is_cancellation_message,
     is_status_inquiry,
     is_conversational_checkin,
@@ -198,6 +201,17 @@ class TestMouthLLM(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Liaison Update", resp)
         self.assertIn("PID 9988", resp)
         self.assertIn("What's on your mind?", resp)
+
+    def test_mouth_model_resolution_priority(self) -> None:
+        """Verify get_mouth_model prioritizes MOUTH_MODEL over GEMINI_MODEL."""
+        with patch.dict(os.environ, {"MOUTH_MODEL": "gemini-custom-mouth", "GEMINI_MODEL": "gemini-fallback"}, clear=False):
+            self.assertEqual(get_mouth_model(), "gemini-custom-mouth")
+
+        with patch.dict(os.environ, {"GEMINI_MODEL": "gemini-fallback"}, clear=True):
+            self.assertEqual(get_mouth_model(), "gemini-fallback")
+
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(get_mouth_model(), "gemini-3.8-flash")
 
 
 if __name__ == "__main__":

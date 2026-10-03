@@ -1,0 +1,1407 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>STONEFORGE // Agentic Golem Terminal Matrix</title>
+    <!-- Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh. -->
+    <style>
+        :root {
+            --bg-base: #080c10;
+            --bg-void: #06070a;
+            --bg-surface: #090b10;
+            --bg-card: #0d0f16;
+            --border-stone: #2a2e39;
+            --border-red: #140103;
+            --header-red-1: #ff2a2a;
+            --header-red-2: #b80000;
+            --header-red-3: #7a0000;
+            --runic-cyan: #00f0ff;
+            --runic-gold: #ffd700;
+            --runic-green: #00e676;
+            --runic-red: #ff2222;
+            --font-pixel: 'Press Start 2P', 'Courier New', 'Lucida Console', Monaco, monospace;
+            --font-crt: 'VT323', 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+            --font-space: 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            background-color: #000000;
+            color: #d1d5db;
+            font-family: var(--font-space);
+            font-size: 13px;
+            height: 100vh;
+            width: 100vw;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            position: relative;
+            overflow: hidden;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        /* Scanlines and CRT Curvature Overlay */
+        .crt-overlay {
+            position: absolute;
+            inset: 0;
+            z-index: 50;
+            pointer-events: none;
+            background: linear-gradient(rgba(18, 16, 20, 0) 50%, rgba(0, 0, 0, 0.45) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.04), rgba(0, 255, 128, 0.02), rgba(0, 200, 255, 0.04));
+            background-size: 100% 3px, 6px 100%;
+        }
+
+        /* Colossus Background Mech Layer */
+        .colossus-backdrop {
+            position: absolute;
+            inset: 0;
+            z-index: 0;
+            overflow: hidden;
+        }
+
+        .colossus-img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            object-position: center;
+            filter: brightness(0.78) contrast(1.12);
+        }
+
+        .backdrop-vignette {
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(to top, rgba(6, 7, 10, 0.92) 0%, rgba(10, 12, 19, 0.55) 50%, rgba(6, 7, 10, 0.88) 100%);
+            pointer-events: none;
+        }
+
+        .backdrop-radial {
+            position: absolute;
+            inset: 0;
+            background: radial-gradient(circle at center, transparent 30%, #000000 95%);
+            pointer-events: none;
+            opacity: 0.82;
+        }
+
+        /* Metallic Girder Bevel Borders like SNES Arcade Frames */
+        .arcade-girder-left {
+            position: absolute;
+            left: 0;
+            top: 0;
+            bottom: 0;
+            width: 28px;
+            z-index: 40;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-around;
+            align-items: center;
+            padding: 24px 0;
+            background: repeating-linear-gradient(180deg, #373e4b 0px, #20242e 6px, #4a5468 10px, #11141b 16px);
+            box-shadow: inset -3px 0 6px rgba(0,0,0,0.9), 4px 0 12px rgba(0,0,0,0.85);
+            border-right: 2px solid #000000;
+        }
+
+        .arcade-girder-right {
+            position: absolute;
+            right: 0;
+            top: 0;
+            bottom: 0;
+            width: 28px;
+            z-index: 40;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-around;
+            align-items: center;
+            padding: 24px 0;
+            background: repeating-linear-gradient(180deg, #373e4b 0px, #20242e 6px, #4a5468 10px, #11141b 16px);
+            box-shadow: inset 3px 0 6px rgba(0,0,0,0.9), -4px 0 12px rgba(0,0,0,0.85);
+            border-left: 2px solid #000000;
+        }
+
+        .girder-rivet {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #4a5468;
+            border: 1px solid #11141b;
+            box-shadow: inset 1px 1px 2px rgba(255,255,255,0.4), inset -1px -1px 2px rgba(0,0,0,0.9);
+        }
+
+        /* 16-bit SNES Arcade Window Styling */
+        .arcade-window-red {
+            box-shadow: 
+                inset 1px 1px 0px rgba(255, 160, 160, 0.8),
+                inset -2px -2px 0px #300000,
+                0 8px 24px rgba(0, 0, 0, 0.95),
+                0 0 14px rgba(230, 0, 0, 0.25);
+            border: 2px solid var(--border-red);
+            background: rgba(9, 11, 16, 0.95);
+            backdrop-filter: blur(8px);
+            border-radius: 4px;
+            transition: all 0.15s ease-in-out;
+        }
+
+        .arcade-window-red:hover {
+            border-color: #ff4d4d;
+            box-shadow: 
+                inset 1px 1px 0px rgba(255, 180, 180, 0.9),
+                inset -2px -2px 0px #400000,
+                0 10px 28px rgba(0, 0, 0, 0.98),
+                0 0 18px rgba(255, 42, 42, 0.4);
+        }
+
+        .arcade-header-red {
+            background: linear-gradient(180deg, var(--header-red-1) 0%, var(--header-red-2) 55%, var(--header-red-3) 100%);
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.45), inset 0 -1px 0 rgba(0,0,0,0.8);
+            text-shadow: 1px 1px 0px #240003;
+            padding: 4px 8px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-family: var(--font-pixel);
+            font-size: 10px;
+            color: #ffffff;
+            font-weight: bold;
+        }
+
+        /* Glow utilities */
+        .text-glow-cyan {
+            text-shadow: 0 0 6px var(--runic-cyan), 0 0 12px rgba(0, 240, 255, 0.6);
+        }
+        .text-glow-gold {
+            text-shadow: 0 0 6px var(--runic-gold), 0 0 12px rgba(255, 215, 0, 0.5);
+        }
+        .text-glow-red {
+            text-shadow: 0 0 6px var(--runic-red), 0 0 10px rgba(255, 0, 0, 0.6);
+        }
+        .glow-border-cyan {
+            box-shadow: 0 0 12px rgba(0, 240, 255, 0.4), inset 0 0 8px rgba(0, 240, 255, 0.2);
+        }
+
+        /* Keyframe Animations */
+        @keyframes pulseCyan {
+            0%, 100% { opacity: 0.8; filter: drop-shadow(0 0 4px #00f0ff); }
+            50% { opacity: 1; filter: drop-shadow(0 0 12px #00f3ff); }
+        }
+        .pulse-cyan {
+            animation: pulseCyan 2.4s infinite ease-in-out;
+        }
+
+        @keyframes blinkCursor {
+            0%, 49% { opacity: 1; }
+            50%, 100% { opacity: 0; }
+        }
+        .blink-caret {
+            animation: blinkCursor 0.85s infinite step-start;
+        }
+
+        @keyframes eqBar1 { 0%, 100% { height: 30%; } 50% { height: 85%; } }
+        @keyframes eqBar2 { 0%, 100% { height: 80%; } 50% { height: 25%; } }
+        @keyframes eqBar3 { 0%, 100% { height: 50%; } 50% { height: 95%; } }
+        .eq-1 { animation: eqBar1 0.7s infinite ease-in-out; }
+        .eq-2 { animation: eqBar2 0.5s infinite ease-in-out; }
+        .eq-3 { animation: eqBar3 0.65s infinite ease-in-out; }
+
+        /* Scrollbars */
+        ::-webkit-scrollbar {
+            width: 4px;
+            height: 4px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #090b10;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #b80000;
+            border-radius: 2px;
+        }
+
+        /* Top Arcade HUD Header */
+        header.arcade-hud {
+            position: relative;
+            z-index: 30;
+            background: rgba(13, 15, 22, 0.95);
+            border-bottom: 2px solid rgba(74, 84, 104, 0.8);
+            padding: 8px 16px;
+            margin: 0 28px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 11px;
+            font-family: var(--font-pixel);
+            box-shadow: 0 8px 24px rgba(0,0,0,0.9);
+            backdrop-filter: blur(8px);
+        }
+
+        .hud-left {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .golem-core-emblem {
+            width: 30px;
+            height: 30px;
+            background: #0f1117;
+            border: 2px solid var(--runic-cyan);
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .golem-core-emblem span {
+            color: var(--runic-cyan);
+            font-size: 15px;
+            line-height: 1;
+        }
+
+        .hud-title-wrap {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .hud-title-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .hud-title {
+            color: #67e8f9;
+            font-size: 12px;
+            letter-spacing: 2px;
+            font-weight: bold;
+        }
+
+        .hud-version-tag {
+            font-size: 9px;
+            background: rgba(80, 0, 0, 0.8);
+            color: #f87171;
+            border: 1px solid #b91c1c;
+            padding: 1px 6px;
+            border-radius: 3px;
+        }
+
+        .hud-subtitle {
+            font-size: 8px;
+            color: #94a3b8;
+            font-family: var(--font-space);
+            letter-spacing: 1px;
+        }
+
+        .hud-lineage {
+            font-size: 8px;
+            color: #64748b;
+            font-style: italic;
+            font-family: var(--font-space);
+        }
+
+        .sync-badge {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            background: rgba(7, 8, 12, 0.9);
+            border: 1px solid rgba(0, 240, 255, 0.3);
+            padding: 4px 10px;
+            border-radius: 4px;
+            font-size: 9px;
+            letter-spacing: 0.5px;
+        }
+
+        .sync-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--runic-cyan);
+            box-shadow: 0 0 8px var(--runic-cyan);
+        }
+
+        .sync-badge.offline .sync-dot {
+            background: var(--runic-red);
+            box-shadow: 0 0 8px var(--runic-red);
+        }
+
+        .hud-right {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            font-size: 10px;
+        }
+
+        .hud-counter-box {
+            background: rgba(7, 8, 12, 0.9);
+            border: 1px solid #4a5468;
+            padding: 4px 10px;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            box-shadow: inset 0 2px 4px rgba(0,0,0,0.8);
+        }
+
+        .mana-bar-wrap {
+            width: 110px;
+            height: 12px;
+            background: #0f1117;
+            border: 1px solid rgba(0, 240, 255, 0.6);
+            border-radius: 2px;
+            overflow: hidden;
+            padding: 1px;
+        }
+
+        .mana-bar-fill {
+            background: linear-gradient(90deg, #0284c7, var(--runic-cyan), #bae6fd);
+            height: 100%;
+            width: 84%;
+            box-shadow: 0 0 8px var(--runic-cyan);
+            transition: width 0.3s ease;
+        }
+
+        .overclock-btn {
+            background: linear-gradient(90deg, #4c0519, #881337);
+            border: 1px solid #f43f5e;
+            color: #ffe4e6;
+            padding: 4px 10px;
+            border-radius: 4px;
+            font-size: 9px;
+            font-family: var(--font-pixel);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.15s ease;
+        }
+
+        .overclock-btn:hover {
+            border-color: var(--runic-gold);
+            transform: scale(1.02);
+        }
+
+        .overclock-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--runic-gold);
+            box-shadow: 0 0 6px var(--runic-gold);
+        }
+
+        /* Main Workspace Canvas */
+        main.workspace-canvas {
+            position: relative;
+            flex: 1;
+            z-index: 20;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 36px 4px 36px;
+            overflow-y: auto;
+            overflow-x: hidden;
+            max-width: 1400px;
+            margin: 0 auto;
+            width: 100%;
+        }
+
+        /* Floating Sensory Stack (Face of Colossus) */
+        .sensory-stack {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            width: 100%;
+            max-width: 680px;
+            gap: 6px;
+            margin-top: 4px;
+        }
+
+        .sensory-window {
+            width: 100%;
+        }
+
+        .sensory-body {
+            font-family: var(--font-crt);
+            font-size: 15px;
+            line-height: 1.2;
+            background: rgba(7, 9, 14, 0.95);
+            padding: 6px 10px;
+            color: #e2e8f0;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            border-top: 1px solid #1e2430;
+        }
+
+        .sensory-lead-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .sensory-sub-stream {
+            font-family: var(--font-crt);
+            font-size: 13px;
+            max-height: 60px;
+            overflow-y: auto;
+            padding-top: 4px;
+            border-top: 1px dashed rgba(255, 255, 255, 0.1);
+            color: #94a3b8;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .stream-entry {
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+
+        .stream-entry .ts {
+            color: #64748b;
+            margin-right: 6px;
+        }
+
+        /* Equalizer graphic for Mouth */
+        .eq-graphic {
+            display: flex;
+            align-items: flex-end;
+            gap: 2px;
+            height: 16px;
+            padding: 2px 4px;
+            background: #0f1117;
+            border: 1px solid #334155;
+            border-radius: 2px;
+        }
+
+        .eq-bar {
+            width: 4px;
+            border-top-left-radius: 1px;
+            border-top-right-radius: 1px;
+        }
+
+        /* Hand Agents Grid (Cradled in Palms) */
+        .hands-section {
+            width: 100%;
+            max-width: 1050px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            margin-top: 6px;
+            margin-bottom: 4px;
+        }
+
+        .hands-section-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-family: var(--font-pixel);
+            font-size: 9px;
+            color: var(--runic-gold);
+            padding: 0 4px;
+            text-shadow: 0 0 6px rgba(255, 215, 0, 0.4);
+        }
+
+        .hands-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+            width: 100%;
+        }
+
+        @media (max-width: 900px) {
+            .hands-grid {
+                grid-template-columns: 1fr;
+            }
+            .arcade-girder-left, .arcade-girder-right {
+                display: none;
+            }
+            header.arcade-hud {
+                margin: 0;
+            }
+            footer.arcade-footer {
+                margin: 0;
+            }
+            main.workspace-canvas {
+                padding: 8px 12px;
+            }
+        }
+
+        .hand-card {
+            display: flex;
+            flex-direction: column;
+            height: 122px;
+        }
+
+        .hand-card-body {
+            flex: 1;
+            font-family: var(--font-crt);
+            font-size: 13px;
+            background: rgba(7, 9, 14, 0.95);
+            padding: 6px 8px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            border-top: 1px solid #1e2430;
+            overflow: hidden;
+        }
+
+        .hand-card-cmd {
+            font-weight: bold;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .hand-card-terminal {
+            flex: 1;
+            overflow-y: auto;
+            font-size: 12px;
+            color: #94a3b8;
+            margin: 2px 0;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+
+        .hand-card-footer {
+            font-family: var(--font-pixel);
+            font-size: 8px;
+            color: #64748b;
+            border-top: 1px solid rgba(255, 255, 255, 0.08);
+            padding-top: 3px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .status-pill-badge {
+            font-size: 8px;
+            font-family: var(--font-pixel);
+            padding: 1px 6px;
+            border-radius: 2px;
+            border: 1px solid currentColor;
+            line-height: 1.2;
+        }
+
+        .badge-green {
+            color: var(--runic-green);
+            background: rgba(0, 100, 34, 0.4);
+            border-color: #15803d;
+        }
+
+        .badge-cyan {
+            color: var(--runic-cyan);
+            background: rgba(0, 155, 179, 0.3);
+            border-color: #0284c7;
+        }
+
+        .badge-amber {
+            color: var(--runic-gold);
+            background: rgba(163, 137, 0, 0.3);
+            border-color: #b45309;
+        }
+
+        .badge-red {
+            color: var(--runic-red);
+            background: rgba(147, 0, 10, 0.4);
+            border-color: #b91c1c;
+        }
+
+        .badge-purple {
+            color: #c084fc;
+            background: rgba(88, 28, 135, 0.4);
+            border-color: #7e22ce;
+        }
+
+        /* Bottom SNES Controller Command Bar */
+        footer.arcade-footer {
+            position: relative;
+            z-index: 30;
+            background: rgba(12, 14, 20, 0.95);
+            border-top: 2px solid rgba(74, 84, 104, 0.8);
+            padding: 8px 16px;
+            margin: 0 28px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 10px;
+            font-family: var(--font-pixel);
+            box-shadow: 0 -8px 24px rgba(0,0,0,0.9);
+            backdrop-filter: blur(8px);
+        }
+
+        .snes-button-cluster {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            overflow-x: auto;
+        }
+
+        .snes-btn-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            cursor: pointer;
+            transition: color 0.15s ease;
+        }
+
+        .snes-btn-item:hover {
+            color: #ffffff;
+        }
+
+        .snes-pip {
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            font-weight: bold;
+            font-size: 9px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: 2px solid currentColor;
+            line-height: 1;
+        }
+
+        .pip-y {
+            background: #059669;
+            color: #d1fae5;
+            border-color: #34d399;
+            box-shadow: 0 0 6px #00e676;
+        }
+
+        .pip-x {
+            background: #2563eb;
+            color: #dbeafe;
+            border-color: #60a5fa;
+            box-shadow: 0 0 6px var(--runic-cyan);
+        }
+
+        .pip-b {
+            background: #d97706;
+            color: #fef3c7;
+            border-color: #fcd34d;
+            box-shadow: 0 0 6px var(--runic-gold);
+        }
+
+        .pip-a {
+            background: #dc2626;
+            color: #fee2e2;
+            border-color: #f87171;
+            box-shadow: 0 0 6px var(--runic-red);
+        }
+
+        .arcade-action-cluster {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .btn-select {
+            background: #181b24;
+            border: 1px solid #475569;
+            color: #cbd5e1;
+            padding: 5px 12px;
+            border-radius: 4px;
+            font-family: var(--font-pixel);
+            font-size: 9px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.15s ease;
+        }
+
+        .btn-select:hover {
+            background: #334155;
+            color: #ffffff;
+        }
+
+        .btn-select:active {
+            transform: scale(0.96);
+        }
+
+        .btn-start {
+            background: linear-gradient(180deg, #dc2626 0%, #991b1b 100%);
+            border: 1px solid #f87171;
+            color: #ffffff;
+            padding: 5px 14px;
+            border-radius: 4px;
+            font-family: var(--font-pixel);
+            font-size: 9px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            box-shadow: 0 0 12px rgba(220, 38, 38, 0.6);
+            transition: all 0.15s ease;
+        }
+
+        .btn-start:hover {
+            background: linear-gradient(180deg, #ef4444 0%, #b91c1c 100%);
+            box-shadow: 0 0 18px rgba(239, 68, 68, 0.8);
+        }
+
+        .btn-start:active {
+            transform: scale(0.96);
+        }
+    </style>
+</head>
+<body class="dark">
+    <!-- CRT Scanline Overlay -->
+    <div class="crt-overlay"></div>
+
+    <!-- Background Image: Ancient Robotic Stone Golem Colossus -->
+    <div class="colossus-backdrop">
+        <img alt="Ancient Stone Colossus Mech" class="colossus-img" src="/colossus.png" />
+        <div class="backdrop-vignette"></div>
+        <div class="backdrop-radial"></div>
+    </div>
+
+    <!-- Left Girder Bevel (SNES arcade cabinet side trim) -->
+    <div class="arcade-girder-left">
+        <div class="girder-rivet"></div>
+        <div class="girder-rivet"></div>
+        <div class="girder-rivet"></div>
+        <div class="girder-rivet"></div>
+        <div class="girder-rivet"></div>
+    </div>
+
+    <!-- Right Girder Bevel -->
+    <div class="arcade-girder-right">
+        <div class="girder-rivet"></div>
+        <div class="girder-rivet"></div>
+        <div class="girder-rivet"></div>
+        <div class="girder-rivet"></div>
+        <div class="girder-rivet"></div>
+    </div>
+
+    <!-- Top Arcade HUD Header -->
+    <header class="arcade-hud">
+        <div class="hud-left">
+            <div class="golem-core-emblem glow-border-cyan">
+                <span>ᛏ</span>
+            </div>
+            <div class="hud-title-wrap">
+                <div class="hud-title-row">
+                    <span class="hud-title text-glow-cyan">STONEFORGE</span>
+                    <span class="hud-version-tag">MATRIX v2.4</span>
+                </div>
+                <span class="hud-subtitle">AGENTIC ROBOTIC COLOSSUS WORKSPACE</span>
+                <span class="hud-lineage">Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.</span>
+            </div>
+            <div id="conn-status" class="sync-badge">
+                <span class="sync-dot"></span>
+                <span>CHASSIS: TITAN-VII [<span id="sync-label" style="color: var(--runic-cyan); font-weight: bold;">SYNC 100%</span>]</span>
+            </div>
+        </div>
+
+        <div class="hud-right">
+            <!-- Credits Counter -->
+            <div class="hud-counter-box">
+                <span class="text-glow-gold" style="color: var(--runic-gold);">CREDITS:</span>
+                <span id="credits-display" class="font-crt text-glow-gold" style="color: #4ade80; font-size: 15px; font-weight: bold;">$84,200</span>
+            </div>
+
+            <!-- Rune Mana Gauge -->
+            <div class="hud-counter-box">
+                <span class="text-glow-cyan" style="color: var(--runic-cyan);">RUNE_MANA:</span>
+                <div class="mana-bar-wrap">
+                    <div id="mana-bar" class="mana-bar-fill"></div>
+                </div>
+                <span id="mana-val" style="color: #67e8f9; font-size: 14px; font-weight: bold; font-family: var(--font-crt);">8,420/10k</span>
+            </div>
+
+            <!-- Overclock Toggle -->
+            <button id="overclock-btn" class="overclock-btn">
+                <span class="overclock-dot blink-caret"></span>
+                <span>OVERCLOCK [ON]</span>
+            </button>
+
+            <!-- Uptime & Port metadata -->
+            <div style="font-size: 8px; color: #94a3b8; display: flex; flex-direction: column; gap: 2px;">
+                <div>UPTIME: <span id="uptime-display" style="color: #f1f5f9;">--:--:--</span></div>
+                <div>PORT: <span id="port-display" style="color: var(--runic-cyan);">8765</span></div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Workspace Canvas & Floating Agent Terminal Matrix -->
+    <main class="workspace-canvas">
+        <div class="sensory-stack">
+            <!-- 1. Eye Agent Terminal (Positioned over glowing cyan runic eyes) -->
+            <article class="sensory-window arcade-window-red" id="eye-card">
+                <div class="arcade-header-red">
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <span style="width: 8px; height: 8px; background: var(--runic-gold); border-radius: 50%; box-shadow: 0 0 6px var(--runic-gold);"></span>
+                        <span>Eye Agent</span>
+                        <span style="color: #fef08a; font-family: var(--font-space); font-size: 8px; font-weight: 600;">[OCULAR_STREAM]</span>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 8px; font-size: 9px;">
+                        <span id="eye-count-badge" class="status-pill-badge badge-cyan">0 EVENTS</span>
+                        <span id="eye-state-badge" class="status-pill-badge badge-green">IDLE</span>
+                        <span>_ □ ×</span>
+                    </div>
+                </div>
+                <div class="sensory-body">
+                    <div class="sensory-lead-row">
+                        <div style="display: flex; align-items: center; gap: 6px;">
+                            <span style="color: #fb7185; font-weight: bold;">&gt; DETECTED:</span>
+                            <span id="eye-lead-msg" style="color: #4ade80;">MULTIMODAL_FRAME_DIFF</span>
+                            <span id="eye-conf-msg" style="color: var(--runic-cyan); font-size: 13px;">[CONFIDENCE: 99.4%]</span>
+                            <span style="color: #64748b; font-size: 12px;">| BBOX: {x:140, y:88}</span>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 4px;">
+                            <span style="width: 8px; height: 8px; border-radius: 2px; background: var(--runic-cyan); box-shadow: 0 0 6px var(--runic-cyan);" class="pulse-cyan"></span>
+                            <span style="display: inline-block; width: 6px; height: 14px; background: #4ade80;" class="blink-caret"></span>
+                        </div>
+                    </div>
+                    <div class="sensory-sub-stream" id="eye-stream">
+                        <div class="stream-entry"><span class="ts">[Init]</span>Eye task observer calibrated. Tailing ingress and buffer deltas...</div>
+                    </div>
+                </div>
+            </article>
+
+            <!-- 2. Nose Agent Terminal (Positioned over carved stone nose ridge) -->
+            <article class="sensory-window arcade-window-red" id="nose-card">
+                <div class="arcade-header-red">
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <span style="width: 8px; height: 8px; background: var(--runic-cyan); border-radius: 50%; box-shadow: 0 0 6px var(--runic-cyan);"></span>
+                        <span>Nose Agent</span>
+                        <span style="color: #a5f3fc; font-family: var(--font-space); font-size: 8px; font-weight: 600;">[HEURISTIC_SNIFFER]</span>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 8px; font-size: 9px;">
+                        <span id="nose-quiescent-badge" class="status-pill-badge badge-green">Quiescent (0 tokens)</span>
+                        <span id="nose-status-badge" class="status-pill-badge badge-cyan">Clean</span>
+                        <span>_ □ ×</span>
+                    </div>
+                </div>
+                <div class="sensory-body">
+                    <div class="sensory-lead-row">
+                        <div style="display: flex; align-items: center; gap: 6px;">
+                            <span style="color: #fb7185; font-weight: bold;">&gt; SNIFF_LATENCY:</span>
+                            <span id="nose-latency-val" style="color: var(--runic-cyan);">0.02ms</span>
+                            <span id="nose-smell-val" style="color: var(--runic-green);">|| CODE_SMELL: CLEAN</span>
+                            <span style="color: #64748b; font-size: 12px;">| DRIFT: 0.00%</span>
+                        </div>
+                        <span id="nose-active-pill" class="status-pill-badge badge-cyan">ACTIVE</span>
+                    </div>
+                    <div style="display: flex; gap: 16px; font-size: 13px; color: #cbd5e1; padding-top: 2px;">
+                        <div>DISK: <span id="disk-val" style="color: #38bdf8;">--%</span></div>
+                        <div>CONTAINERS: <span id="docker-val" style="color: var(--runic-green);">--</span></div>
+                        <div>TAILSCALE: <span id="tailscale-val" style="color: #facc15;">ONLINE</span></div>
+                        <div>ERRORS: <span id="error-count-val" style="color: #f87171;">0</span></div>
+                    </div>
+                </div>
+            </article>
+
+            <!-- 3. Mouth Agent Terminal (Positioned over magma tooth mechanical mouth) -->
+            <article class="sensory-window arcade-window-red" id="mouth-card">
+                <div class="arcade-header-red">
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <span style="width: 8px; height: 8px; background: var(--runic-green); border-radius: 50%; box-shadow: 0 0 6px var(--runic-green);"></span>
+                        <span>Mouth Agent</span>
+                        <span style="color: #bbf7d0; font-family: var(--font-space); font-size: 8px; font-weight: 600;">[VOICE_SYNTH_DISPATCH]</span>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 8px; font-size: 9px;">
+                        <span id="mouth-model-badge" class="status-pill-badge badge-amber">gemini-3.8-flash</span>
+                        <span id="mouth-turns-badge" class="status-pill-badge badge-green">0 turns</span>
+                        <span>_ □ ×</span>
+                    </div>
+                </div>
+                <div class="sensory-body">
+                    <div class="sensory-lead-row">
+                        <div style="display: flex; align-items: center; gap: 6px; overflow: hidden;">
+                            <span style="color: #fb7185; font-weight: bold;">&gt; TTS_BUFFER:</span>
+                            <span style="color: #fef08a;">READY</span>
+                            <span id="mouth-briefing-lead" style="color: #e2e8f0; font-family: var(--font-space); font-size: 13px; text-overflow: ellipsis; overflow: hidden; white-space: nowrap;">&gt; "Pipeline execution armed and ready."</span>
+                        </div>
+                        <div class="eq-graphic">
+                            <span class="eq-bar eq-1" style="background: var(--runic-cyan);"></span>
+                            <span class="eq-bar eq-2" style="background: var(--runic-green);"></span>
+                            <span class="eq-bar eq-3" style="background: var(--runic-gold);"></span>
+                            <span class="eq-bar eq-1" style="background: var(--runic-red);"></span>
+                        </div>
+                    </div>
+                    <div class="sensory-sub-stream" id="mouth-stream">
+                        <div class="stream-entry"><span class="ts">[Init]</span>Mouth liaison active. Sub-second response engine ready.</div>
+                    </div>
+                </div>
+            </article>
+        </div>
+
+        <!-- 4. Hand Agents Grid (Cradled in the Colossus Stone Palms) -->
+        <section class="hands-section">
+            <div class="hands-section-header">
+                <span>🖐️ Hand Agents Grid [CHEST &amp; GAUNTLET CLUSTER]</span>
+                <span id="hands-count-badge" class="status-pill-badge badge-amber">6 GAUNTLETS ONLINE</span>
+            </div>
+            <div class="hands-grid" id="hands-grid">
+                <!-- [HAND AGENT 01] -->
+                <article class="hand-card arcade-window-red" id="hand-pane-1">
+                    <div class="arcade-header-red">
+                        <div style="display: flex; align-items: center; gap: 6px;">
+                            <span style="width: 6px; height: 6px; background: var(--runic-gold); border-radius: 50%;"></span>
+                            <span>Hand 01 [L_GAUNTLET]</span>
+                        </div>
+                        <span class="status-pill-badge badge-amber">PYTEST</span>
+                    </div>
+                    <div class="hand-card-body">
+                        <div class="hand-card-cmd" style="color: var(--runic-green);">&gt; pytest tests/colossus.py</div>
+                        <div class="hand-card-terminal">running test_runic_bus...&#10;&gt;&gt; 3 passed, 0 failed [14ms]</div>
+                        <div class="hand-card-footer">
+                            <span>STATUS: IDLE</span>
+                            <span class="status-pill-badge badge-green">EXIT_0</span>
+                        </div>
+                    </div>
+                </article>
+
+                <!-- [HAND AGENT 02] -->
+                <article class="hand-card arcade-window-red" id="hand-pane-2">
+                    <div class="arcade-header-red">
+                        <div style="display: flex; align-items: center; gap: 6px;">
+                            <span style="width: 6px; height: 6px; background: var(--runic-cyan); border-radius: 50%;"></span>
+                            <span>Hand 02 [L_CORE]</span>
+                        </div>
+                        <span class="status-pill-badge badge-cyan">DOM_WORKER</span>
+                    </div>
+                    <div class="hand-card-body">
+                        <div class="hand-card-cmd" style="color: var(--runic-cyan);">&gt; git commit -m 'sync'</div>
+                        <div class="hand-card-terminal">DOM nodes injected: 14&#10;&gt;&gt; Virtual DOM hydrated</div>
+                        <div class="hand-card-footer">
+                            <span>WORKER: ACTIVE</span>
+                            <span class="status-pill-badge badge-cyan">RE-RENDER</span>
+                        </div>
+                    </div>
+                </article>
+
+                <!-- [HAND AGENT 03] -->
+                <article class="hand-card arcade-window-red" id="hand-pane-3">
+                    <div class="arcade-header-red">
+                        <div style="display: flex; align-items: center; gap: 6px;">
+                            <span style="width: 6px; height: 6px; background: var(--runic-gold); border-radius: 50%;"></span>
+                            <span>Hand 03 [L_CLAW]</span>
+                        </div>
+                        <span class="status-pill-badge badge-amber">SQL_RUNES</span>
+                    </div>
+                    <div class="hand-card-body">
+                        <div class="hand-card-cmd" style="color: var(--runic-gold);">&gt; VACUUM ANALYZE runes;</div>
+                        <div class="hand-card-terminal">Indexed 2,048 records&#10;&gt;&gt; Query duration: 1.2ms</div>
+                        <div class="hand-card-footer">
+                            <span>DB: ONLINE</span>
+                            <span class="status-pill-badge badge-amber">COMMITTED</span>
+                        </div>
+                    </div>
+                </article>
+
+                <!-- [HAND AGENT 04] -->
+                <article class="hand-card arcade-window-red" id="hand-pane-4">
+                    <div class="arcade-header-red">
+                        <div style="display: flex; align-items: center; gap: 6px;">
+                            <span style="width: 6px; height: 6px; background: var(--runic-red); border-radius: 50%;"></span>
+                            <span>Hand 04 [R_GAUNTLET]</span>
+                        </div>
+                        <span class="status-pill-badge badge-red">BASH_SHELL</span>
+                    </div>
+                    <div class="hand-card-body">
+                        <div class="hand-card-cmd" style="color: #f87171;">&gt; docker exec -it golem</div>
+                        <div class="hand-card-terminal">spawn PID 4409 [pts/2]&#10;&gt;&gt; ready for instruction...</div>
+                        <div class="hand-card-footer">
+                            <span>TTY: ATTACHED</span>
+                            <span style="display: inline-block; width: 6px; height: 8px; background: #f87171;" class="blink-caret"></span>
+                        </div>
+                    </div>
+                </article>
+
+                <!-- [HAND AGENT 05] -->
+                <article class="hand-card arcade-window-red" id="hand-pane-5">
+                    <div class="arcade-header-red">
+                        <div style="display: flex; align-items: center; gap: 6px;">
+                            <span style="width: 6px; height: 6px; background: var(--runic-green); border-radius: 50%;"></span>
+                            <span>Hand 05 [R_CORE]</span>
+                        </div>
+                        <span class="status-pill-badge badge-green">AST_LINTER</span>
+                    </div>
+                    <div class="hand-card-body">
+                        <div class="hand-card-cmd" style="color: var(--runic-green);">&gt; tree-walk lint --strict</div>
+                        <div class="hand-card-terminal">Found 0 syntax errors&#10;&gt;&gt; 1 warn: unused rune ref</div>
+                        <div class="hand-card-footer">
+                            <span>LINT: VALID</span>
+                            <span class="status-pill-badge badge-green">100% PASS</span>
+                        </div>
+                    </div>
+                </article>
+
+                <!-- [HAND AGENT 06] -->
+                <article class="hand-card arcade-window-red" id="hand-pane-6">
+                    <div class="arcade-header-red">
+                        <div style="display: flex; align-items: center; gap: 6px;">
+                            <span style="width: 6px; height: 6px; background: #c084fc; border-radius: 50%;"></span>
+                            <span>Hand 06 [R_CLAW]</span>
+                        </div>
+                        <span class="status-pill-badge badge-purple">WEBSOCKET</span>
+                    </div>
+                    <div class="hand-card-body">
+                        <div class="hand-card-cmd" style="color: #c084fc;">&gt; ws://broadcast.stone:9</div>
+                        <div class="hand-card-terminal">PING latency 12ms&#10;&gt;&gt; 142.8 Tok/s</div>
+                        <div class="hand-card-footer">
+                            <span>STREAM: SYNC</span>
+                            <span class="status-pill-badge badge-purple">PUMPING</span>
+                        </div>
+                    </div>
+                </article>
+            </div>
+        </section>
+    </main>
+
+    <!-- Bottom Retro Controller Command Legend (SNES Button Prompt Bar) -->
+    <footer class="arcade-footer">
+        <div class="snes-button-cluster">
+            <!-- Y Button (Green) -->
+            <div class="snes-btn-item" id="btn-y">
+                <span class="snes-pip pip-y">Y</span>
+                <span>MAXIMIZE</span>
+            </div>
+            <!-- X Button (Blue) -->
+            <div class="snes-btn-item" id="btn-x">
+                <span class="snes-pip pip-x">X</span>
+                <span>KILL AGENT</span>
+            </div>
+            <!-- B Button (Yellow) -->
+            <div class="snes-btn-item" id="btn-b">
+                <span class="snes-pip pip-b">B</span>
+                <span>DETACH</span>
+            </div>
+            <!-- A Button (Red) -->
+            <div class="snes-btn-item" id="btn-a">
+                <span class="snes-pip pip-a">A</span>
+                <span>SEND STDIN</span>
+            </div>
+        </div>
+
+        <div class="arcade-action-cluster">
+            <button class="btn-select" id="btn-select">
+                <span style="color: #94a3b8; font-family: var(--font-crt); font-size: 11px;">[SELECT]</span>
+                <span id="pause-label">PAUSE ALL</span>
+            </button>
+            <button class="btn-start" id="btn-start">
+                <span style="color: #fef08a; font-family: var(--font-crt); font-size: 11px;">[START]</span>
+                <span style="color: #fef08a; font-weight: bold; letter-spacing: 1px;">EXECUTE PIPELINE</span>
+            </button>
+        </div>
+    </footer>
+
+    <!-- Interactive Terminal Script & Live SSE / REST Wiring -->
+    <script>
+        (function() {
+            const MAX_LOG_ENTRIES = 120;
+            const eyeStream = document.getElementById('eye-stream');
+            const mouthStream = document.getElementById('mouth-stream');
+            const handsGrid = document.getElementById('hands-grid');
+            const connStatus = document.getElementById('conn-status');
+            const syncLabel = document.getElementById('sync-label');
+            const uptimeDisplay = document.getElementById('uptime-display');
+            const portDisplay = document.getElementById('port-display');
+            const eyeCountBadge = document.getElementById('eye-count-badge');
+            const eyeStateBadge = document.getElementById('eye-state-badge');
+            const eyeLeadMsg = document.getElementById('eye-lead-msg');
+            const eyeConfMsg = document.getElementById('eye-conf-msg');
+            const noseLatencyVal = document.getElementById('nose-latency-val');
+            const noseSmellVal = document.getElementById('nose-smell-val');
+            const noseQuiescentBadge = document.getElementById('nose-quiescent-badge');
+            const noseStatusBadge = document.getElementById('nose-status-badge');
+            const diskVal = document.getElementById('disk-val');
+            const dockerVal = document.getElementById('docker-val');
+            const tailscaleVal = document.getElementById('tailscale-val');
+            const errorCountVal = document.getElementById('error-count-val');
+            const mouthModelBadge = document.getElementById('mouth-model-badge');
+            const mouthTurnsBadge = document.getElementById('mouth-turns-badge');
+            const mouthBriefingLead = document.getElementById('mouth-briefing-lead');
+            const handsCountBadge = document.getElementById('hands-count-badge');
+            const manaBar = document.getElementById('mana-bar');
+            const manaVal = document.getElementById('mana-val');
+            const creditsDisplay = document.getElementById('credits-display');
+            const btnSelect = document.getElementById('btn-select');
+            const pauseLabel = document.getElementById('pause-label');
+            const btnStart = document.getElementById('btn-start');
+            const overclockBtn = document.getElementById('overclock-btn');
+
+            let eyeCount = 0;
+            let mouthTurns = 0;
+            let manaTokens = 8420;
+            let isPaused = false;
+            let eventSource = null;
+            const activeHands = new Map();
+
+            function formatTime() {
+                const now = new Date();
+                return now.toTimeString().split(' ')[0];
+            }
+
+            function appendStreamLog(container, text, color) {
+                if (!container) return;
+                const entry = document.createElement('div');
+                entry.className = 'stream-entry';
+                const ts = document.createElement('span');
+                ts.className = 'ts';
+                ts.textContent = `[${formatTime()}]`;
+                const body = document.createElement('span');
+                body.textContent = text;
+                if (color) body.style.color = color;
+                entry.appendChild(ts);
+                entry.appendChild(body);
+                container.appendChild(entry);
+                while (container.childNodes.length > MAX_LOG_ENTRIES) {
+                    container.removeChild(container.firstChild);
+                }
+                container.scrollTop = container.scrollHeight;
+            }
+
+            function updateNoseData(data) {
+                if (!data) return;
+                if (data.disk) {
+                    const pct = data.disk.percent_used || data.disk.percent || 0;
+                    diskVal.textContent = `${pct.toFixed(0)}%`;
+                }
+                if (data.docker) {
+                    const count = data.docker.container_count !== undefined ? data.docker.container_count : (data.docker.containers ? data.docker.containers.length : 0);
+                    dockerVal.textContent = `${count}`;
+                }
+                if (data.tailscale) {
+                    tailscaleVal.textContent = data.tailscale.online ? 'ONLINE' : 'OFFLINE';
+                }
+                if (data.smells_off) {
+                    noseStatusBadge.textContent = 'Anomaly';
+                    noseStatusBadge.className = 'status-pill-badge badge-red';
+                    noseSmellVal.textContent = '|| CODE_SMELL: ALERT';
+                    noseSmellVal.style.color = 'var(--runic-red)';
+                } else {
+                    noseStatusBadge.textContent = 'Clean';
+                    noseStatusBadge.className = 'status-pill-badge badge-cyan';
+                    noseSmellVal.textContent = '|| CODE_SMELL: CLEAN';
+                    noseSmellVal.style.color = 'var(--runic-green)';
+                }
+                const errs = data.recent_error_count !== undefined ? data.recent_error_count : (data.error_count || 0);
+                errorCountVal.textContent = `${errs}`;
+            }
+
+            function getOrCreateDynamicHand(paneId, node, command, pid) {
+                if (activeHands.has(paneId)) {
+                    return activeHands.get(paneId);
+                }
+                const card = document.createElement('article');
+                card.className = 'hand-card arcade-window-red';
+                card.id = `dyn-hand-${paneId}`;
+                card.innerHTML = `
+                    <div class="arcade-header-red">
+                        <div style="display: flex; align-items: center; gap: 6px;">
+                            <span style="width: 6px; height: 6px; background: var(--runic-cyan); border-radius: 50%;"></span>
+                            <span>${paneId} [${node || 'local'}]</span>
+                        </div>
+                        <span class="status-pill-badge badge-cyan">PID:${pid || '--'}</span>
+                    </div>
+                    <div class="hand-card-body">
+                        <div class="hand-card-cmd" style="color: var(--runic-cyan);">&gt; ${command || 'Task'}</div>
+                        <div class="hand-card-terminal"></div>
+                        <div class="hand-card-footer">
+                            <span class="worker-state">RUNNING</span>
+                            <span class="status-pill-badge badge-cyan status-badge">RUNNING</span>
+                        </div>
+                    </div>
+                `;
+                // Replace or prepend in handsGrid
+                handsGrid.prepend(card);
+                activeHands.set(paneId, card);
+                handsCountBadge.textContent = `${activeHands.size + 6} GAUNTLETS ONLINE`;
+                return card;
+            }
+
+            // Hydrate REST snapshot from /api/status
+            fetch('/api/status')
+                .then(r => r.json())
+                .then(data => {
+                    if (data.port) portDisplay.textContent = data.port;
+                    if (data.uptime_formatted) uptimeDisplay.textContent = data.uptime_formatted;
+                    if (data.nose) updateNoseData(data.nose);
+                    if (data.eyes && data.eyes.state) {
+                        eyeStateBadge.textContent = data.eyes.state.toUpperCase();
+                    }
+                    if (data.mouth) {
+                        if (data.mouth.model) mouthModelBadge.textContent = data.mouth.model;
+                        if (data.mouth.active_turns) {
+                            mouthTurns = data.mouth.active_turns;
+                            mouthTurnsBadge.textContent = `${mouthTurns} turns`;
+                        }
+                    }
+                    if (Array.isArray(data.hands)) {
+                        data.hands.forEach(h => {
+                            const card = getOrCreateDynamicHand(h.pane_id, h.node, h.command, h.pid);
+                            if (h.buffer_tail) {
+                                const term = card.querySelector('.hand-card-terminal');
+                                term.textContent = h.buffer_tail;
+                            }
+                        });
+                    }
+                })
+                .catch(() => {});
+
+            // Connect SSE Stream
+            function connectSSE() {
+                if (eventSource) {
+                    eventSource.close();
+                }
+                eventSource = new EventSource('/events');
+
+                eventSource.onopen = function() {
+                    connStatus.classList.remove('offline');
+                    syncLabel.textContent = 'SYNC 100%';
+                    syncLabel.style.color = 'var(--runic-cyan)';
+                };
+
+                eventSource.onerror = function() {
+                    connStatus.classList.add('offline');
+                    syncLabel.textContent = 'RECONNECTING';
+                    syncLabel.style.color = 'var(--runic-red)';
+                };
+
+                eventSource.addEventListener('connected', function(e) {
+                    appendStreamLog(eyeStream, '[SSE] Link established to Stoneforge Mesh Bus.', 'var(--runic-cyan)');
+                });
+
+                eventSource.addEventListener('heartbeat', function(e) {
+                    try {
+                        const data = JSON.parse(e.data);
+                        if (data.uptime_formatted) uptimeDisplay.textContent = data.uptime_formatted;
+                        // Mana shimmer
+                        manaTokens = Math.min(10000, manaTokens + Math.floor(Math.random() * 5));
+                        manaBar.style.width = `${(manaTokens / 100).toFixed(0)}%`;
+                        manaVal.textContent = `${manaTokens.toLocaleString()}/10k`;
+                    } catch (_) {}
+                });
+
+                eventSource.addEventListener('eye_log', function(e) {
+                    eyeCount++;
+                    eyeCountBadge.textContent = `${eyeCount} EVENTS`;
+                    try {
+                        const data = JSON.parse(e.data);
+                        const msg = data.message || data.text || JSON.stringify(data);
+                        eyeLeadMsg.textContent = msg.slice(0, 32);
+                        appendStreamLog(eyeStream, `• ${msg}`);
+                        if (data.state) eyeStateBadge.textContent = data.state.toUpperCase();
+                    } catch (_) {
+                        appendStreamLog(eyeStream, `• ${e.data}`);
+                    }
+                });
+
+                eventSource.addEventListener('nose_telemetry', function(e) {
+                    try {
+                        const data = JSON.parse(e.data);
+                        updateNoseData(data);
+                    } catch (_) {}
+                });
+
+                eventSource.addEventListener('mouth_briefing', function(e) {
+                    mouthTurns++;
+                    mouthTurnsBadge.textContent = `${mouthTurns} turns`;
+                    try {
+                        const data = JSON.parse(e.data);
+                        const txt = data.briefing || data.text || JSON.stringify(data);
+                        mouthBriefingLead.textContent = `> "${txt.slice(0, 48)}..."`;
+                        appendStreamLog(mouthStream, `> ${txt}`, 'var(--runic-gold)');
+                    } catch (_) {
+                        appendStreamLog(mouthStream, `> ${e.data}`, 'var(--runic-gold)');
+                    }
+                });
+
+                eventSource.addEventListener('hand_spawn', function(e) {
+                    try {
+                        const data = JSON.parse(e.data);
+                        getOrCreateDynamicHand(data.pane_id, data.node, data.command, data.pid);
+                    } catch (_) {}
+                });
+
+                eventSource.addEventListener('hand_buffer', function(e) {
+                    try {
+                        const data = JSON.parse(e.data);
+                        const card = getOrCreateDynamicHand(data.pane_id, data.node, data.command, data.pid);
+                        const term = card.querySelector('.hand-card-terminal');
+                        term.textContent += (data.delta || data.text || '');
+                        term.scrollTop = term.scrollHeight;
+                    } catch (_) {}
+                });
+
+                eventSource.addEventListener('hand_settle', function(e) {
+                    try {
+                        const data = JSON.parse(e.data);
+                        const card = activeHands.get(data.pane_id);
+                        if (card) {
+                            const badge = card.querySelector('.status-badge');
+                            const status = data.status || (data.exit_code === 0 ? 'EXIT_0' : 'FAILED');
+                            badge.textContent = status;
+                            badge.className = `status-pill-badge ${data.exit_code === 0 ? 'badge-green' : 'badge-red'}`;
+                        }
+                    } catch (_) {}
+                });
+
+                eventSource.onmessage = function(e) {
+                    try {
+                        const data = JSON.parse(e.data);
+                        if (data.agent === 'eye') appendStreamLog(eyeStream, data.message || data.text);
+                        else if (data.agent === 'mouth') appendStreamLog(mouthStream, data.message || data.text);
+                    } catch (_) {
+                        appendStreamLog(eyeStream, e.data);
+                    }
+                };
+            }
+
+            // SNES Interactive Controls
+            btnSelect.addEventListener('click', function() {
+                isPaused = !isPaused;
+                if (isPaused) {
+                    if (eventSource) eventSource.close();
+                    pauseLabel.textContent = 'RESUME ALL';
+                    btnSelect.style.borderColor = 'var(--runic-gold)';
+                } else {
+                    connectSSE();
+                    pauseLabel.textContent = 'PAUSE ALL';
+                    btnSelect.style.borderColor = '#475569';
+                }
+            });
+
+            btnStart.addEventListener('click', function() {
+                appendStreamLog(mouthStream, '> [PIPELINE] Execution triggered. Mesh nodes synchronized.', 'var(--runic-green)');
+                mouthBriefingLead.textContent = '> "Pipeline triggered. Executing all tasks."';
+            });
+
+            overclockBtn.addEventListener('click', function() {
+                const isOverclock = overclockBtn.querySelector('span:last-child').textContent.includes('ON');
+                if (isOverclock) {
+                    overclockBtn.querySelector('span:last-child').textContent = 'OVERCLOCK [OFF]';
+                    overclockBtn.style.background = '#1e2430';
+                } else {
+                    overclockBtn.querySelector('span:last-child').textContent = 'OVERCLOCK [ON]';
+                    overclockBtn.style.background = 'linear-gradient(90deg, #4c0519, #881337)';
+                }
+            });
+
+            // Card highlight on click
+            document.querySelectorAll('article').forEach(terminal => {
+                terminal.addEventListener('click', () => {
+                    terminal.style.boxShadow = '0 0 16px var(--runic-cyan)';
+                    setTimeout(() => {
+                        terminal.style.boxShadow = '';
+                    }, 280);
+                });
+            });
+
+            connectSSE();
+        })();
+    </script>
+</body>
+</html>

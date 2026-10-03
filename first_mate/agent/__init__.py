@@ -1,80 +1,11 @@
 #!/usr/bin/env python3
 """
-first_mate/agent
-Unified package for Headless Chief of Staff agent adapter, event protocol, and prompt calibrations.
+first_mate/agent/__init__.py
+Backwards compatibility mirror shim for golem.agent.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
+from golem.agent import *  # noqa: F401, F403
+import golem.agent as _canonical
 
-from .protocol import (
-    AgentEvent,
-    AgentEventType,
-    TextDeltaEvent,
-    StatusUpdateEvent,
-    ToolStartEvent,
-    ToolEndEvent,
-    AwaitingInputEvent,
-    FinishEvent,
-)
-from .adapter import (
-    HeadlessAgentAdapter,
-    DEFAULT_AGY_BIN,
-)
-from .calibration import (
-    CALIBRATION_PROMPT,
-    SLACK_MRKDWN_RULES,
-    CHOICE_FORMATTING_RULES,
-    PACING_CALIBRATION_RULES,
-    TRIAGE_SUPPRESSION_RULES,
-    get_calibration_rules,
-    build_calibrated_system_prompt,
-)
-from .mouth import (
-    generate_mouth_response,
-    is_cancellation_message,
-    is_status_inquiry,
-    is_conversational_checkin,
-    is_conversational_inquiry,
-    is_out_of_band_message,
-)
-from . import events
-from . import prompts
-from . import protocol
-from . import calibration
-from . import adapter
-from . import mouth
-
-__all__ = [
-    # Submodules
-    "events",
-    "prompts",
-    "protocol",
-    "calibration",
-    "adapter",
-    "mouth",
-    # Event protocol
-    "AgentEvent",
-    "AgentEventType",
-    "TextDeltaEvent",
-    "StatusUpdateEvent",
-    "ToolStartEvent",
-    "ToolEndEvent",
-    "AwaitingInputEvent",
-    "FinishEvent",
-    # Adapter
-    "HeadlessAgentAdapter",
-    "DEFAULT_AGY_BIN",
-    # Calibration
-    "CALIBRATION_PROMPT",
-    "SLACK_MRKDWN_RULES",
-    "CHOICE_FORMATTING_RULES",
-    "PACING_CALIBRATION_RULES",
-    "TRIAGE_SUPPRESSION_RULES",
-    "get_calibration_rules",
-    "build_calibrated_system_prompt",
-    # Mouth LLM & Out-of-Band Reactor
-    "generate_mouth_response",
-    "is_cancellation_message",
-    "is_status_inquiry",
-    "is_conversational_checkin",
-    "is_conversational_inquiry",
-    "is_out_of_band_message",
-]
+__all__ = getattr(_canonical, "__all__", [k for k in dir(_canonical) if not k.startswith("_")])

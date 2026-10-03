@@ -1,10 +1,62 @@
+# =============================================================================
+# Golem Repository Gitignore
+#
+# Lineage Invariant:
+# Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
+# =============================================================================
+
+# Virtual Environments
 .venv/
+venv/
+ENV/
+env/
+
+# Python Bytecode and Caches
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Distribution and Packaging
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Test Coverage & Tool Artifacts
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# Logs and Runtime State
 bot.log
 bot.err
-__pycache__/
-*.pyc
-.DS_Store
-.env
-.agents/teamwork/
+*.log
+.logs/*.log
+!.logs/M*-*.log
+!.logs/.gitkeep
 slack_transfers/
 *.tmp*
+
+# macOS and OS Artifacts
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+Thumbs.db
+
+# Environment Files (Ignore local secrets, keep templates)
+.env
+.env.local
+.env.*.local
+.env.*
+!.env.example
+!.env.template
+
+# Agent metadata workspaces
+.agents/teamwork/

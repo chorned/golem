@@ -23,10 +23,10 @@ from herdr_tools import (
     SPAWNED_AGENTS
 )
 
-logger = logging.getLogger("FirstMate.AgentCore")
+logger = logging.getLogger("Golem.AgentCore")
 
-# Re-exports from first_mate.agent for Milestone 2 compatibility
-from first_mate.agent import (
+# Re-exports from golem.agent for compatibility
+from golem.agent import (
     AgentEvent,
     AgentEventType,
     TextDeltaEvent,
@@ -46,10 +46,12 @@ from first_mate.agent import (
     build_calibrated_system_prompt,
 )
 
-HOST_DIR = os.environ.get("FIRST_MATE_HOST_DIR", os.path.dirname(os.path.abspath(__file__)))
+from golem.config import get_mouth_model, get_default_hand_worker
+
+HOST_DIR = os.environ.get("GOLEM_HOST_DIR") or os.environ.get("FIRST_MATE_HOST_DIR", os.path.dirname(os.path.abspath(__file__)))
 PROJECT_ROOT = HOST_DIR
 DEFAULT_TARGET_REPO = os.environ.get("DEFAULT_TARGET_REPO", "/Users/hermes/projects/AGY")
-DEFAULT_GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+DEFAULT_GEMINI_MODEL = get_mouth_model()
 GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
 
 
@@ -263,10 +265,11 @@ class ChiefOfStaff:
                 lines=lines_val
             )
         elif name == "herdr_handoff":
-            subagent = args.get("subagent") or args.get("worker", "opencode")
+            subagent = args.get("subagent") or args.get("worker") or get_default_hand_worker()
             task = args.get("task") or args.get("prompt") or args.get("instructions") or args.get("command", "")
             return await herdr_tools.herdr_handoff(
                 subagent=subagent,
+                worker=args.get("worker"),
                 task=task,
                 cwd=args.get("cwd"),
                 node=args.get("node", "hermes")

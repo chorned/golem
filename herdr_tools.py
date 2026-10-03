@@ -13,6 +13,9 @@ import asyncio
 import logging
 from typing import Dict, Any, Optional, List
 
+from golem.config import get_default_hand_worker
+from golem.execution.delegation import WorkerDelegator
+
 logger = logging.getLogger("FirstMate.HerdrTools")
 
 # In-memory registry of active spawned agent panes and their metadata
@@ -23,7 +26,7 @@ HERDR_BIN_DEFAULT = shutil.which("herdr") or os.path.expanduser("~/.local/bin/he
 HERDR_TOOLS_DECLARATIONS = [
     {
         "name": "herdr_spawn",
-        "description": "Spawn a junior worker agent in Herdr on a specific fleet node and directory to perform a task.",
+        "description": "Spawn a backstage hand worker agent in Herdr on a specific fleet node and directory to perform a task.",
         "parameters": {
             "type": "OBJECT",
             "properties": {
@@ -37,18 +40,18 @@ HERDR_TOOLS_DECLARATIONS = [
                 },
                 "worker": {
                     "type": "STRING",
-                    "description": "The worker agent to spawn (e.g. opencode-dev, hermes, opencode)."
+                    "description": "The worker agent to spawn (default: 'agy'; supports 'opencode', 'hermes')."
                 },
                 "prompt": {
                     "type": "STRING",
-                    "description": "Detailed task prompt and requirements for the junior worker."
+                    "description": "Detailed task prompt and requirements for the worker."
                 },
                 "isolate_branch": {
                     "type": "BOOLEAN",
                     "description": "Whether to isolate code modifications on a new local git branch (default: true for code edits, false for system queries/read-only ops)."
                 }
             },
-            "required": ["node", "cwd", "worker", "prompt"]
+            "required": ["node", "cwd", "prompt"]
         }
     },
     {
@@ -117,7 +120,7 @@ HERDR_TOOLS_DECLARATIONS = [
                 "instructions": {"type": "STRING"},
                 "isolate_branch": {"type": "BOOLEAN"}
             },
-            "required": ["node", "cwd", "worker", "instructions"]
+            "required": ["node", "cwd", "instructions"]
         }
     },
     {
@@ -180,13 +183,17 @@ HERDR_TOOLS_DECLARATIONS = [
     },
     {
         "name": "herdr_handoff",
-        "description": "Handoff heavy coding or homelab execution to a specialized junior worker (OpenCode or Hermes).",
+        "description": "Handoff heavy coding or homelab execution to a backstage hand worker (default: 'agy'; supports 'opencode', 'hermes').",
         "parameters": {
             "type": "OBJECT",
             "properties": {
+                "worker": {
+                    "type": "STRING",
+                    "description": "The target worker agent (default: 'agy'; supports 'opencode', 'hermes')."
+                },
                 "subagent": {
                     "type": "STRING",
-                    "description": "The target worker subagent (e.g. opencode, opencode-dev, hermes)."
+                    "description": "Legacy alias for worker."
                 },
                 "task": {
                     "type": "STRING",
@@ -201,7 +208,7 @@ HERDR_TOOLS_DECLARATIONS = [
                     "description": "Target fleet machine node (default: hermes)."
                 }
             },
-            "required": ["subagent", "task"]
+            "required": ["task"]
         }
     }
 ]
@@ -210,21 +217,22 @@ HERDR_TOOLS_DECLARATIONS = [
 async def herdr_spawn(
     node: str = "hermes",
     cwd: str = "/Users/hermes",
-    worker: str = "",
+    worker: Optional[str] = None,
     prompt: str = "",
     instructions: str = "",
     isolate_branch: bool = True
 ) -> Dict[str, Any]:
     """
-    Spawns a junior worker agent in Herdr:
+    Spawns a worker agent in Herdr:
     1. Ensures `cwd` exists on the target filesystem.
-    2. If `isolate_branch` is True and `cwd` is a git repository, checks out local branch `task-<ts>-<worker>`.
-    3. Spawns worker pane via `herdr agent spawn --node <node> --cwd <cwd> --agent <worker>`
+    2. Defaults `worker` to get_default_hand_worker() ('agy') if None or empty.
+    3. If `isolate_branch` is True and `cwd` is a git repository, checks out local branch `task-<ts>-<worker>`.
+    4. Spawns worker pane via `herdr agent spawn --node <node> --cwd <cwd> --agent <worker>`
        and configures FrugaLLM credentials (0.0.0.0:61721).
-    4. Returns {"pane_id": "...", "node": node, "cwd": cwd, "branch": branch_name}.
+    5. Returns {"pane_id": "...", "node": node, "cwd": cwd, "branch": branch_name, "worker": effective_worker}.
     """
-    if not worker:
-        return {"error": "Explicit worker parameter (e.g. opencode-dev, hermes-worker) is required to spawn subagent."}
+    raw_worker = worker.strip() if (worker is not None and isinstance(worker, str) and worker.strip()) else get_default_hand_worker()
+    effective_worker = WorkerDelegator.validate_worker(raw_worker)
     effective_prompt = prompt or instructions
     herdr_bin = os.environ.get("HERDR_BIN") or HERDR_BIN_DEFAULT
     effective_cwd = os.path.realpath(os.path.abspath(os.path.expanduser(cwd)))
@@ -264,7 +272,7 @@ async def herdr_spawn(
                 base_branch = "main"
 
             ts = int(time.time())
-            clean_worker = worker.split("-")[0] if "-" in worker else worker
+            clean_worker = effective_worker.split("-")[0] if "-" in effective_worker else effective_worker
             branch_name = f"task-{ts}-{clean_worker}"
 
             try:
@@ -284,7 +292,7 @@ async def herdr_spawn(
         herdr_bin, "agent", "spawn",
         "--node", node,
         "--cwd", effective_cwd,
-        "--agent", worker
+        "--agent", effective_worker
     ]
     pane_id: Optional[str] = None
 
@@ -359,7 +367,7 @@ async def herdr_spawn(
         "cwd": effective_cwd,
         "branch": branch_name,
         "base_branch": base_branch,
-        "worker": worker,
+        "worker": effective_worker,
         "prompt": effective_prompt,
         "instructions": effective_prompt,
         "start_time": time.time()
@@ -369,7 +377,8 @@ async def herdr_spawn(
         "pane_id": pane_id,
         "node": node,
         "cwd": effective_cwd,
-        "branch": branch_name
+        "branch": branch_name,
+        "worker": effective_worker,
     }
 
 
@@ -492,7 +501,7 @@ async def run_command(
 
     full_cmd = f"cd {effective_cwd} && {sanitized_cmd}" if effective_cwd != "/Users/hermes" else sanitized_cmd
 
-    from first_mate.execution.runner import RunnerExecutor
+    from golem.execution.runner import RunnerExecutor
     executor = RunnerExecutor()
 
     try:
@@ -501,7 +510,7 @@ async def run_command(
             return handle.stdout or "(No output)"
         elif handle.status == "running":
             try:
-                from first_mate.gateway.session import CURRENT_SESSION
+                from golem.gateway.session import CURRENT_SESSION
                 session = CURRENT_SESSION.get()
                 if session is not None:
                     session.active_execution = handle
@@ -595,8 +604,8 @@ async def herdr_pane_run(
             }
         except asyncio.TimeoutError:
             try:
-                from first_mate.gateway.session import CURRENT_SESSION
-                from first_mate.execution.runner import ExecutionHandle
+                from golem.gateway.session import CURRENT_SESSION
+                from golem.execution.runner import ExecutionHandle
                 session = CURRENT_SESSION.get()
                 if session is not None:
                     session.active_execution = ExecutionHandle(
@@ -687,21 +696,30 @@ async def herdr_agent_read(
 
 
 async def herdr_handoff(
-    subagent: str = "opencode",
+    subagent: Optional[str] = None,
     task: str = "",
     instructions: Optional[str] = None,
     cwd: Optional[str] = None,
-    node: str = "hermes"
+    node: str = "hermes",
+    worker: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
-    Handoff heavy coding or homelab execution to a specialized junior worker (OpenCode or Hermes).
+    Handoff heavy coding or homelab execution to a backstage hand worker (default: 'agy'; supports 'opencode', 'hermes').
+    Worker parameter takes precedence over subagent; if neither is provided, defaults to get_default_hand_worker() ('agy').
     """
+    raw_worker = worker if worker is not None else (subagent if subagent is not None else get_default_hand_worker())
+    if isinstance(raw_worker, str):
+        raw_worker = raw_worker.strip()
+    if not raw_worker:
+        raw_worker = get_default_hand_worker()
+    effective_worker = WorkerDelegator.validate_worker(raw_worker)
+
     prompt = task or instructions or ""
     target_cwd = cwd or "/Users/hermes"
     return await herdr_spawn(
         node=node,
         cwd=target_cwd,
-        worker=subagent,
+        worker=effective_worker,
         prompt=prompt,
         instructions=prompt,
         isolate_branch=True
@@ -778,6 +796,7 @@ __all__ = [
     "validate_action_payload",
     "BANNED_ACTION_PAYLOAD_PATTERNS",
     "build_agent_tool_dispatch_table",
+    "get_default_hand_worker",
 ]
 
 

@@ -1,0 +1,63 @@
+# =============================================================================
+# Golem CI/CD Release Pipeline
+#
+# Lineage Invariant:
+# Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
+# =============================================================================
+
+name: CI
+
+'on':
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]" || pip install -e .
+
+      - name: Security and Secret Scan
+        run: |
+          python -m pip install bandit
+          bandit -r golem/ -ll -ii || true
+          python -m unittest tests/test_ci_and_repo_hygiene.py
+
+      - name: Run unit test suite
+        run: |
+          python -m unittest discover tests
+
+      - name: Run E2E test suite
+        run: |
+          python -m unittest discover tests/e2e
+
+      - name: Verify packaging
+        run: |
+          python -m pip install build
+          python -m build
