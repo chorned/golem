@@ -47,11 +47,11 @@
             -webkit-user-select: none;
         }
 
-        /* Scanlines and CRT Curvature Overlay */
+        /* Scanlines and CRT Curvature Overlay (Confined to Background Mech) */
         .crt-overlay {
             position: absolute;
             inset: 0;
-            z-index: 50;
+            z-index: 2;
             pointer-events: none;
             background: linear-gradient(rgba(18, 16, 20, 0) 50%, rgba(0, 0, 0, 0.45) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.04), rgba(0, 255, 128, 0.02), rgba(0, 200, 255, 0.04));
             background-size: 100% 3px, 6px 100%;
@@ -400,39 +400,60 @@
             flex-direction: column;
             align-items: center;
             justify-content: space-between;
-            padding: 8px 36px 4px 36px;
-            overflow-y: auto;
-            overflow-x: hidden;
+            padding: 8px 36px 6px 36px;
+            overflow: hidden;
             max-width: 1400px;
             margin: 0 auto;
             width: 100%;
         }
 
-        /* Floating Sensory Stack (Face of Colossus) */
-        .sensory-stack {
+        /* Central Golem Facial Feature Anchor Matrix */
+        .golem-face-matrix {
+            position: relative;
+            width: 100%;
+            max-width: 960px;
             display: flex;
             flex-direction: column;
             align-items: center;
+            margin: 0 auto;
+            z-index: 20;
+            flex-shrink: 0;
+        }
+
+        .golem-anchor {
+            position: relative;
+            display: flex;
+            justify-content: center;
             width: 100%;
-            max-width: 680px;
-            gap: 6px;
-            margin-top: 4px;
+            transition: margin 0.15s ease-out;
+        }
+
+        .anchor-eyes {
+            max-width: 540px;
+            margin-top: clamp(16px, 8vh, 100px);
+        }
+
+        .anchor-nose {
+            max-width: 440px;
+            margin-top: clamp(40px, 15vh, 200px);
+        }
+
+        .anchor-mouth {
+            max-width: 540px;
+            margin-top: clamp(40px, 15vh, 200px);
         }
 
         .sensory-window {
             width: 100%;
         }
 
-        .sensory-body {
+        .compact-lead-body {
             font-family: var(--font-crt);
             font-size: 15px;
             line-height: 1.2;
             background: rgba(7, 9, 14, 0.95);
             padding: 6px 10px;
             color: #e2e8f0;
-            display: flex;
-            flex-direction: column;
-            gap: 4px;
             border-top: 1px solid #1e2430;
         }
 
@@ -446,27 +467,58 @@
             text-overflow: ellipsis;
         }
 
-        .sensory-sub-stream {
-            font-family: var(--font-crt);
-            font-size: 13px;
-            max-height: 60px;
-            overflow-y: auto;
-            padding-top: 4px;
-            border-top: 1px dashed rgba(255, 255, 255, 0.1);
-            color: #94a3b8;
+        .lead-info {
             display: flex;
-            flex-direction: column;
-            gap: 2px;
+            align-items: center;
+            gap: 6px;
+            overflow: hidden;
+            white-space: nowrap;
         }
 
-        .stream-entry {
-            white-space: pre-wrap;
-            word-break: break-all;
+        .lead-prefix {
+            color: #fb7185;
+            font-weight: bold;
         }
 
-        .stream-entry .ts {
-            color: #64748b;
-            margin-right: 6px;
+        .lead-text {
+            color: #4ade80;
+        }
+
+        .lead-conf {
+            color: var(--runic-cyan);
+            font-size: 13px;
+        }
+
+        .lead-detail {
+            color: #94a3b8;
+            font-size: 12px;
+        }
+
+        .lead-cyan {
+            color: var(--runic-cyan);
+        }
+
+        .lead-green {
+            color: var(--runic-green);
+        }
+
+        .lead-gold {
+            color: #fef08a;
+        }
+
+        .lead-speech {
+            color: #e2e8f0;
+            font-family: var(--font-space);
+            font-size: 13px;
+            text-overflow: ellipsis;
+            overflow: hidden;
+            white-space: nowrap;
+        }
+
+        .lead-actions {
+            display: flex;
+            align-items: center;
+            gap: 4px;
         }
 
         /* Equalizer graphic for Mouth */
@@ -494,8 +546,10 @@
             display: flex;
             flex-direction: column;
             gap: 4px;
-            margin-top: 6px;
+            margin-top: auto;
             margin-bottom: 4px;
+            z-index: 20;
+            flex-shrink: 0;
         }
 
         .hands-section-header {
@@ -514,6 +568,58 @@
             grid-template-columns: repeat(3, 1fr);
             gap: 8px;
             width: 100%;
+            min-height: 80px;
+        }
+
+        .hands-idle-card {
+            grid-column: 1 / -1;
+            background: rgba(9, 11, 16, 0.95);
+            border: 2px solid var(--border-red);
+            border-radius: 4px;
+            padding: 16px 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 
+                inset 1px 1px 0px rgba(255, 160, 160, 0.5),
+                inset -2px -2px 0px #240003,
+                0 8px 24px rgba(0, 0, 0, 0.95),
+                0 0 10px rgba(230, 0, 0, 0.15);
+            backdrop-filter: blur(8px);
+        }
+
+        .hands-idle-content {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 6px;
+            text-align: center;
+        }
+
+        .idle-title-line {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .idle-symbol {
+            font-size: 16px;
+            color: var(--runic-gold);
+        }
+
+        .idle-title-text {
+            font-family: var(--font-pixel);
+            font-size: 11px;
+            color: #fef08a;
+            letter-spacing: 1px;
+            text-shadow: 0 0 8px rgba(255, 215, 0, 0.5);
+        }
+
+        .idle-desc-text {
+            font-family: var(--font-crt);
+            font-size: 14px;
+            color: #94a3b8;
+            letter-spacing: 0.5px;
         }
 
         @media (max-width: 900px) {
@@ -754,14 +860,13 @@
     </style>
 </head>
 <body class="dark">
-    <!-- CRT Scanline Overlay -->
-    <div class="crt-overlay"></div>
-
     <!-- Background Image: Ancient Robotic Stone Golem Colossus -->
     <div class="colossus-backdrop">
         <img alt="Ancient Stone Colossus Mech" class="colossus-img" src="/colossus.png" />
         <div class="backdrop-vignette"></div>
         <div class="backdrop-radial"></div>
+        <!-- CRT Scanline Overlay applied ONLY to background image -->
+        <div class="crt-overlay"></div>
     </div>
 
     <!-- Left Girder Bevel (SNES arcade cabinet side trim) -->
@@ -833,229 +938,118 @@
     </header>
 
     <!-- Main Workspace Canvas & Floating Agent Terminal Matrix -->
-    <main class="workspace-canvas">
-        <div class="sensory-stack">
-            <!-- 1. Eye Agent Terminal (Positioned over glowing cyan runic eyes) -->
-            <article class="sensory-window arcade-window-red" id="eye-card">
-                <div class="arcade-header-red">
-                    <div style="display: flex; align-items: center; gap: 8px;">
-                        <span style="width: 8px; height: 8px; background: var(--runic-gold); border-radius: 50%; box-shadow: 0 0 6px var(--runic-gold);"></span>
-                        <span>Eye Agent</span>
-                        <span style="color: #fef08a; font-family: var(--font-space); font-size: 8px; font-weight: 600;">[OCULAR_STREAM]</span>
-                    </div>
-                    <div style="display: flex; align-items: center; gap: 8px; font-size: 9px;">
-                        <span id="eye-count-badge" class="status-pill-badge badge-cyan">0 EVENTS</span>
-                        <span id="eye-state-badge" class="status-pill-badge badge-green">IDLE</span>
-                        <span>_ □ ×</span>
-                    </div>
-                </div>
-                <div class="sensory-body">
-                    <div class="sensory-lead-row">
-                        <div style="display: flex; align-items: center; gap: 6px;">
-                            <span style="color: #fb7185; font-weight: bold;">&gt; DETECTED:</span>
-                            <span id="eye-lead-msg" style="color: #4ade80;">MULTIMODAL_FRAME_DIFF</span>
-                            <span id="eye-conf-msg" style="color: var(--runic-cyan); font-size: 13px;">[CONFIDENCE: 99.4%]</span>
-                            <span style="color: #64748b; font-size: 12px;">| BBOX: {x:140, y:88}</span>
+    <main class="workspace-canvas" id="workspace-canvas">
+        <!-- Central Golem Facial Feature Anchor Matrix -->
+        <div class="golem-face-matrix" id="golem-face-matrix">
+            <!-- 1. Eye Agent Terminal Anchor (Positioned directly over glowing cyan runic eyes) -->
+            <div class="golem-anchor anchor-eyes" id="anchor-eyes" data-anchor="eyes">
+                <article class="sensory-window arcade-window-red" id="eye-card">
+                    <div class="arcade-header-red">
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <span style="width: 8px; height: 8px; background: var(--runic-gold); border-radius: 50%; box-shadow: 0 0 6px var(--runic-gold);"></span>
+                            <span>Eye Agent</span>
+                            <span style="color: #fef08a; font-family: var(--font-space); font-size: 8px; font-weight: 600;">[OCULAR_STREAM]</span>
                         </div>
-                        <div style="display: flex; align-items: center; gap: 4px;">
-                            <span style="width: 8px; height: 8px; border-radius: 2px; background: var(--runic-cyan); box-shadow: 0 0 6px var(--runic-cyan);" class="pulse-cyan"></span>
-                            <span style="display: inline-block; width: 6px; height: 14px; background: #4ade80;" class="blink-caret"></span>
+                        <div style="display: flex; align-items: center; gap: 6px; font-size: 9px;">
+                            <span id="eye-count-badge" class="status-pill-badge badge-cyan" style="display: none;">0 EVENTS</span>
+                            <span id="eye-state-badge" class="status-pill-badge badge-green" style="display: none;">IDLE</span>
+                            <span style="cursor: pointer;">_</span>
+                            <span style="cursor: pointer;">□</span>
+                            <span style="cursor: pointer;">×</span>
                         </div>
                     </div>
-                    <div class="sensory-sub-stream" id="eye-stream">
-                        <div class="stream-entry"><span class="ts">[Init]</span>Eye task observer calibrated. Tailing ingress and buffer deltas...</div>
+                    <div class="compact-lead-body">
+                        <div class="sensory-lead-row">
+                            <div class="lead-info">
+                                <span class="lead-prefix">&gt; DETECTED:</span>
+                                <span id="eye-lead-msg" class="lead-text">MULTIMODAL_FRAME_DIFF</span>
+                                <span id="eye-conf-msg" class="lead-conf">[CONFIDENCE: 99.4%]</span>
+                                <span id="eye-bbox-msg" class="lead-detail">| BBOX: {x:140, y:88}</span>
+                            </div>
+                            <div class="lead-actions">
+                                <span style="width: 8px; height: 8px; border-radius: 2px; background: var(--runic-cyan); box-shadow: 0 0 6px var(--runic-cyan);" class="pulse-cyan"></span>
+                                <span style="display: inline-block; width: 6px; height: 14px; background: #4ade80;" class="blink-caret"></span>
+                            </div>
+                        </div>
                     </div>
-                </div>
-            </article>
+                </article>
+            </div>
 
-            <!-- 2. Nose Agent Terminal (Positioned over carved stone nose ridge) -->
-            <article class="sensory-window arcade-window-red" id="nose-card">
-                <div class="arcade-header-red">
-                    <div style="display: flex; align-items: center; gap: 8px;">
-                        <span style="width: 8px; height: 8px; background: var(--runic-cyan); border-radius: 50%; box-shadow: 0 0 6px var(--runic-cyan);"></span>
-                        <span>Nose Agent</span>
-                        <span style="color: #a5f3fc; font-family: var(--font-space); font-size: 8px; font-weight: 600;">[HEURISTIC_SNIFFER]</span>
-                    </div>
-                    <div style="display: flex; align-items: center; gap: 8px; font-size: 9px;">
-                        <span id="nose-quiescent-badge" class="status-pill-badge badge-green">Quiescent (0 tokens)</span>
-                        <span id="nose-status-badge" class="status-pill-badge badge-cyan">Clean</span>
-                        <span>_ □ ×</span>
-                    </div>
-                </div>
-                <div class="sensory-body">
-                    <div class="sensory-lead-row">
-                        <div style="display: flex; align-items: center; gap: 6px;">
-                            <span style="color: #fb7185; font-weight: bold;">&gt; SNIFF_LATENCY:</span>
-                            <span id="nose-latency-val" style="color: var(--runic-cyan);">0.02ms</span>
-                            <span id="nose-smell-val" style="color: var(--runic-green);">|| CODE_SMELL: CLEAN</span>
-                            <span style="color: #64748b; font-size: 12px;">| DRIFT: 0.00%</span>
+            <!-- 2. Nose Agent Terminal Anchor (Positioned directly over carved stone nose ridge) -->
+            <div class="golem-anchor anchor-nose" id="anchor-nose" data-anchor="nose">
+                <article class="sensory-window arcade-window-red" id="nose-card">
+                    <div class="arcade-header-red">
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <span style="width: 8px; height: 8px; background: var(--runic-cyan); border-radius: 50%; box-shadow: 0 0 6px var(--runic-cyan);"></span>
+                            <span>Nose Agent</span>
+                            <span style="color: #a5f3fc; font-family: var(--font-space); font-size: 8px; font-weight: 600;">[HEURISTIC_SNIFFER]</span>
                         </div>
-                        <span id="nose-active-pill" class="status-pill-badge badge-cyan">ACTIVE</span>
+                        <div style="display: flex; align-items: center; gap: 6px; font-size: 9px;">
+                            <span id="nose-quiescent-badge" class="status-pill-badge badge-green" style="display: none;">Quiescent (0 tokens)</span>
+                            <span id="nose-status-badge" class="status-pill-badge badge-cyan" style="display: none;">Clean</span>
+                            <span style="cursor: pointer;">_</span>
+                            <span style="cursor: pointer;">□</span>
+                            <span style="cursor: pointer;">×</span>
+                        </div>
                     </div>
-                    <div style="display: flex; gap: 16px; font-size: 13px; color: #cbd5e1; padding-top: 2px;">
-                        <div>DISK: <span id="disk-val" style="color: #38bdf8;">--%</span></div>
-                        <div>CONTAINERS: <span id="docker-val" style="color: var(--runic-green);">--</span></div>
-                        <div>TAILSCALE: <span id="tailscale-val" style="color: #facc15;">ONLINE</span></div>
-                        <div>ERRORS: <span id="error-count-val" style="color: #f87171;">0</span></div>
+                    <div class="compact-lead-body">
+                        <div class="sensory-lead-row">
+                            <div class="lead-info">
+                                <span class="lead-prefix">&gt; SNIFF_LATENCY:</span>
+                                <span id="nose-latency-val" class="lead-cyan">0.02ms</span>
+                                <span id="nose-smell-val" class="lead-green">|| CODE_SMELL: CLEAN</span>
+                                <span id="nose-drift-val" class="lead-detail">| DRIFT: 0.00%</span>
+                            </div>
+                            <span id="nose-active-pill" class="status-pill-badge badge-cyan">ACTIVE</span>
+                        </div>
                     </div>
-                </div>
-            </article>
+                </article>
+            </div>
 
-            <!-- 3. Mouth Agent Terminal (Positioned over magma tooth mechanical mouth) -->
-            <article class="sensory-window arcade-window-red" id="mouth-card">
-                <div class="arcade-header-red">
-                    <div style="display: flex; align-items: center; gap: 8px;">
-                        <span style="width: 8px; height: 8px; background: var(--runic-green); border-radius: 50%; box-shadow: 0 0 6px var(--runic-green);"></span>
-                        <span>Mouth Agent</span>
-                        <span style="color: #bbf7d0; font-family: var(--font-space); font-size: 8px; font-weight: 600;">[VOICE_SYNTH_DISPATCH]</span>
-                    </div>
-                    <div style="display: flex; align-items: center; gap: 8px; font-size: 9px;">
-                        <span id="mouth-model-badge" class="status-pill-badge badge-amber">gemini-3.8-flash</span>
-                        <span id="mouth-turns-badge" class="status-pill-badge badge-green">0 turns</span>
-                        <span>_ □ ×</span>
-                    </div>
-                </div>
-                <div class="sensory-body">
-                    <div class="sensory-lead-row">
-                        <div style="display: flex; align-items: center; gap: 6px; overflow: hidden;">
-                            <span style="color: #fb7185; font-weight: bold;">&gt; TTS_BUFFER:</span>
-                            <span style="color: #fef08a;">READY</span>
-                            <span id="mouth-briefing-lead" style="color: #e2e8f0; font-family: var(--font-space); font-size: 13px; text-overflow: ellipsis; overflow: hidden; white-space: nowrap;">&gt; "Pipeline execution armed and ready."</span>
+            <!-- 3. Mouth Agent Terminal Anchor (Positioned directly over magma tooth mechanical mouth) -->
+            <div class="golem-anchor anchor-mouth" id="anchor-mouth" data-anchor="mouth">
+                <article class="sensory-window arcade-window-red" id="mouth-card">
+                    <div class="arcade-header-red">
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <span style="width: 8px; height: 8px; background: var(--runic-green); border-radius: 50%; box-shadow: 0 0 6px var(--runic-green);"></span>
+                            <span>Mouth Agent</span>
+                            <span style="color: #bbf7d0; font-family: var(--font-space); font-size: 8px; font-weight: 600;">[VOICE_SYNTH_DISPATCH]</span>
                         </div>
-                        <div class="eq-graphic">
-                            <span class="eq-bar eq-1" style="background: var(--runic-cyan);"></span>
-                            <span class="eq-bar eq-2" style="background: var(--runic-green);"></span>
-                            <span class="eq-bar eq-3" style="background: var(--runic-gold);"></span>
-                            <span class="eq-bar eq-1" style="background: var(--runic-red);"></span>
+                        <div style="display: flex; align-items: center; gap: 6px; font-size: 9px;">
+                            <span id="mouth-model-badge" class="status-pill-badge badge-amber" style="display: none;">gemini-3.8-flash</span>
+                            <span id="mouth-turns-badge" class="status-pill-badge badge-green" style="display: none;">0 turns</span>
+                            <span style="cursor: pointer;">_</span>
+                            <span style="cursor: pointer;">□</span>
+                            <span style="cursor: pointer;">×</span>
                         </div>
                     </div>
-                    <div class="sensory-sub-stream" id="mouth-stream">
-                        <div class="stream-entry"><span class="ts">[Init]</span>Mouth liaison active. Sub-second response engine ready.</div>
+                    <div class="compact-lead-body">
+                        <div class="sensory-lead-row">
+                            <div class="lead-info">
+                                <span class="lead-prefix">&gt; TTS_BUFFER:</span>
+                                <span id="mouth-tts-state" class="lead-gold">READY</span>
+                                <span id="mouth-briefing-lead" class="lead-speech">&gt; "Pipeline execution armed and ready."</span>
+                            </div>
+                            <div class="eq-graphic">
+                                <span class="eq-bar eq-1" style="background: var(--runic-cyan);"></span>
+                                <span class="eq-bar eq-2" style="background: var(--runic-green);"></span>
+                                <span class="eq-bar eq-3" style="background: var(--runic-gold);"></span>
+                                <span class="eq-bar eq-1" style="background: var(--runic-red);"></span>
+                            </div>
+                        </div>
                     </div>
-                </div>
-            </article>
+                </article>
+            </div>
         </div>
 
         <!-- 4. Hand Agents Grid (Cradled in the Colossus Stone Palms) -->
-        <section class="hands-section">
+        <section class="hands-section" id="hands-section" data-anchor="hands">
             <div class="hands-section-header">
                 <span>🖐️ Hand Agents Grid [CHEST &amp; GAUNTLET CLUSTER]</span>
-                <span id="hands-count-badge" class="status-pill-badge badge-amber">6 GAUNTLETS ONLINE</span>
+                <span id="hands-count-badge" class="status-pill-badge badge-amber">IDLE</span>
             </div>
             <div class="hands-grid" id="hands-grid">
-                <!-- [HAND AGENT 01] -->
-                <article class="hand-card arcade-window-red" id="hand-pane-1">
-                    <div class="arcade-header-red">
-                        <div style="display: flex; align-items: center; gap: 6px;">
-                            <span style="width: 6px; height: 6px; background: var(--runic-gold); border-radius: 50%;"></span>
-                            <span>Hand 01 [L_GAUNTLET]</span>
-                        </div>
-                        <span class="status-pill-badge badge-amber">PYTEST</span>
-                    </div>
-                    <div class="hand-card-body">
-                        <div class="hand-card-cmd" style="color: var(--runic-green);">&gt; pytest tests/colossus.py</div>
-                        <div class="hand-card-terminal">running test_runic_bus...&#10;&gt;&gt; 3 passed, 0 failed [14ms]</div>
-                        <div class="hand-card-footer">
-                            <span>STATUS: IDLE</span>
-                            <span class="status-pill-badge badge-green">EXIT_0</span>
-                        </div>
-                    </div>
-                </article>
-
-                <!-- [HAND AGENT 02] -->
-                <article class="hand-card arcade-window-red" id="hand-pane-2">
-                    <div class="arcade-header-red">
-                        <div style="display: flex; align-items: center; gap: 6px;">
-                            <span style="width: 6px; height: 6px; background: var(--runic-cyan); border-radius: 50%;"></span>
-                            <span>Hand 02 [L_CORE]</span>
-                        </div>
-                        <span class="status-pill-badge badge-cyan">DOM_WORKER</span>
-                    </div>
-                    <div class="hand-card-body">
-                        <div class="hand-card-cmd" style="color: var(--runic-cyan);">&gt; git commit -m 'sync'</div>
-                        <div class="hand-card-terminal">DOM nodes injected: 14&#10;&gt;&gt; Virtual DOM hydrated</div>
-                        <div class="hand-card-footer">
-                            <span>WORKER: ACTIVE</span>
-                            <span class="status-pill-badge badge-cyan">RE-RENDER</span>
-                        </div>
-                    </div>
-                </article>
-
-                <!-- [HAND AGENT 03] -->
-                <article class="hand-card arcade-window-red" id="hand-pane-3">
-                    <div class="arcade-header-red">
-                        <div style="display: flex; align-items: center; gap: 6px;">
-                            <span style="width: 6px; height: 6px; background: var(--runic-gold); border-radius: 50%;"></span>
-                            <span>Hand 03 [L_CLAW]</span>
-                        </div>
-                        <span class="status-pill-badge badge-amber">SQL_RUNES</span>
-                    </div>
-                    <div class="hand-card-body">
-                        <div class="hand-card-cmd" style="color: var(--runic-gold);">&gt; VACUUM ANALYZE runes;</div>
-                        <div class="hand-card-terminal">Indexed 2,048 records&#10;&gt;&gt; Query duration: 1.2ms</div>
-                        <div class="hand-card-footer">
-                            <span>DB: ONLINE</span>
-                            <span class="status-pill-badge badge-amber">COMMITTED</span>
-                        </div>
-                    </div>
-                </article>
-
-                <!-- [HAND AGENT 04] -->
-                <article class="hand-card arcade-window-red" id="hand-pane-4">
-                    <div class="arcade-header-red">
-                        <div style="display: flex; align-items: center; gap: 6px;">
-                            <span style="width: 6px; height: 6px; background: var(--runic-red); border-radius: 50%;"></span>
-                            <span>Hand 04 [R_GAUNTLET]</span>
-                        </div>
-                        <span class="status-pill-badge badge-red">BASH_SHELL</span>
-                    </div>
-                    <div class="hand-card-body">
-                        <div class="hand-card-cmd" style="color: #f87171;">&gt; docker exec -it golem</div>
-                        <div class="hand-card-terminal">spawn PID 4409 [pts/2]&#10;&gt;&gt; ready for instruction...</div>
-                        <div class="hand-card-footer">
-                            <span>TTY: ATTACHED</span>
-                            <span style="display: inline-block; width: 6px; height: 8px; background: #f87171;" class="blink-caret"></span>
-                        </div>
-                    </div>
-                </article>
-
-                <!-- [HAND AGENT 05] -->
-                <article class="hand-card arcade-window-red" id="hand-pane-5">
-                    <div class="arcade-header-red">
-                        <div style="display: flex; align-items: center; gap: 6px;">
-                            <span style="width: 6px; height: 6px; background: var(--runic-green); border-radius: 50%;"></span>
-                            <span>Hand 05 [R_CORE]</span>
-                        </div>
-                        <span class="status-pill-badge badge-green">AST_LINTER</span>
-                    </div>
-                    <div class="hand-card-body">
-                        <div class="hand-card-cmd" style="color: var(--runic-green);">&gt; tree-walk lint --strict</div>
-                        <div class="hand-card-terminal">Found 0 syntax errors&#10;&gt;&gt; 1 warn: unused rune ref</div>
-                        <div class="hand-card-footer">
-                            <span>LINT: VALID</span>
-                            <span class="status-pill-badge badge-green">100% PASS</span>
-                        </div>
-                    </div>
-                </article>
-
-                <!-- [HAND AGENT 06] -->
-                <article class="hand-card arcade-window-red" id="hand-pane-6">
-                    <div class="arcade-header-red">
-                        <div style="display: flex; align-items: center; gap: 6px;">
-                            <span style="width: 6px; height: 6px; background: #c084fc; border-radius: 50%;"></span>
-                            <span>Hand 06 [R_CLAW]</span>
-                        </div>
-                        <span class="status-pill-badge badge-purple">WEBSOCKET</span>
-                    </div>
-                    <div class="hand-card-body">
-                        <div class="hand-card-cmd" style="color: #c084fc;">&gt; ws://broadcast.stone:9</div>
-                        <div class="hand-card-terminal">PING latency 12ms&#10;&gt;&gt; 142.8 Tok/s</div>
-                        <div class="hand-card-footer">
-                            <span>STREAM: SYNC</span>
-                            <span class="status-pill-badge badge-purple">PUMPING</span>
-                        </div>
-                    </div>
-                </article>
+                <!-- Dynamically populated: "The Hands are Idle" placeholder or active cards -->
             </div>
         </section>
     </main>
@@ -1112,8 +1106,10 @@
             const eyeStateBadge = document.getElementById('eye-state-badge');
             const eyeLeadMsg = document.getElementById('eye-lead-msg');
             const eyeConfMsg = document.getElementById('eye-conf-msg');
+            const eyeBboxMsg = document.getElementById('eye-bbox-msg');
             const noseLatencyVal = document.getElementById('nose-latency-val');
             const noseSmellVal = document.getElementById('nose-smell-val');
+            const noseDriftVal = document.getElementById('nose-drift-val');
             const noseQuiescentBadge = document.getElementById('nose-quiescent-badge');
             const noseStatusBadge = document.getElementById('nose-status-badge');
             const diskVal = document.getElementById('disk-val');
@@ -1123,6 +1119,7 @@
             const mouthModelBadge = document.getElementById('mouth-model-badge');
             const mouthTurnsBadge = document.getElementById('mouth-turns-badge');
             const mouthBriefingLead = document.getElementById('mouth-briefing-lead');
+            const mouthTtsState = document.getElementById('mouth-tts-state');
             const handsCountBadge = document.getElementById('hands-count-badge');
             const manaBar = document.getElementById('mana-bar');
             const manaVal = document.getElementById('mana-val');
@@ -1138,6 +1135,50 @@
             let isPaused = false;
             let eventSource = null;
             const activeHands = new Map();
+
+            // Face Landmark Alignment: Pixel-anchors terminals to Golem eyes, nose, and mouth
+            function alignFaceAnchors() {
+                const W = window.innerWidth;
+                const H = window.innerHeight;
+                const hud = document.querySelector('header.arcade-hud');
+                const hudH = hud ? hud.offsetHeight : 48;
+                const imgRatio = 512 / 286;
+                const winRatio = W / H;
+
+                let renderedH, offsetY;
+                if (winRatio > imgRatio) {
+                    renderedH = W / imgRatio;
+                    offsetY = (H - renderedH) / 2;
+                } else {
+                    renderedH = H;
+                    offsetY = 0;
+                }
+
+                // Landmark percentages from colossus.png & stitch_reference/screen.png:
+                // Eye header: 11.25%, Nose header: 30.08%, Mouth header: 48.83%
+                const eyeTargetY = Math.max(hudH + 8, offsetY + renderedH * 0.1125);
+                const noseTargetY = Math.max(eyeTargetY + 54, offsetY + renderedH * 0.3008);
+                const mouthTargetY = Math.max(noseTargetY + 54, offsetY + renderedH * 0.4883);
+
+                const anchorEyes = document.getElementById('anchor-eyes');
+                const anchorNose = document.getElementById('anchor-nose');
+                const anchorMouth = document.getElementById('anchor-mouth');
+
+                if (anchorEyes && anchorNose && anchorMouth) {
+                    const eyeMargin = Math.max(8, eyeTargetY - hudH);
+                    const eyeCardH = anchorEyes.offsetHeight || 46;
+                    const noseMargin = Math.max(20, noseTargetY - eyeTargetY - eyeCardH);
+                    const noseCardH = anchorNose.offsetHeight || 46;
+                    const mouthMargin = Math.max(20, mouthTargetY - noseTargetY - noseCardH);
+
+                    anchorEyes.style.marginTop = `${Math.round(eyeMargin)}px`;
+                    anchorNose.style.marginTop = `${Math.round(noseMargin)}px`;
+                    anchorMouth.style.marginTop = `${Math.round(mouthMargin)}px`;
+                }
+            }
+
+            window.addEventListener('resize', alignFaceAnchors);
+            window.addEventListener('DOMContentLoaded', alignFaceAnchors);
 
             function formatTime() {
                 const now = new Date();
@@ -1165,89 +1206,208 @@
 
             function updateNoseData(data) {
                 if (!data) return;
-                if (data.disk) {
+                if (data.sniff_latency_ms !== undefined && noseLatencyVal) {
+                    noseLatencyVal.textContent = `${Number(data.sniff_latency_ms).toFixed(2)}ms`;
+                }
+                if (data.drift_percent !== undefined && noseDriftVal) {
+                    noseDriftVal.textContent = `| DRIFT: ${Number(data.drift_percent).toFixed(2)}%`;
+                }
+                if (noseSmellVal) {
+                    if (data.smells_off) {
+                        noseSmellVal.textContent = '|| CODE_SMELL: ALERT';
+                        noseSmellVal.style.color = 'var(--runic-red)';
+                    } else {
+                        noseSmellVal.textContent = '|| CODE_SMELL: CLEAN';
+                        noseSmellVal.style.color = 'var(--runic-green)';
+                    }
+                }
+                if (noseStatusBadge) {
+                    if (data.smells_off) {
+                        noseStatusBadge.textContent = 'Anomaly';
+                        noseStatusBadge.className = 'status-pill-badge badge-red';
+                    } else {
+                        noseStatusBadge.textContent = 'Clean';
+                        noseStatusBadge.className = 'status-pill-badge badge-cyan';
+                    }
+                }
+                if (data.disk && diskVal) {
                     const pct = data.disk.percent_used || data.disk.percent || 0;
                     diskVal.textContent = `${pct.toFixed(0)}%`;
                 }
-                if (data.docker) {
+                if (data.docker && dockerVal) {
                     const count = data.docker.container_count !== undefined ? data.docker.container_count : (data.docker.containers ? data.docker.containers.length : 0);
                     dockerVal.textContent = `${count}`;
                 }
-                if (data.tailscale) {
+                if (data.tailscale && tailscaleVal) {
                     tailscaleVal.textContent = data.tailscale.online ? 'ONLINE' : 'OFFLINE';
                 }
-                if (data.smells_off) {
-                    noseStatusBadge.textContent = 'Anomaly';
-                    noseStatusBadge.className = 'status-pill-badge badge-red';
-                    noseSmellVal.textContent = '|| CODE_SMELL: ALERT';
-                    noseSmellVal.style.color = 'var(--runic-red)';
-                } else {
-                    noseStatusBadge.textContent = 'Clean';
-                    noseStatusBadge.className = 'status-pill-badge badge-cyan';
-                    noseSmellVal.textContent = '|| CODE_SMELL: CLEAN';
-                    noseSmellVal.style.color = 'var(--runic-green)';
+                if (data.recent_error_count !== undefined && errorCountVal) {
+                    errorCountVal.textContent = `${data.recent_error_count}`;
                 }
-                const errs = data.recent_error_count !== undefined ? data.recent_error_count : (data.error_count || 0);
-                errorCountVal.textContent = `${errs}`;
             }
 
-            function getOrCreateDynamicHand(paneId, node, command, pid) {
-                if (activeHands.has(paneId)) {
-                    return activeHands.get(paneId);
-                }
-                const card = document.createElement('article');
-                card.className = 'hand-card arcade-window-red';
-                card.id = `dyn-hand-${paneId}`;
-                card.innerHTML = `
-                    <div class="arcade-header-red">
-                        <div style="display: flex; align-items: center; gap: 6px;">
-                            <span style="width: 6px; height: 6px; background: var(--runic-cyan); border-radius: 50%;"></span>
-                            <span>${paneId} [${node || 'local'}]</span>
-                        </div>
-                        <span class="status-pill-badge badge-cyan">PID:${pid || '--'}</span>
-                    </div>
-                    <div class="hand-card-body">
-                        <div class="hand-card-cmd" style="color: var(--runic-cyan);">&gt; ${command || 'Task'}</div>
-                        <div class="hand-card-terminal"></div>
-                        <div class="hand-card-footer">
-                            <span class="worker-state">RUNNING</span>
-                            <span class="status-pill-badge badge-cyan status-badge">RUNNING</span>
+            // Hand Agents State Management
+            function getIdleCardHtml() {
+                return `
+                    <div class="hands-idle-card" id="hands-idle-placeholder">
+                        <div class="hands-idle-content">
+                            <div class="idle-title-line">
+                                <span class="idle-symbol">⏳</span>
+                                <span class="idle-title-text text-glow-gold">THE HANDS ARE IDLE</span>
+                                <span class="idle-symbol">⏳</span>
+                            </div>
+                            <div class="idle-desc-text">
+                                &gt; No active gauntlets deployed. Standby mode engaged in Stone Palms.
+                            </div>
+                            <div style="font-size: 10px; color: #64748b; font-family: var(--font-pixel); margin-top: 4px;">
+                                PRESS [START] TO EXECUTE PIPELINE OR DISPATCH TASKS VIA FIRST MATE
+                            </div>
                         </div>
                     </div>
                 `;
-                // Replace or prepend in handsGrid
-                handsGrid.prepend(card);
-                activeHands.set(paneId, card);
-                handsCountBadge.textContent = `${activeHands.size + 6} GAUNTLETS ONLINE`;
+            }
+
+            function renderHandsState() {
+                if (!handsGrid) return;
+                const count = activeHands.size;
+
+                if (count === 0) {
+                    handsGrid.style.gridTemplateColumns = '1fr';
+                    handsGrid.innerHTML = getIdleCardHtml();
+                    if (handsCountBadge) {
+                        handsCountBadge.textContent = 'IDLE';
+                        handsCountBadge.className = 'status-pill-badge badge-amber';
+                    }
+                    return;
+                }
+
+                // Hand agents are actively deployed
+                const idleEl = document.getElementById('hands-idle-placeholder');
+                if (idleEl) idleEl.remove();
+
+                if (count === 1) {
+                    handsGrid.style.gridTemplateColumns = 'minmax(0, 520px)';
+                    handsGrid.style.justifyContent = 'center';
+                } else if (count === 2) {
+                    handsGrid.style.gridTemplateColumns = 'repeat(2, minmax(0, 500px))';
+                    handsGrid.style.justifyContent = 'center';
+                } else {
+                    handsGrid.style.gridTemplateColumns = 'repeat(3, minmax(0, 1fr))';
+                    handsGrid.style.justifyContent = 'stretch';
+                }
+
+                if (handsCountBadge) {
+                    handsCountBadge.textContent = `${count} GAUNTLET${count > 1 ? 'S' : ''} ONLINE`;
+                    handsCountBadge.className = 'status-pill-badge badge-green';
+                }
+            }
+
+            function getOrCreateHandCard(h) {
+                const paneId = h.pane_id;
+                if (activeHands.has(paneId)) {
+                    const item = activeHands.get(paneId);
+                    Object.assign(item, h);
+                    updateCardUi(item);
+                    return item.el;
+                }
+
+                // Determine tag badge
+                let tag = 'WORKER';
+                const cmd = (h.command || '').toLowerCase();
+                if (cmd.includes('pytest') || cmd.includes('test')) tag = 'PYTEST';
+                else if (cmd.includes('git')) tag = 'GIT_OPS';
+                else if (cmd.includes('docker')) tag = 'CONTAINER';
+                else if (cmd.includes('lint')) tag = 'LINTER';
+                else if (cmd.includes('df') || cmd.includes('sniff')) tag = 'DIAGNOSTIC';
+                else if (cmd.includes('mesh') || cmd.includes('ws')) tag = 'WEBSOCKET';
+
+                const card = document.createElement('article');
+                card.className = 'hand-card arcade-window-red';
+                card.id = `dyn-hand-${paneId.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+                card.innerHTML = `
+                    <div class="arcade-header-red">
+                        <div style="display: flex; align-items: center; gap: 6px;">
+                            <span style="width: 6px; height: 6px; background: var(--runic-gold); border-radius: 50%; box-shadow: 0 0 6px var(--runic-gold);"></span>
+                            <span class="hand-card-title">${h.pane_id}</span>
+                        </div>
+                        <span class="status-pill-badge badge-red hand-card-tag" style="border-color: #b91c1c; color: var(--runic-gold); font-size: 8px;">${tag}</span>
+                    </div>
+                    <div class="hand-card-body">
+                        <div class="hand-card-cmd" style="color: var(--runic-cyan);">&gt; ${h.command || 'Task'}</div>
+                        <div class="hand-card-terminal"></div>
+                        <div class="hand-card-footer">
+                            <span class="worker-state" style="color: #94a3b8;">${h.status || 'RUNNING'}</span>
+                            <span class="status-pill-badge badge-cyan status-badge">${h.status || 'RUNNING'}</span>
+                        </div>
+                    </div>
+                `;
+
+                const term = card.querySelector('.hand-card-terminal');
+                if (h.buffer_tail && term) {
+                    term.textContent = h.buffer_tail;
+                    term.scrollTop = term.scrollHeight;
+                }
+
+                const item = {
+                    ...h,
+                    el: card
+                };
+                activeHands.set(paneId, item);
+                renderHandsState();
+
+                const idleEl = document.getElementById('hands-idle-placeholder');
+                if (idleEl) idleEl.remove();
+
+                handsGrid.appendChild(card);
                 return card;
             }
+
+            function updateCardUi(item) {
+                if (!item || !item.el) return;
+                const term = item.el.querySelector('.hand-card-terminal');
+                if (term && item.buffer_tail !== undefined) {
+                    term.textContent = item.buffer_tail;
+                    term.scrollTop = term.scrollHeight;
+                }
+                const stateEl = item.el.querySelector('.worker-state');
+                const badgeEl = item.el.querySelector('.status-badge');
+                if (stateEl && item.status) stateEl.textContent = item.status;
+                if (badgeEl && item.status) {
+                    badgeEl.textContent = item.status;
+                    if (item.status === 'EXIT_0' || item.status === 'SUCCESS') {
+                        badgeEl.className = 'status-pill-badge badge-green status-badge';
+                    } else if (item.status === 'FAILED') {
+                        badgeEl.className = 'status-pill-badge badge-red status-badge';
+                    } else {
+                        badgeEl.className = 'status-pill-badge badge-cyan status-badge';
+                    }
+                }
+            }
+
+            // Initial render: Hands are idle
+            renderHandsState();
 
             // Hydrate REST snapshot from /api/status
             fetch('/api/status')
                 .then(r => r.json())
                 .then(data => {
-                    if (data.port) portDisplay.textContent = data.port;
-                    if (data.uptime_formatted) uptimeDisplay.textContent = data.uptime_formatted;
+                    if (data.port && portDisplay) portDisplay.textContent = data.port;
+                    if (data.uptime_formatted && uptimeDisplay) uptimeDisplay.textContent = data.uptime_formatted;
                     if (data.nose) updateNoseData(data.nose);
-                    if (data.eyes && data.eyes.state) {
+                    if (data.eyes && data.eyes.state && eyeStateBadge) {
                         eyeStateBadge.textContent = data.eyes.state.toUpperCase();
                     }
                     if (data.mouth) {
-                        if (data.mouth.model) mouthModelBadge.textContent = data.mouth.model;
-                        if (data.mouth.active_turns) {
+                        if (data.mouth.model && mouthModelBadge) mouthModelBadge.textContent = data.mouth.model;
+                        if (data.mouth.active_turns && mouthTurnsBadge) {
                             mouthTurns = data.mouth.active_turns;
                             mouthTurnsBadge.textContent = `${mouthTurns} turns`;
                         }
                     }
-                    if (Array.isArray(data.hands)) {
-                        data.hands.forEach(h => {
-                            const card = getOrCreateDynamicHand(h.pane_id, h.node, h.command, h.pid);
-                            if (h.buffer_tail) {
-                                const term = card.querySelector('.hand-card-terminal');
-                                term.textContent = h.buffer_tail;
-                            }
-                        });
+                    if (Array.isArray(data.hands) && data.hands.length > 0) {
+                        data.hands.forEach(h => getOrCreateHandCard(h));
                     }
+                    alignFaceAnchors();
                 })
                 .catch(() => {});
 
@@ -1277,26 +1437,37 @@
                 eventSource.addEventListener('heartbeat', function(e) {
                     try {
                         const data = JSON.parse(e.data);
-                        if (data.uptime_formatted) uptimeDisplay.textContent = data.uptime_formatted;
+                        if (data.uptime_formatted && uptimeDisplay) uptimeDisplay.textContent = data.uptime_formatted;
                         // Mana shimmer
                         manaTokens = Math.min(10000, manaTokens + Math.floor(Math.random() * 5));
-                        manaBar.style.width = `${(manaTokens / 100).toFixed(0)}%`;
-                        manaVal.textContent = `${manaTokens.toLocaleString()}/10k`;
+                        if (manaBar) manaBar.style.width = `${(manaTokens / 100).toFixed(0)}%`;
+                        if (manaVal) manaVal.textContent = `${manaTokens.toLocaleString()}/10k`;
                     } catch (_) {}
                 });
 
                 eventSource.addEventListener('eye_log', function(e) {
                     eyeCount++;
-                    eyeCountBadge.textContent = `${eyeCount} EVENTS`;
+                    if (eyeCountBadge) eyeCountBadge.textContent = `${eyeCount} EVENTS`;
                     try {
                         const data = JSON.parse(e.data);
                         const msg = data.message || data.text || JSON.stringify(data);
-                        eyeLeadMsg.textContent = msg.slice(0, 32);
+                        if (eyeLeadMsg) eyeLeadMsg.textContent = msg.slice(0, 36);
+                        if (data.sha && eyeBboxMsg) eyeBboxMsg.textContent = `| SHA: ${data.sha.slice(0, 8)}`;
+                        if (data.confidence && eyeConfMsg) eyeConfMsg.textContent = `[CONFIDENCE: ${(data.confidence * 100).toFixed(1)}%]`;
                         appendStreamLog(eyeStream, `• ${msg}`);
-                        if (data.state) eyeStateBadge.textContent = data.state.toUpperCase();
+                        if (data.state && eyeStateBadge) eyeStateBadge.textContent = data.state.toUpperCase();
                     } catch (_) {
                         appendStreamLog(eyeStream, `• ${e.data}`);
                     }
+                });
+
+                eventSource.addEventListener('eye_telemetry', function(e) {
+                    try {
+                        const data = JSON.parse(e.data);
+                        if (data.state && eyeStateBadge) eyeStateBadge.textContent = data.state.toUpperCase();
+                        if (data.last_diff && eyeLeadMsg) eyeLeadMsg.textContent = data.last_diff.slice(0, 36);
+                        if (data.buffer_hash && eyeBboxMsg) eyeBboxMsg.textContent = `| SHA: ${data.buffer_hash.slice(0, 8)}`;
+                    } catch (_) {}
                 });
 
                 eventSource.addEventListener('nose_telemetry', function(e) {
@@ -1308,43 +1479,86 @@
 
                 eventSource.addEventListener('mouth_briefing', function(e) {
                     mouthTurns++;
-                    mouthTurnsBadge.textContent = `${mouthTurns} turns`;
+                    if (mouthTurnsBadge) mouthTurnsBadge.textContent = `${mouthTurns} turns`;
                     try {
                         const data = JSON.parse(e.data);
                         const txt = data.briefing || data.text || JSON.stringify(data);
-                        mouthBriefingLead.textContent = `> "${txt.slice(0, 48)}..."`;
+                        if (mouthBriefingLead) mouthBriefingLead.textContent = `> "${txt.slice(0, 56)}..."`;
+                        if (mouthTtsState) {
+                            mouthTtsState.textContent = 'SPEAKING';
+                            mouthTtsState.style.color = 'var(--runic-cyan)';
+                            setTimeout(() => {
+                                mouthTtsState.textContent = 'READY';
+                                mouthTtsState.style.color = 'var(--runic-gold)';
+                            }, 3000);
+                        }
                         appendStreamLog(mouthStream, `> ${txt}`, 'var(--runic-gold)');
                     } catch (_) {
                         appendStreamLog(mouthStream, `> ${e.data}`, 'var(--runic-gold)');
                     }
                 });
 
+                eventSource.addEventListener('mouth_telemetry', function(e) {
+                    try {
+                        const data = JSON.parse(e.data);
+                        if (data.model && mouthModelBadge) mouthModelBadge.textContent = data.model;
+                        if (data.active_turns !== undefined && mouthTurnsBadge) {
+                            mouthTurns = data.active_turns;
+                            mouthTurnsBadge.textContent = `${mouthTurns} turns`;
+                        }
+                    } catch (_) {}
+                });
+
                 eventSource.addEventListener('hand_spawn', function(e) {
                     try {
                         const data = JSON.parse(e.data);
-                        getOrCreateDynamicHand(data.pane_id, data.node, data.command, data.pid);
+                        getOrCreateHandCard(data);
                     } catch (_) {}
                 });
 
                 eventSource.addEventListener('hand_buffer', function(e) {
                     try {
                         const data = JSON.parse(e.data);
-                        const card = getOrCreateDynamicHand(data.pane_id, data.node, data.command, data.pid);
-                        const term = card.querySelector('.hand-card-terminal');
-                        term.textContent += (data.delta || data.text || '');
-                        term.scrollTop = term.scrollHeight;
+                        const item = activeHands.get(data.pane_id);
+                        if (item) {
+                            item.buffer_tail = (item.buffer_tail || '') + (data.delta || data.text || '');
+                            updateCardUi(item);
+                        } else {
+                            getOrCreateHandCard({
+                                pane_id: data.pane_id,
+                                command: data.command || 'Task',
+                                buffer_tail: data.delta || '',
+                                status: 'RUNNING'
+                            });
+                        }
                     } catch (_) {}
                 });
 
                 eventSource.addEventListener('hand_settle', function(e) {
                     try {
                         const data = JSON.parse(e.data);
-                        const card = activeHands.get(data.pane_id);
-                        if (card) {
-                            const badge = card.querySelector('.status-badge');
-                            const status = data.status || (data.exit_code === 0 ? 'EXIT_0' : 'FAILED');
-                            badge.textContent = status;
-                            badge.className = `status-pill-badge ${data.exit_code === 0 ? 'badge-green' : 'badge-red'}`;
+                        const item = activeHands.get(data.pane_id);
+                        if (item) {
+                            item.status = data.status || (data.exit_code === 0 ? 'EXIT_0' : 'FAILED');
+                            item.exit_code = data.exit_code;
+                            updateCardUi(item);
+                        }
+                    } catch (_) {}
+                });
+
+                eventSource.addEventListener('hands_status', function(e) {
+                    try {
+                        const list = JSON.parse(e.data);
+                        if (Array.isArray(list)) {
+                            const currentIds = new Set(list.map(h => h.pane_id));
+                            for (const [id, item] of activeHands.entries()) {
+                                if (!currentIds.has(id)) {
+                                    if (item.el) item.el.remove();
+                                    activeHands.delete(id);
+                                }
+                            }
+                            list.forEach(h => getOrCreateHandCard(h));
+                            renderHandsState();
                         }
                     } catch (_) {}
                 });
@@ -1374,9 +1588,23 @@
                 }
             });
 
-            btnStart.addEventListener('click', function() {
-                appendStreamLog(mouthStream, '> [PIPELINE] Execution triggered. Mesh nodes synchronized.', 'var(--runic-green)');
-                mouthBriefingLead.textContent = '> "Pipeline triggered. Executing all tasks."';
+            btnStart.addEventListener('click', async function() {
+                btnStart.style.filter = 'brightness(1.4)';
+                if (mouthBriefingLead) mouthBriefingLead.textContent = '> "Pipeline execution armed and dispatched across gauntlets."';
+                if (mouthTtsState) {
+                    mouthTtsState.textContent = 'DISPATCH';
+                    mouthTtsState.style.color = 'var(--runic-cyan)';
+                }
+
+                try {
+                    const resp = await fetch('/api/pipeline/run', { method: 'POST' });
+                    const res = await resp.json();
+                    console.log('[Pipeline Triggered]', res);
+                } catch (err) {
+                    console.error('[Pipeline Trigger Error]', err);
+                } finally {
+                    setTimeout(() => { btnStart.style.filter = ''; }, 350);
+                }
             });
 
             overclockBtn.addEventListener('click', function() {
@@ -1401,6 +1629,7 @@
             });
 
             connectSSE();
+            setTimeout(alignFaceAnchors, 50);
         })();
     </script>
 </body>
