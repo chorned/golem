@@ -506,137 +506,78 @@
             width: 100%;
         }
 
-        .sensory-lead-body {
+        .sensory-lead-body,
+        .terminal-body {
             font-family: var(--font-crt);
-            font-size: 14px;
-            line-height: 1.35;
+            font-size: 12px;
+            line-height: 1.4;
             background: rgba(7, 9, 14, 0.95);
-            padding: 6px 10px 8px 10px;
-            color: #e2e8f0;
+            padding: 8px 10px;
+            color: #cbd5e1;
             border-top: 1px solid #1e2430;
             display: flex;
             flex-direction: column;
-            gap: 2px;
+            gap: 3px;
             min-height: 84px;
+            max-height: 84px;
+            overflow-y: auto;
+            overflow-x: hidden;
+            user-select: text !important;
+            -webkit-user-select: text !important;
+            cursor: text;
         }
 
-        .terminal-log-row {
+        .terminal-log-line {
             font-family: var(--font-crt);
-            font-size: 13px;
-            line-height: 1.3;
+            font-size: 12px;
+            line-height: 1.35;
             color: #94a3b8;
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
-            display: flex;
-            align-items: center;
-            gap: 6px;
+            user-select: text !important;
+            -webkit-user-select: text !important;
+            cursor: text;
         }
 
-        .terminal-log-stream {
-            font-family: var(--font-crt);
-            font-size: 12px;
-            line-height: 1.3;
+        .terminal-log-line:hover {
+            background: rgba(255, 255, 255, 0.04);
+        }
+
+        .log-ts {
             color: #64748b;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
+            font-size: 11px;
+            margin-right: 4px;
         }
 
-        .compact-lead-body {
-            font-family: var(--font-crt);
-            font-size: 14px;
-            line-height: 1.35;
-            background: rgba(7, 9, 14, 0.95);
-            padding: 6px 10px 8px 10px;
-            color: #e2e8f0;
-            border-top: 1px solid #1e2430;
-            display: flex;
-            flex-direction: column;
-            gap: 2px;
-            min-height: 84px;
-        }
-
-        .sensory-lead-row {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 8px;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
-
-        .lead-info {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            overflow: hidden;
-            white-space: nowrap;
-        }
-
-        .lead-prefix {
-            color: #fb7185;
-            font-weight: bold;
-        }
-
-        .lead-text {
+        .log-level-info {
             color: #4ade80;
+            font-weight: bold;
+            font-size: 11px;
+            margin-right: 4px;
         }
 
-        .lead-conf {
-            color: var(--runic-cyan);
-            font-size: 13px;
-        }
-
-        .lead-detail {
-            color: #94a3b8;
-            font-size: 12px;
-        }
-
-        .lead-cyan {
-            color: var(--runic-cyan);
-        }
-
-        .lead-green {
-            color: var(--runic-green);
-        }
-
-        .lead-gold {
+        .log-level-warn {
             color: #fef08a;
+            font-weight: bold;
+            font-size: 11px;
+            margin-right: 4px;
         }
 
-        .lead-speech {
+        .log-level-err {
+            color: #f87171;
+            font-weight: bold;
+            font-size: 11px;
+            margin-right: 4px;
+        }
+
+        .log-source {
+            color: var(--runic-cyan);
+            font-weight: 500;
+        }
+
+        .log-msg {
             color: #e2e8f0;
-            font-family: var(--font-space);
-            font-size: 13px;
-            text-overflow: ellipsis;
-            overflow: hidden;
-            white-space: nowrap;
-        }
-
-        .lead-actions {
-            display: flex;
-            align-items: center;
-            gap: 4px;
-        }
-
-        /* Equalizer graphic for Mouth */
-        .eq-graphic {
-            display: flex;
-            align-items: flex-end;
-            gap: 2px;
-            height: 16px;
-            padding: 2px 4px;
-            background: #0f1117;
-            border: 1px solid #334155;
-            border-radius: 2px;
-        }
-
-        .eq-bar {
-            width: 4px;
-            border-top-left-radius: 1px;
-            border-top-right-radius: 1px;
         }
 
         /* Hand Agents Grid (Centered under Mouth) */
@@ -979,46 +920,22 @@
                 <article class="sensory-window arcade-window-red" id="eye-card">
                     <div class="arcade-header-red">
                         <div style="display: flex; align-items: center; gap: 8px;">
-                            <span style="width: 8px; height: 8px; background: var(--runic-gold); border-radius: 50%; box-shadow: 0 0 6px var(--runic-gold);"></span>
+                            <span style="width: 8px; height: 8px; background: var(--runic-cyan); border-radius: 50%; box-shadow: 0 0 6px var(--runic-cyan);"></span>
                             <span>Eye Agent</span>
-                            <span style="color: #fef08a; font-family: var(--font-space); font-size: 8px; font-weight: 600;">[OCULAR_STREAM]</span>
+                            <span style="color: #67e8f9; font-family: var(--font-space); font-size: 8px; font-weight: 600;">[OCULAR_STREAM]</span>
                         </div>
                         <div style="display: flex; align-items: center; gap: 6px; font-size: 9px;">
-                            <span id="eye-count-badge" class="status-pill-badge badge-cyan" style="display: none;">0 EVENTS</span>
-                            <span id="eye-state-badge" class="status-pill-badge badge-green" style="display: none;">IDLE</span>
+                            <span id="eye-state-badge" class="status-pill-badge badge-green">OBSERVING</span>
                             <span style="cursor: pointer;">_</span>
                             <span style="cursor: pointer;">□</span>
                             <span style="cursor: pointer;">×</span>
                         </div>
                     </div>
-                    <div class="sensory-lead-body">
-                        <!-- Line 1: Real-time Frame Diff Detection -->
-                        <div class="sensory-lead-row">
-                            <div class="lead-info">
-                                <span class="lead-prefix">&gt; DETECTED:</span>
-                                <span id="eye-lead-msg" class="lead-text">MULTIMODAL_FRAME_DIFF</span>
-                                <span id="eye-conf-msg" class="lead-conf">[CONFIDENCE: 99.4%]</span>
-                                <span id="eye-bbox-msg" class="lead-detail">| BBOX: {x:140, y:88}</span>
-                            </div>
-                            <div class="lead-actions">
-                                <span style="width: 8px; height: 8px; border-radius: 2px; background: var(--runic-cyan); box-shadow: 0 0 6px var(--runic-cyan);" class="pulse-cyan"></span>
-                                <span style="display: inline-block; width: 6px; height: 14px; background: #4ade80;" class="blink-caret"></span>
-                            </div>
-                        </div>
-                        <!-- Line 2: Task observer calibration state -->
-                        <div class="terminal-log-row">
-                            <span style="color: #67e8f9;">[FPO]</span>
-                            <span style="color: #cbd5e1;">Lorem ipsum dolor sit amet, consectetur adipiscing elit.</span>
-                        </div>
-                        <!-- Line 3: Mesh Bus link with live timestamp -->
-                        <div class="terminal-log-row">
-                            <span style="color: #64748b;">[<span id="eye-ts-display">12:04:27</span>]</span>
-                            <span style="color: var(--runic-cyan);">[FPO] Lorem ipsum dolor sit amet.</span>
-                        </div>
-                        <!-- Line 4: Live Observer SHA delta log -->
-                        <div class="terminal-log-stream" id="eye-stream-log">
-                            &gt;&gt; [FPO] Lorem ipsum dolor sit amet, consectetur adipiscing elit.
-                        </div>
+                    <div class="terminal-body" id="eye-terminal-body">
+                        <div class="terminal-log-line"><span class="log-ts">2026-10-04 00:43:41</span> <span class="log-level-info">[INFO]</span> <span class="log-source">Golem.Sensory.Eyes:</span> EyesTaskObserver calibrated (interval=15.0s, mode=sha256)</div>
+                        <div class="terminal-log-line"><span class="log-ts">2026-10-04 00:43:41</span> <span class="log-level-info">[INFO]</span> <span class="log-source">Golem.Sensory.Eyes:</span> Monitoring execution pane 'runner' [status=IDLE]</div>
+                        <div class="terminal-log-line"><span class="log-ts">2026-10-04 00:43:41</span> <span class="log-level-info">[INFO]</span> <span class="log-source">Golem.Sensory.Eyes:</span> Buffer delta unchanged (0 tokens, quiescent gate active)</div>
+                        <div class="terminal-log-line"><span class="log-ts">2026-10-04 00:45:00</span> <span class="log-level-info">[INFO]</span> <span class="log-source">Golem.Sensory.Eyes:</span> Shoulder tap bus listening on 'runner'</div>
                     </div>
                 </article>
             </div>
@@ -1033,43 +950,17 @@
                             <span style="color: #a5f3fc; font-family: var(--font-space); font-size: 8px; font-weight: 600;">[HEURISTIC_SNIFFER]</span>
                         </div>
                         <div style="display: flex; align-items: center; gap: 6px; font-size: 9px;">
-                            <span id="nose-quiescent-badge" class="status-pill-badge badge-green" style="display: none;">Quiescent (0 tokens)</span>
-                            <span id="nose-status-badge" class="status-pill-badge badge-cyan" style="display: none;">Clean</span>
+                            <span id="nose-status-badge" class="status-pill-badge badge-green">QUIESCENT</span>
                             <span style="cursor: pointer;">_</span>
                             <span style="cursor: pointer;">□</span>
                             <span style="cursor: pointer;">×</span>
                         </div>
                     </div>
-                    <div class="sensory-lead-body">
-                        <!-- Line 1: Sniffer latency, smell & drift -->
-                        <div class="sensory-lead-row">
-                            <div class="lead-info">
-                                <span class="lead-prefix">&gt; SNIFF_LATENCY:</span>
-                                <span id="nose-latency-val" class="lead-cyan">0.02ms</span>
-                                <span id="nose-smell-val" class="lead-green">|| CODE_SMELL: CLEAN</span>
-                                <span id="nose-drift-val" class="lead-detail">| DRIFT: 0.00%</span>
-                            </div>
-                            <span id="nose-active-pill" class="status-pill-badge badge-cyan">ACTIVE</span>
-                        </div>
-                        <!-- Line 2: Fleet metrics (matches Screenshot 1) -->
-                        <div class="terminal-log-row" style="color: var(--runic-cyan); font-size: 13px;">
-                            <span>DISK: <strong id="disk-val" style="color: #67e8f9;">14%</strong></span>
-                            <span style="color: #475569;">||</span>
-                            <span>CONTAINERS: <strong id="docker-val" style="color: var(--runic-green);">0</strong></span>
-                            <span style="color: #475569;">||</span>
-                            <span>TAILSCALE: <strong id="tailscale-val" style="color: var(--runic-cyan);">ONLINE</strong></span>
-                            <span style="color: #475569;">||</span>
-                            <span>ERRORS: <strong id="error-count-val" style="color: #94a3b8;">0</strong></span>
-                        </div>
-                        <!-- Line 3: Sentinel heuristic status -->
-                        <div class="terminal-log-row">
-                            <span style="color: #67e8f9;">[FPO]</span>
-                            <span style="color: #cbd5e1;">Lorem ipsum dolor sit amet, consectetur adipiscing elit.</span>
-                        </div>
-                        <!-- Line 4: Live fleet status stream -->
-                        <div class="terminal-log-stream" id="nose-stream-log">
-                            &gt;&gt; [FPO] Lorem ipsum dolor sit amet, consectetur adipiscing elit.
-                        </div>
+                    <div class="terminal-body" id="nose-terminal-body">
+                        <div class="terminal-log-line"><span class="log-ts">2026-10-03 09:53:45</span> <span class="log-level-info">[INFO]</span> <span class="log-source">Golem.Sensory.Nose:</span> NoseSentinel startup calibrated: offset=267519, inode=145671983, mode='eof'</div>
+                        <div class="terminal-log-line"><span class="log-ts">2026-10-03 09:53:45</span> <span class="log-level-info">[INFO]</span> <span class="log-source">Golem.Sensory.Nose:</span> NoseSentinel started (interval=15.0m / 900.0s, bot_err='bot.err')</div>
+                        <div class="terminal-log-line"><span class="log-ts">2026-10-03 09:53:45</span> <span class="log-level-info">[INFO]</span> <span class="log-source">AGY:</span> The Nose 24/7 Fleet Health Sentinel active.</div>
+                        <div class="terminal-log-line"><span class="log-ts">2026-10-04 00:43:41</span> <span class="log-level-info">[INFO]</span> <span class="log-source">Golem.Sensory.Nose:</span> Quiescent scan clean: 0 anomalies, 0 errors, fleet healthy.</div>
                     </div>
                 </article>
             </div>
@@ -1084,44 +975,17 @@
                             <span style="color: #bbf7d0; font-family: var(--font-space); font-size: 8px; font-weight: 600;">[VOICE_SYNTH_DISPATCH]</span>
                         </div>
                         <div style="display: flex; align-items: center; gap: 6px; font-size: 9px;">
-                            <span id="mouth-model-badge" class="status-pill-badge badge-amber" style="display: none;">gemini-3.8-flash</span>
-                            <span id="mouth-turns-badge" class="status-pill-badge badge-green" style="display: none;">0 turns</span>
+                            <span id="mouth-model-badge" class="status-pill-badge badge-amber">gemini-3.8-flash</span>
                             <span style="cursor: pointer;">_</span>
                             <span style="cursor: pointer;">□</span>
                             <span style="cursor: pointer;">×</span>
                         </div>
                     </div>
-                    <div class="sensory-lead-body">
-                        <!-- Line 1: TTS buffer state & speech quote with equalizer -->
-                        <div class="sensory-lead-row">
-                            <div class="lead-info">
-                                <span class="lead-prefix">&gt; TTS_BUFFER:</span>
-                                <span id="mouth-tts-state" class="lead-gold">READY</span>
-                                <span id="mouth-briefing-lead" class="lead-speech">&gt; "[FPO] Lorem ipsum dolor sit amet."</span>
-                            </div>
-                            <div class="eq-graphic">
-                                <span class="eq-bar eq-1" style="background: var(--runic-cyan);"></span>
-                                <span class="eq-bar eq-2" style="background: var(--runic-green);"></span>
-                                <span class="eq-bar eq-3" style="background: var(--runic-gold);"></span>
-                                <span class="eq-bar eq-1" style="background: var(--runic-red);"></span>
-                            </div>
-                        </div>
-                        <!-- Line 2: Liaison init status -->
-                        <div class="terminal-log-row">
-                            <span style="color: #4ade80;">[FPO]</span>
-                            <span style="color: #cbd5e1;">Lorem ipsum dolor sit amet, consectetur adipiscing elit.</span>
-                        </div>
-                        <!-- Line 3: Model and persona status -->
-                        <div class="terminal-log-row">
-                            <span style="color: #64748b;">[Model]</span>
-                            <span style="color: #fef08a;" id="mouth-model-desc">gemini-3.8-flash</span>
-                            <span style="color: #64748b;">|</span>
-                            <span style="color: #cbd5e1;">[FPO] Lorem ipsum dolor sit amet.</span>
-                        </div>
-                        <!-- Line 4: Live synthesized speech stream -->
-                        <div class="terminal-log-stream" id="mouth-stream-log">
-                            &gt;&gt; [FPO] Lorem ipsum dolor sit amet, consectetur adipiscing elit.
-                        </div>
+                    <div class="terminal-body" id="mouth-terminal-body">
+                        <div class="terminal-log-line"><span class="log-ts">2026-10-03 17:00:10</span> <span class="log-level-info">[INFO]</span> <span class="log-source">Golem.Gateway.Router:</span> Initialized new warm session 'D0C2J1HKNN7' in cwd '/Users/hermes/projects/first-mate'</div>
+                        <div class="terminal-log-line"><span class="log-ts">2026-10-03 17:58:49</span> <span class="log-level-info">[INFO]</span> <span class="log-source">Golem.Gateway.Session:</span> Closing expired session (reason: inactivity_timeout)</div>
+                        <div class="terminal-log-line"><span class="log-ts">2026-10-04 00:43:41</span> <span class="log-level-info">[INFO]</span> <span class="log-source">Golem.Agent.Mouth:</span> Liaison standing by for Carl's instructions (model='gemini-3.8-flash')</div>
+                        <div class="terminal-log-line"><span class="log-ts">2026-10-04 00:43:41</span> <span class="log-level-info">[INFO]</span> <span class="log-source">Golem.Agent.Mouth:</span> Sub-second response engine ready; out-of-band inquiries armed</div>
                     </div>
                 </article>
             </div>
@@ -1140,14 +1004,13 @@
                         </div>
                         <div class="hand-card-body">
                             <div class="hand-card-cmd" style="color: var(--runic-gold);">&gt; status: idle [mesh listener active]</div>
-                            <div class="hand-card-terminal" style="display: flex; flex-direction: column; justify-content: center; gap: 2px;">
-                                <div style="color: #fef08a; font-weight: bold; display: flex; align-items: center; gap: 6px; margin-bottom: 2px;">
+                            <div class="hand-card-terminal" style="display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 4px;">
+                                <div style="color: #fef08a; font-weight: bold; font-size: 13px; display: flex; align-items: center; gap: 8px;">
                                     <span>⏳</span>
                                     <span>The Hands are Idle</span>
                                     <span>⏳</span>
                                 </div>
-                                <div style="font-size: 11px; color: #94a3b8;">&gt; [FPO] Lorem ipsum dolor sit amet, consectetur adipiscing elit.</div>
-                                <div style="font-size: 10px; color: #64748b;">&gt; [FPO] Lorem ipsum dolor sit amet, consectetur adipiscing elit...</div>
+                                <div style="font-size: 11px; color: #64748b;">Standby mode engaged &bull; Awaiting task dispatch from Mouth Liaison</div>
                             </div>
                             <div class="hand-card-footer">
                                 <span class="worker-state" style="color: #64748b;">IDLE</span>
@@ -1325,6 +1188,68 @@
                 }
             }
 
+            function escapeHtml(str) {
+                if (!str) return '';
+                return String(str)
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;')
+                    .replace(/"/g, '&quot;')
+                    .replace(/'/g, '&#039;');
+            }
+
+            function formatLogLine(raw) {
+                if (typeof raw !== 'string') raw = JSON.stringify(raw);
+                raw = raw.trim();
+                if (!raw) return '';
+
+                const tsMatch = raw.match(/^(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}(?:,\d+)?|\d{2}:\d{2}:\d{2})/);
+                let ts = '';
+                let rest = raw;
+                if (tsMatch) {
+                    ts = tsMatch[1];
+                    rest = raw.slice(tsMatch[0].length).trim();
+                } else {
+                    ts = formatTime();
+                }
+
+                let levelClass = 'log-level-info';
+                let levelText = '[INFO]';
+                if (rest.includes('[WARNING]') || rest.includes('[WARN]')) {
+                    levelClass = 'log-level-warn';
+                    levelText = '[WARN]';
+                    rest = rest.replace(/\[WARNING\]|\[WARN\]/, '').trim();
+                } else if (rest.includes('[ERROR]') || rest.includes('[CRITICAL]')) {
+                    levelClass = 'log-level-err';
+                    levelText = '[ERROR]';
+                    rest = rest.replace(/\[ERROR\]|\[CRITICAL\]/, '').trim();
+                } else if (rest.includes('[INFO]')) {
+                    levelClass = 'log-level-info';
+                    levelText = '[INFO]';
+                    rest = rest.replace(/\[INFO\]/, '').trim();
+                }
+
+                const srcMatch = rest.match(/^([A-Za-z0-9_.]+:)/);
+                let src = '';
+                if (srcMatch) {
+                    src = srcMatch[1];
+                    rest = rest.slice(srcMatch[0].length).trim();
+                }
+
+                return `<div class="terminal-log-line"><span class="log-ts">${escapeHtml(ts)}</span> <span class="${levelClass}">${levelText}</span> ${src ? `<span class="log-source">${escapeHtml(src)}</span> ` : ''}<span class="log-msg">${escapeHtml(rest)}</span></div>`;
+            }
+
+            function appendAgentLog(container, text) {
+                if (!container || !text) return;
+                const lineHtml = formatLogLine(text);
+                if (!lineHtml) return;
+                container.insertAdjacentHTML('beforeend', lineHtml);
+                while (container.children.length > 100) {
+                    container.removeChild(container.firstElementChild);
+                }
+                container.scrollTop = container.scrollHeight;
+            }
+
             // Hand Agents State Management
             function setPrimaryToStandby(card) {
                 if (!card) return;
@@ -1358,15 +1283,15 @@
                     term.style.display = 'flex';
                     term.style.flexDirection = 'column';
                     term.style.justifyContent = 'center';
-                    term.style.gap = '2px';
+                    term.style.alignItems = 'center';
+                    term.style.gap = '4px';
                     term.innerHTML = `
-                        <div style="color: #fef08a; font-weight: bold; display: flex; align-items: center; gap: 6px; margin-bottom: 2px;">
+                        <div style="color: #fef08a; font-weight: bold; font-size: 13px; display: flex; align-items: center; gap: 8px;">
                             <span>⏳</span>
                             <span>The Hands are Idle</span>
                             <span>⏳</span>
                         </div>
-                        <div style="font-size: 11px; color: #94a3b8;">&gt; [FPO] Lorem ipsum dolor sit amet, consectetur adipiscing elit.</div>
-                        <div style="font-size: 10px; color: #64748b;">&gt; [FPO] Lorem ipsum dolor sit amet, consectetur adipiscing elit...</div>
+                        <div style="font-size: 11px; color: #64748b;">Standby mode engaged &bull; Awaiting task dispatch from Mouth Liaison</div>
                     `;
                 }
 
@@ -1538,15 +1463,40 @@
                 .then(data => {
                     if (data.port && portDisplay) portDisplay.textContent = data.port;
                     if (data.uptime_formatted && uptimeDisplay) uptimeDisplay.textContent = data.uptime_formatted;
-                    if (data.nose) updateNoseData(data.nose);
-                    if (data.eyes && data.eyes.state && eyeStateBadge) {
-                        eyeStateBadge.textContent = data.eyes.state.toUpperCase();
+                    if (data.nose) {
+                        updateNoseData(data.nose);
+                        if (Array.isArray(data.nose.logs) && data.nose.logs.length > 0) {
+                            const noseTerm = document.getElementById('nose-terminal-body');
+                            if (noseTerm) {
+                                noseTerm.innerHTML = data.nose.logs.map(formatLogLine).join('');
+                                noseTerm.scrollTop = noseTerm.scrollHeight;
+                            }
+                        }
+                    }
+                    if (data.eyes) {
+                        if (data.eyes.state && eyeStateBadge) {
+                            eyeStateBadge.textContent = data.eyes.state.toUpperCase();
+                        }
+                        if (Array.isArray(data.eyes.logs) && data.eyes.logs.length > 0) {
+                            const eyeTerm = document.getElementById('eye-terminal-body');
+                            if (eyeTerm) {
+                                eyeTerm.innerHTML = data.eyes.logs.map(formatLogLine).join('');
+                                eyeTerm.scrollTop = eyeTerm.scrollHeight;
+                            }
+                        }
                     }
                     if (data.mouth) {
                         if (data.mouth.model && mouthModelBadge) mouthModelBadge.textContent = data.mouth.model;
                         if (data.mouth.active_turns && mouthTurnsBadge) {
                             mouthTurns = data.mouth.active_turns;
                             mouthTurnsBadge.textContent = `${mouthTurns} turns`;
+                        }
+                        if (Array.isArray(data.mouth.logs) && data.mouth.logs.length > 0) {
+                            const mouthTerm = document.getElementById('mouth-terminal-body');
+                            if (mouthTerm) {
+                                mouthTerm.innerHTML = data.mouth.logs.map(formatLogLine).join('');
+                                mouthTerm.scrollTop = mouthTerm.scrollHeight;
+                            }
                         }
                     }
                     if (Array.isArray(data.hands) && data.hands.length > 0) {
@@ -1580,7 +1530,7 @@
                 };
 
                 eventSource.addEventListener('connected', function(e) {
-                    appendStreamLog(eyeStream, '[SSE] Link established to Stoneforge Mesh Bus.', 'var(--runic-cyan)');
+                    appendAgentLog(document.getElementById('eye-terminal-body'), '[INFO] Golem.Sensory.Eyes: [SSE] Link established to Stoneforge Mesh Bus.');
                 });
 
                 eventSource.addEventListener('heartbeat', function(e) {
@@ -1600,17 +1550,10 @@
                     try {
                         const data = JSON.parse(e.data);
                         const msg = data.message || data.text || JSON.stringify(data);
-                        if (eyeLeadMsg) eyeLeadMsg.textContent = msg.slice(0, 36);
-                        if (data.sha && eyeBboxMsg) eyeBboxMsg.textContent = `| SHA: ${data.sha.slice(0, 8)}`;
-                        if (data.confidence && eyeConfMsg) eyeConfMsg.textContent = `[CONFIDENCE: ${(data.confidence * 100).toFixed(1)}%]`;
-                        const eyeTsDisplay = document.getElementById('eye-ts-display');
-                        if (eyeTsDisplay) eyeTsDisplay.textContent = formatTime();
-                        const eyeStreamLog = document.getElementById('eye-stream-log');
-                        if (eyeStreamLog) eyeStreamLog.textContent = `>> ${msg}`;
-                        appendStreamLog(eyeStream, `• ${msg}`);
+                        appendAgentLog(document.getElementById('eye-terminal-body'), msg);
                         if (data.state && eyeStateBadge) eyeStateBadge.textContent = data.state.toUpperCase();
                     } catch (_) {
-                        appendStreamLog(eyeStream, `• ${e.data}`);
+                        appendAgentLog(document.getElementById('eye-terminal-body'), e.data);
                     }
                 });
 
@@ -1618,10 +1561,9 @@
                     try {
                         const data = JSON.parse(e.data);
                         if (data.state && eyeStateBadge) eyeStateBadge.textContent = data.state.toUpperCase();
-                        if (data.last_diff && eyeLeadMsg) eyeLeadMsg.textContent = data.last_diff.slice(0, 36);
-                        if (data.buffer_hash && eyeBboxMsg) eyeBboxMsg.textContent = `| SHA: ${data.buffer_hash.slice(0, 8)}`;
-                        const eyeStreamLog = document.getElementById('eye-stream-log');
-                        if (eyeStreamLog && data.buffer_hash) eyeStreamLog.textContent = `>> Buffer delta hash: ${data.buffer_hash.slice(0, 16)} (observer active)`;
+                        if (data.last_diff) {
+                            appendAgentLog(document.getElementById('eye-terminal-body'), `[INFO] Golem.Sensory.Eyes: Diff detected: ${data.last_diff}`);
+                        }
                     } catch (_) {}
                 });
 
@@ -1629,6 +1571,9 @@
                     try {
                         const data = JSON.parse(e.data);
                         updateNoseData(data);
+                        if (data.verdict_summary) {
+                            appendAgentLog(document.getElementById('nose-terminal-body'), `[INFO] Golem.Sensory.Nose: ${data.verdict_summary}`);
+                        }
                     } catch (_) {}
                 });
 
@@ -1638,20 +1583,9 @@
                     try {
                         const data = JSON.parse(e.data);
                         const txt = data.briefing || data.text || JSON.stringify(data);
-                        if (mouthBriefingLead) mouthBriefingLead.textContent = `> "${txt.slice(0, 56)}..."`;
-                        const mouthStreamLog = document.getElementById('mouth-stream-log');
-                        if (mouthStreamLog) mouthStreamLog.textContent = `>> Synthesized: "${txt.slice(0, 56)}..."`;
-                        if (mouthTtsState) {
-                            mouthTtsState.textContent = 'SPEAKING';
-                            mouthTtsState.style.color = 'var(--runic-cyan)';
-                            setTimeout(() => {
-                                mouthTtsState.textContent = 'READY';
-                                mouthTtsState.style.color = 'var(--runic-gold)';
-                            }, 3000);
-                        }
-                        appendStreamLog(mouthStream, `> ${txt}`, 'var(--runic-gold)');
+                        appendAgentLog(document.getElementById('mouth-terminal-body'), `[INFO] Golem.Agent.Mouth: Executive briefing: "${txt}"`);
                     } catch (_) {
-                        appendStreamLog(mouthStream, `> ${e.data}`, 'var(--runic-gold)');
+                        appendAgentLog(document.getElementById('mouth-terminal-body'), `[INFO] Golem.Agent.Mouth: ${e.data}`);
                     }
                 });
 
@@ -1757,7 +1691,7 @@
             if (btnStart) {
                 btnStart.addEventListener('click', async function() {
                     btnStart.style.filter = 'brightness(1.4)';
-                    if (mouthBriefingLead) mouthBriefingLead.textContent = '> "[FPO] Pipeline execution triggered."';
+                    appendAgentLog(document.getElementById('mouth-terminal-body'), '[INFO] Golem.Agent.Mouth: Pipeline execution triggered.');
                     if (mouthTtsState) {
                         mouthTtsState.textContent = 'DISPATCH';
                         mouthTtsState.style.color = 'var(--runic-cyan)';
