@@ -462,7 +462,7 @@
         .golem-face-matrix {
             position: relative;
             width: 100%;
-            max-width: 960px;
+            max-width: 1260px;
             display: flex;
             flex-direction: column;
             align-items: center;
@@ -479,23 +479,29 @@
             transition: margin 0.15s ease-out;
         }
 
-        .anchor-eyes {
+        /* Each terminal the EXACT same width (580px) */
+        .anchor-eyes,
+        .anchor-nose,
+        .anchor-mouth {
+            width: 100%;
             max-width: 580px;
+        }
+
+        .anchor-eyes {
             margin-top: clamp(14px, 6vh, 80px);
         }
 
         .anchor-nose {
-            max-width: 520px;
             margin-top: clamp(30px, 12vh, 160px);
         }
 
         .anchor-mouth {
-            max-width: 580px;
             margin-top: clamp(30px, 12vh, 160px);
         }
 
+        /* Exception: Hands agent terminal wide enough for 3 horizontally and 3 vertically */
         .anchor-hands {
-            max-width: 580px;
+            max-width: 1240px;
             width: 100%;
             display: flex;
             justify-content: center;
@@ -522,13 +528,10 @@
             min-height: 84px;
             max-height: 84px;
             box-sizing: border-box;
-            overflow-y: auto;
-            overflow-x: hidden;
+            overflow: hidden !important; /* Scrolling removed in collapsed terminal */
             user-select: text !important;
             -webkit-user-select: text !important;
             cursor: text;
-            scrollbar-width: thin;
-            scrollbar-color: rgba(230, 0, 0, 0.4) transparent;
         }
 
         .terminal-log-line {
@@ -608,12 +611,12 @@
             white-space: nowrap;
         }
 
-        /* Hand Agents Grid (Centered under Mouth) */
+        /* Hand Agents Grid: wide enough to comfortably fit 3 horizontally and 3 vertically */
         .hands-grid {
             display: grid;
-            grid-template-columns: minmax(0, 520px);
+            grid-template-columns: repeat(3, minmax(0, 390px));
             justify-content: center;
-            gap: 8px;
+            gap: 10px;
             width: 100%;
             min-height: 80px;
         }
@@ -690,7 +693,7 @@
         .hand-card {
             display: flex;
             flex-direction: column;
-            height: 122px;
+            height: 104px; /* Compact height so 3 rows comfortably fit vertically */
             user-select: text !important;
             -webkit-user-select: text !important;
         }
@@ -700,7 +703,7 @@
             font-family: var(--font-crt);
             font-size: 11px;
             background: rgba(7, 9, 14, 0.95);
-            padding: 6px 8px;
+            padding: 5px 8px;
             display: flex;
             flex-direction: column;
             justify-content: space-between;
@@ -714,7 +717,7 @@
         .hand-card-cmd {
             font-weight: bold;
             font-size: 11px;
-            line-height: 16px;
+            line-height: 15px;
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
@@ -725,20 +728,17 @@
 
         .hand-card-terminal {
             flex: 1;
-            overflow-y: auto;
-            overflow-x: hidden;
+            overflow: hidden !important; /* Scrolling removed in collapsed terminal */
             font-family: var(--font-crt);
             font-size: 11px;
-            line-height: 16px;
+            line-height: 15px;
             color: #cbd5e1;
-            margin: 2px 0;
+            margin: 1px 0;
             white-space: pre-wrap;
             word-break: break-all;
             user-select: text !important;
             -webkit-user-select: text !important;
             cursor: text;
-            scrollbar-width: thin;
-            scrollbar-color: rgba(230, 0, 0, 0.4) transparent;
         }
 
         .hand-card-footer {
@@ -746,12 +746,124 @@
             font-size: 8px;
             color: #64748b;
             border-top: 1px solid rgba(255, 255, 255, 0.08);
-            padding-top: 3px;
+            padding-top: 2px;
             display: flex;
             align-items: center;
             justify-content: space-between;
             user-select: text !important;
             -webkit-user-select: text !important;
+        }
+
+        /* Terminal Header Controls & Expand CTA */
+        .terminal-header-actions {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 9px;
+        }
+
+        .arcade-ctrl-btn {
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.28);
+            color: #ffffff;
+            font-family: var(--font-pixel);
+            font-size: 9px;
+            width: 17px;
+            height: 17px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            padding: 0;
+            border-radius: 2px;
+            transition: all 0.15s ease-in-out;
+            line-height: 1;
+            box-shadow: inset 1px 1px 0 rgba(255,255,255,0.25), inset -1px -1px 0 rgba(0,0,0,0.6);
+        }
+
+        .arcade-ctrl-btn:hover {
+            background: rgba(0, 240, 255, 0.3);
+            border-color: var(--runic-cyan);
+            color: var(--runic-cyan);
+            box-shadow: 0 0 8px var(--runic-cyan);
+            transform: scale(1.08);
+        }
+
+        .arcade-ctrl-btn:active {
+            transform: scale(0.94);
+        }
+
+        /* Full Viewport Height Terminal Expansion (Keeps Same Width!) */
+        .terminal-expanded {
+            position: fixed !important;
+            top: 14px !important;
+            bottom: 14px !important;
+            height: calc(100vh - 28px) !important;
+            max-height: calc(100vh - 28px) !important;
+            left: 50% !important;
+            transform: translateX(-50%) !important;
+            z-index: 1000 !important;
+            display: flex !important;
+            flex-direction: column !important;
+            box-shadow: 
+                0 0 0 9999px rgba(0, 0, 0, 0.78),
+                inset 1px 1px 0px rgba(255, 180, 180, 0.9),
+                inset -2px -2px 0px #400000,
+                0 16px 48px rgba(0, 0, 0, 0.98),
+                0 0 32px rgba(255, 42, 42, 0.6) !important;
+            animation: expandTerminalAnim 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
+        }
+
+        /* Keep exact same width for each terminal when expanded */
+        .sensory-window.terminal-expanded {
+            width: 580px !important;
+            max-width: 580px !important;
+        }
+
+        .hand-card.terminal-expanded {
+            width: 400px !important;
+            max-width: 400px !important;
+        }
+
+        @keyframes expandTerminalAnim {
+            from {
+                opacity: 0.8;
+                transform: translateX(-50%) scaleY(0.92);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(-50%) scaleY(1);
+            }
+        }
+
+        /* When expanded, enable scrolling to inspect full logs */
+        .terminal-expanded .terminal-body {
+            flex: 1 !important;
+            height: 100% !important;
+            max-height: none !important;
+            min-height: 0 !important;
+            overflow-y: auto !important;
+            scrollbar-width: thin;
+            scrollbar-color: rgba(230, 0, 0, 0.5) transparent;
+        }
+
+        .terminal-expanded .hand-card-body {
+            flex: 1 !important;
+            height: 100% !important;
+            max-height: none !important;
+            min-height: 0 !important;
+            display: flex !important;
+            flex-direction: column !important;
+        }
+
+        .terminal-expanded .hand-card-terminal {
+            flex: 1 !important;
+            height: 100% !important;
+            max-height: none !important;
+            min-height: 0 !important;
+            overflow-y: auto !important;
+            scrollbar-width: thin;
+            scrollbar-color: rgba(230, 0, 0, 0.5) transparent;
         }
 
         .status-pill-badge {
@@ -929,7 +1041,7 @@
 <body class="dark">
     <!-- Background Image: Ancient Robotic Stone Golem Colossus -->
     <div class="colossus-backdrop">
-        <img alt="Ancient Stone Colossus Mech" class="colossus-img" src="/colossus.png" />
+        <img alt="Ancient Stone Colossus Mech" class="colossus-img" id="colossus-img" src="/colossus.png" />
         <div class="backdrop-vignette"></div>
         <div class="backdrop-radial"></div>
         <!-- CRT Scanline Overlay applied ONLY to background image -->
@@ -972,11 +1084,10 @@
                             <span>Eye Agent</span>
                             <span style="color: #67e8f9; font-family: var(--font-space); font-size: 8px; font-weight: 600;">[OCULAR_STREAM]</span>
                         </div>
-                        <div style="display: flex; align-items: center; gap: 6px; font-size: 9px;">
+                        <div class="terminal-header-actions">
                             <span id="eye-state-badge" class="status-pill-badge badge-green">OBSERVING</span>
-                            <span style="cursor: pointer;">_</span>
-                            <span style="cursor: pointer;">□</span>
-                            <span style="cursor: pointer;">×</span>
+                            <button class="arcade-ctrl-btn btn-expand" title="Expand to full viewport height" aria-label="Expand terminal">□</button>
+                            <button class="arcade-ctrl-btn btn-close" title="Close" aria-label="Close">×</button>
                         </div>
                     </div>
                     <div class="terminal-body" id="eye-terminal-body">
@@ -997,11 +1108,10 @@
                             <span>Nose Agent</span>
                             <span style="color: #a5f3fc; font-family: var(--font-space); font-size: 8px; font-weight: 600;">[HEURISTIC_SNIFFER]</span>
                         </div>
-                        <div style="display: flex; align-items: center; gap: 6px; font-size: 9px;">
+                        <div class="terminal-header-actions">
                             <span id="nose-status-badge" class="status-pill-badge badge-green">QUIESCENT</span>
-                            <span style="cursor: pointer;">_</span>
-                            <span style="cursor: pointer;">□</span>
-                            <span style="cursor: pointer;">×</span>
+                            <button class="arcade-ctrl-btn btn-expand" title="Expand to full viewport height" aria-label="Expand terminal">□</button>
+                            <button class="arcade-ctrl-btn btn-close" title="Close" aria-label="Close">×</button>
                         </div>
                     </div>
                     <div class="terminal-body" id="nose-terminal-body">
@@ -1022,11 +1132,10 @@
                             <span>Mouth Agent</span>
                             <span style="color: #bbf7d0; font-family: var(--font-space); font-size: 8px; font-weight: 600;">[VOICE_SYNTH_DISPATCH]</span>
                         </div>
-                        <div style="display: flex; align-items: center; gap: 6px; font-size: 9px;">
+                        <div class="terminal-header-actions">
                             <span id="mouth-model-badge" class="status-pill-badge badge-amber">gemini-3.8-flash</span>
-                            <span style="cursor: pointer;">_</span>
-                            <span style="cursor: pointer;">□</span>
-                            <span style="cursor: pointer;">×</span>
+                            <button class="arcade-ctrl-btn btn-expand" title="Expand to full viewport height" aria-label="Expand terminal">□</button>
+                            <button class="arcade-ctrl-btn btn-close" title="Close" aria-label="Close">×</button>
                         </div>
                     </div>
                     <div class="terminal-body" id="mouth-terminal-body">
@@ -1048,7 +1157,11 @@
                                 <span class="hand-card-dot" style="width: 6px; height: 6px; background: var(--runic-gold); border-radius: 50%; box-shadow: 0 0 6px var(--runic-gold);"></span>
                                 <span class="hand-card-title">Hand 01 [L_GAUNTLET]</span>
                             </div>
-                            <span class="status-pill-badge badge-red hand-card-tag" style="border-color: #b91c1c; color: var(--runic-gold); font-size: 8px;">STANDBY</span>
+                            <div class="terminal-header-actions">
+                                <span class="status-pill-badge badge-red hand-card-tag" style="border-color: #b91c1c; color: var(--runic-gold); font-size: 8px;">STANDBY</span>
+                                <button class="arcade-ctrl-btn btn-expand" title="Expand to full viewport height" aria-label="Expand terminal">□</button>
+                                <button class="arcade-ctrl-btn btn-close" title="Close" aria-label="Close">×</button>
+                            </div>
                         </div>
                         <div class="hand-card-body">
                             <div class="hand-card-cmd" style="color: var(--runic-gold);">&gt; status: idle [mesh listener active]</div>
@@ -1314,6 +1427,11 @@
                 card.id = 'primary-hand-terminal';
                 card.setAttribute('data-primary', 'true');
 
+                // Collapse if previously expanded
+                card.classList.remove('terminal-expanded');
+                card.style.width = '';
+                card.style.maxWidth = '';
+
                 const dot = card.querySelector('.hand-card-dot');
                 if (dot) {
                     dot.style.background = 'var(--runic-gold)';
@@ -1328,6 +1446,27 @@
                     tag.className = 'status-pill-badge badge-red hand-card-tag';
                     tag.style.borderColor = '#b91c1c';
                     tag.style.color = 'var(--runic-gold)';
+                }
+
+                let actions = card.querySelector('.terminal-header-actions');
+                if (!actions) {
+                    const header = card.querySelector('.arcade-header-red');
+                    if (header) {
+                        actions = document.createElement('div');
+                        actions.className = 'terminal-header-actions';
+                        if (tag) actions.appendChild(tag);
+                        actions.innerHTML += `
+                            <button class="arcade-ctrl-btn btn-expand" title="Expand to full viewport height" aria-label="Expand terminal">□</button>
+                            <button class="arcade-ctrl-btn btn-close" title="Close" aria-label="Close">×</button>
+                        `;
+                        header.appendChild(actions);
+                    }
+                } else {
+                    const expandBtn = actions.querySelector('.btn-expand');
+                    if (expandBtn) {
+                        expandBtn.textContent = '□';
+                        expandBtn.title = 'Expand to full viewport height';
+                    }
                 }
 
                 const cmd = card.querySelector('.hand-card-cmd');
@@ -1370,11 +1509,11 @@
                 if (!handsGrid) return;
                 const count = activeHands.size;
                 const anchorHands = document.getElementById('anchor-hands');
+                if (anchorHands) anchorHands.style.maxWidth = '1240px';
 
                 if (count === 0) {
-                    handsGrid.style.gridTemplateColumns = 'minmax(0, 520px)';
+                    handsGrid.style.gridTemplateColumns = 'repeat(3, minmax(0, 390px))';
                     handsGrid.style.justifyContent = 'center';
-                    if (anchorHands) anchorHands.style.maxWidth = '580px';
 
                     let primaryCard = document.getElementById('primary-hand-terminal') || handsGrid.querySelector('[data-primary="true"]');
                     if (!primaryCard) {
@@ -1388,6 +1527,7 @@
                         if (child !== primaryCard) child.remove();
                     });
                     setPrimaryToStandby(primaryCard);
+                    primaryCard.style.gridColumn = '2 / 3'; // Centered directly under the mouth!
 
                     if (handsCountBadge) {
                         handsCountBadge.textContent = 'IDLE';
@@ -1396,19 +1536,20 @@
                     return;
                 }
 
-                // Active Hand agents deployed
+                // Active Hand agents deployed: 3-column grid fits up to 3x3 hands comfortably
                 if (count === 1) {
-                    handsGrid.style.gridTemplateColumns = 'minmax(0, 520px)';
+                    handsGrid.style.gridTemplateColumns = 'repeat(3, minmax(0, 390px))';
                     handsGrid.style.justifyContent = 'center';
-                    if (anchorHands) anchorHands.style.maxWidth = '580px';
+                    const firstCard = handsGrid.children[0];
+                    if (firstCard) firstCard.style.gridColumn = '2 / 3';
                 } else if (count === 2) {
-                    handsGrid.style.gridTemplateColumns = 'repeat(2, minmax(0, 500px))';
+                    handsGrid.style.gridTemplateColumns = 'repeat(2, minmax(0, 390px))';
                     handsGrid.style.justifyContent = 'center';
-                    if (anchorHands) anchorHands.style.maxWidth = '1050px';
+                    Array.from(handsGrid.children).forEach(child => { child.style.gridColumn = ''; });
                 } else {
-                    handsGrid.style.gridTemplateColumns = 'repeat(3, minmax(0, 1fr))';
-                    handsGrid.style.justifyContent = 'stretch';
-                    if (anchorHands) anchorHands.style.maxWidth = '1050px';
+                    handsGrid.style.gridTemplateColumns = 'repeat(3, minmax(0, 390px))';
+                    handsGrid.style.justifyContent = 'center';
+                    Array.from(handsGrid.children).forEach(child => { child.style.gridColumn = ''; });
                 }
 
                 if (handsCountBadge) {
@@ -1461,7 +1602,11 @@
                             <span class="hand-card-dot" style="width: 6px; height: 6px; background: var(--runic-cyan); border-radius: 50%; box-shadow: 0 0 6px var(--runic-cyan);"></span>
                             <span class="hand-card-title">${escapeHtml(paneId)}</span>
                         </div>
-                        <span class="status-pill-badge badge-red hand-card-tag" style="border-color: #b91c1c; color: var(--runic-gold); font-size: 8px;">${tag}</span>
+                        <div class="terminal-header-actions">
+                            <span class="status-pill-badge badge-red hand-card-tag" style="border-color: #b91c1c; color: var(--runic-gold); font-size: 8px;">${tag}</span>
+                            <button class="arcade-ctrl-btn btn-expand" title="Expand to full viewport height" aria-label="Expand terminal">□</button>
+                            <button class="arcade-ctrl-btn btn-close" title="Close" aria-label="Close">×</button>
+                        </div>
                     </div>
                     <div class="hand-card-body">
                         <div class="hand-card-cmd" style="color: var(--runic-cyan);">&gt; ${escapeHtml(h.command || 'Active Task')}</div>
@@ -1792,9 +1937,87 @@
                 });
             }
 
-            // Card highlight on click (event delegation for static & dynamic terminals, ignored if text was selected)
+            // Terminal Full-Height Viewport Expansion (Keeps exact same width)
+            function toggleTerminalExpand(card) {
+                if (!card) return;
+                const isExpanded = card.classList.contains('terminal-expanded');
+                if (isExpanded) {
+                    card.classList.remove('terminal-expanded');
+                    card.style.width = '';
+                    card.style.maxWidth = '';
+                    const btn = card.querySelector('.btn-expand');
+                    if (btn) {
+                        btn.textContent = '□';
+                        btn.title = 'Expand to full viewport height';
+                    }
+                } else {
+                    // Collapse any other currently expanded terminal
+                    document.querySelectorAll('.terminal-expanded').forEach(c => {
+                        c.classList.remove('terminal-expanded');
+                        c.style.width = '';
+                        c.style.maxWidth = '';
+                        const b = c.querySelector('.btn-expand');
+                        if (b) {
+                            b.textContent = '□';
+                            b.title = 'Expand to full viewport height';
+                        }
+                    });
+
+                    // Capture current rendered pixel width to preserve exact width
+                    const currentRect = card.getBoundingClientRect();
+                    const exactWidth = Math.round(currentRect.width);
+                    card.classList.add('terminal-expanded');
+                    if (exactWidth > 0) {
+                        card.style.width = `${exactWidth}px`;
+                        card.style.maxWidth = `${exactWidth}px`;
+                    }
+                    const btn = card.querySelector('.btn-expand');
+                    if (btn) {
+                        btn.textContent = '❐';
+                        btn.title = 'Collapse terminal';
+                    }
+                }
+            }
+
+            // Click delegation for Expand / Collapse and click-outside
+            document.addEventListener('click', (e) => {
+                const expandBtn = e.target.closest('.btn-expand');
+                if (expandBtn) {
+                    e.stopPropagation();
+                    const card = expandBtn.closest('article');
+                    if (card) toggleTerminalExpand(card);
+                    return;
+                }
+
+                const closeBtn = e.target.closest('.btn-close');
+                if (closeBtn) {
+                    e.stopPropagation();
+                    const card = closeBtn.closest('article');
+                    if (card && card.classList.contains('terminal-expanded')) {
+                        toggleTerminalExpand(card);
+                    }
+                    return;
+                }
+
+                // Clicking outside an expanded terminal collapses it
+                const activeExpanded = document.querySelector('.terminal-expanded');
+                if (activeExpanded && !activeExpanded.contains(e.target)) {
+                    toggleTerminalExpand(activeExpanded);
+                }
+            });
+
+            // Escape key collapses active expanded terminal
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape') {
+                    const activeExpanded = document.querySelector('.terminal-expanded');
+                    if (activeExpanded) toggleTerminalExpand(activeExpanded);
+                }
+            });
+
+            // Card highlight on click (ignored if text was selected, or if clicking buttons / expanded card)
             document.addEventListener('click', (e) => {
                 if (window.getSelection && window.getSelection().toString().length > 0) return;
+                if (e.target.closest('.arcade-ctrl-btn') || e.target.closest('.terminal-expanded')) return;
                 const terminal = e.target.closest('article');
                 if (terminal) {
                     terminal.style.boxShadow = '0 0 16px var(--runic-cyan)';
@@ -1803,6 +2026,35 @@
                     }, 280);
                 }
             });
+
+            // 16-bit Low Framerate Animated Golem Background Loop (~3 FPS)
+            (function initGolemAnimation() {
+                const colossusEl = document.getElementById('colossus-img');
+                if (!colossusEl) return;
+
+                // Frame 0 is the original background PNG; frames 1-5 provide 16-bit breathing & runic glow
+                const frames = [
+                    '/colossus.png',
+                    '/static/colossus_1.png',
+                    '/static/colossus_2.png',
+                    '/static/colossus_3.png',
+                    '/static/colossus_4.png',
+                    '/static/colossus_5.png'
+                ];
+
+                // Preload frames to eliminate flicker
+                frames.forEach(src => {
+                    const img = new Image();
+                    img.src = src;
+                });
+
+                let frameIdx = 0;
+                // ~3 FPS low framerate animation (330ms per frame)
+                setInterval(() => {
+                    frameIdx = (frameIdx + 1) % frames.length;
+                    colossusEl.src = frames[frameIdx];
+                }, 330);
+            })();
 
             connectSSE();
             setTimeout(alignFaceAnchors, 50);

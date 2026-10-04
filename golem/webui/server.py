@@ -180,7 +180,8 @@ class WebUIServer:
         self.app.router.add_get("/health", self.handle_health)
         self.app.router.add_get("/healthz", self.handle_health)
         self.app.router.add_get("/colossus.png", self.handle_colossus_bg)
-        self.app.router.add_get("/static/colossus.png", self.handle_colossus_bg)
+        self.app.router.add_get("/colossus_{frame}.png", self.handle_colossus_frame)
+        self.app.router.add_get("/static/{filename}", self.handle_static_file)
         self.app.router.add_post("/api/pipeline/run", self.handle_pipeline_run)
         self.app.router.add_get("/api/pipeline/run", self.handle_pipeline_run)
 
@@ -199,6 +200,27 @@ class WebUIServer:
         static_img = _TEMPLATES_DIR.parent / "static" / "colossus.png"
         if static_img.exists():
             return web.Response(body=static_img.read_bytes(), content_type="image/png")
+        return web.Response(status=404)
+
+    async def handle_colossus_frame(self, request: web.Request) -> web.Response:
+        """Serve 16-bit animated background sequence frames."""
+        frame = request.match_info.get("frame", "0")
+        safe_frame = "".join(c for c in frame if c.isalnum() or c in ("-", "_"))
+        target = _TEMPLATES_DIR.parent / "static" / f"colossus_{safe_frame}.png"
+        if not target.exists() and safe_frame in ("0", "base", "orig"):
+            target = _TEMPLATES_DIR.parent / "static" / "colossus.png"
+        if target.exists() and target.is_file():
+            return web.Response(body=target.read_bytes(), content_type="image/png")
+        return web.Response(status=404)
+
+    async def handle_static_file(self, request: web.Request) -> web.Response:
+        """Serve static assets (animation frames, images) safely."""
+        filename = request.match_info.get("filename", "")
+        safe_name = os.path.basename(filename)
+        target = _TEMPLATES_DIR.parent / "static" / safe_name
+        if target.exists() and target.is_file():
+            ctype = "image/png" if safe_name.endswith(".png") else "application/octet-stream"
+            return web.Response(body=target.read_bytes(), content_type=ctype)
         return web.Response(status=404)
 
     async def handle_health(self, request: web.Request) -> web.Response:
