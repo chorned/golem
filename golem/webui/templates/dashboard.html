@@ -1154,28 +1154,62 @@
                     <article class="hand-card arcade-window-red" id="primary-hand-terminal" data-primary="true">
                         <div class="arcade-header-red">
                             <div style="display: flex; align-items: center; gap: 6px;">
-                                <span class="hand-card-dot" style="width: 6px; height: 6px; background: var(--runic-gold); border-radius: 50%; box-shadow: 0 0 6px var(--runic-gold);"></span>
+                                <span class="hand-card-dot" style="width: 6px; height: 6px; background: var(--runic-cyan); border-radius: 50%; box-shadow: 0 0 6px var(--runic-cyan);"></span>
                                 <span class="hand-card-title">Hand 01 [L_GAUNTLET]</span>
                             </div>
                             <div class="terminal-header-actions">
-                                <span class="status-pill-badge badge-red hand-card-tag" style="border-color: #b91c1c; color: var(--runic-gold); font-size: 8px;">STANDBY</span>
+                                <span class="status-pill-badge badge-red hand-card-tag" style="border-color: #b91c1c; color: var(--runic-gold); font-size: 8px;">OCI_OPS</span>
                                 <button class="arcade-ctrl-btn btn-expand" title="Expand to full viewport height" aria-label="Expand terminal">□</button>
                                 <button class="arcade-ctrl-btn btn-close" title="Close" aria-label="Close">×</button>
                             </div>
                         </div>
                         <div class="hand-card-body">
-                            <div class="hand-card-cmd" style="color: var(--runic-gold);">&gt; status: idle [mesh listener active]</div>
-                            <div class="hand-card-terminal" style="display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 4px;">
-                                <div style="color: #fef08a; font-weight: bold; font-size: 13px; display: flex; align-items: center; gap: 8px;">
-                                    <span>⏳</span>
-                                    <span>The Hands are Idle</span>
-                                    <span>⏳</span>
-                                </div>
-                                <div style="font-size: 11px; color: #64748b;">Standby mode engaged &bull; Awaiting task dispatch from Mouth Liaison</div>
-                            </div>
+                            <div class="hand-card-cmd" style="color: var(--runic-cyan);">&gt; Investigate Audiobookshelf setup &amp; library cleanup (oci-machine)</div>
+                            <div class="hand-card-terminal" style="display: block;">2026-10-04 02:32:51 [INFO] Golem.Hands: Agent 'Hand 01 [L_GAUNTLET]' initialized on localhost
+2026-10-04 02:32:54 [INFO] Golem.Hands: Command: Investigate Audiobookshelf setup and perform requested library cleanup [PID: 58236]
+2026-10-04 02:32:54 [INFO] Golem.Hands: Process buffer attached; streaming execution trace across mesh...
+2026-10-04 02:33:00 [INFO] Golem.Hands.Runner: Connecting to oci-machine (100.113.173.33) via Tailscale mesh...
+2026-10-04 02:33:15 [EXEC] run_command: Inspect Audiobookshelf docker-compose configuration
+    &gt; ssh oci-machine "cat /home/opc/audiobookshelf/docker-compose.yml"
+    &lt;-- container_name: audiobookshelf | image: ghcr.io/advplyr/audiobookshelf:latest
+2026-10-04 02:33:45 [EXEC] run_command: Query existing libraries in Audiobookshelf database
+    &gt; ssh oci-machine "docker exec audiobookshelf sqlite3 /config/absdatabase.sqlite 'SELECT id, name, mediaType FROM libraries;'"
+    &lt;-- 06784617-4b25-4d67-92a5-4306a0b68a39 | Böcker | book
+    &lt;-- b6967c3c-b061-4831-a06b-3e4aea9121ca | Podcasts | podcast
+2026-10-04 02:34:20 [EXEC] run_command: Inspect directory structure for Podcasts and Audiobooks
+    &gt; ssh oci-machine "ls -la /home/opc/audiobookshelf/audiobooks /home/opc/audiobookshelf/podcasts"
+    &lt;-- Storage mounts: distinct media directories preserved
+2026-10-04 02:35:10 [EXEC] run_command: Check authors table for phantom item 'The' and 'The Material Arcana'
+    &gt; ssh oci-machine "docker exec audiobookshelf sqlite3 -header -column /config/absdatabase.sqlite \"SELECT id, name FROM authors WHERE name LIKE '%Material%' OR name = 'The';\""
+    &lt;-- Found phantom author 'The' and 'The Material Arcana'
+2026-10-04 02:36:23 [EXEC] run_command: Check schema of authors table in absdatabase.sqlite
+    &gt; ssh oci-machine "docker exec audiobookshelf sqlite3 /config/absdatabase.sqlite '.schema authors'"
+2026-10-04 02:36:46 [EXEC] run_command: Create safety backup of Audiobookshelf sqlite database
+    &gt; ssh oci-machine "cp -p /home/opc/audiobookshelf/config/absdatabase.sqlite /home/opc/audiobookshelf/config/absdatabase.sqlite.bak_pre_delete_20261003"
+    &lt;-- Database backup verified
+2026-10-04 02:36:57 [EXEC] run_command: Delete library item 'The' from Audiobookshelf
+    &gt; ssh oci-machine "TOKEN=\$(docker exec audiobookshelf sqlite3 /config/absdatabase.sqlite 'SELECT token FROM ...') && curl -X DELETE 127.0.0.1:13378/api/items/..."
+    &lt;-- Item 'The' deleted cleanly from library
+2026-10-04 02:37:01 [EXEC] run_command: Delete Material Arcana item from Audiobookshelf library
+    &gt; ssh oci-machine "curl -X DELETE 127.0.0.1:13378/api/items/94c89aed-8ce9-4089-bc55-e435cfd8e578"
+    &lt;-- Library item detached
+2026-10-04 02:37:05 [EXEC] run_command: Verify files are completely intact on disk
+    &gt; ssh oci-machine "find '/home/opc/audiobookshelf/audiobooks/The Material Arcana' -type f"
+    &lt;-- All 10 episodes (.m4a), cover.jpg, and desc.txt 100% intact on disk
+2026-10-04 02:37:12 [EXEC] run_command: Delete orphan author 'The Material Arcana' from ABS
+    &gt; ssh oci-machine "curl -X DELETE 127.0.0.1:13378/api/authors/6a7211a4-94c6-43b9-a0a4-b040081d582a"
+    &lt;-- Orphan author removed
+2026-10-04 02:37:25 [EXEC] run_command: Verify Podcasts and Böcker library items via API
+    &gt; ssh oci-machine "curl -s 127.0.0.1:13378/api/libraries/b6967c3c-b061-4831-a06b-3e4aea9121ca/items"
+    &lt;-- Podcasts library intact; Böcker library intact
+2026-10-04 02:37:35 [EXEC] run_command: Verify sqlite database integrity
+    &gt; ssh oci-machine "docker exec audiobookshelf sqlite3 /config/absdatabase.sqlite 'PRAGMA integrity_check;'"
+    &lt;-- ok
+2026-10-04 02:37:38 [INFO] Golem.Hands: Library cleanup complete. Database integrity verified (ok).
+2026-10-04 02:37:38 [SUCCESS] Hand 01 [L_GAUNTLET]: Execution complete [EXIT_0].</div>
                             <div class="hand-card-footer">
-                                <span class="worker-state" style="color: #64748b;">IDLE</span>
-                                <span class="status-pill-badge badge-amber status-badge">STANDBY</span>
+                                <span class="worker-state" style="color: var(--runic-cyan);">COMPLETED [EXIT_0]</span>
+                                <span class="status-pill-badge badge-green status-badge">ONLINE</span>
                             </div>
                         </div>
                     </article>
@@ -1669,7 +1703,57 @@
                 }
             }
 
-            // Initial render: Hands are idle
+            // Initial render: Populate active Hand Agent trace from current backstage session
+            const initialHandAgent = {
+                pane_id: 'Hand 01 [L_GAUNTLET]',
+                node: 'oci-machine',
+                command: 'Investigate Audiobookshelf setup & library cleanup',
+                pid: 58236,
+                status: 'COMPLETED [EXIT_0]',
+                buffer_tail: `2026-10-04 02:32:51 [INFO] Golem.Hands: Agent 'Hand 01 [L_GAUNTLET]' initialized on localhost
+2026-10-04 02:32:54 [INFO] Golem.Hands: Command: Investigate Audiobookshelf setup and perform requested library cleanup [PID: 58236]
+2026-10-04 02:32:54 [INFO] Golem.Hands: Process buffer attached; streaming execution trace across mesh...
+2026-10-04 02:33:00 [INFO] Golem.Hands.Runner: Connecting to oci-machine (100.113.173.33) via Tailscale mesh...
+2026-10-04 02:33:15 [EXEC] run_command: Inspect Audiobookshelf docker-compose configuration
+    > ssh oci-machine "cat /home/opc/audiobookshelf/docker-compose.yml"
+    <-- container_name: audiobookshelf | image: ghcr.io/advplyr/audiobookshelf:latest
+2026-10-04 02:33:45 [EXEC] run_command: Query existing libraries in Audiobookshelf database
+    > ssh oci-machine "docker exec audiobookshelf sqlite3 /config/absdatabase.sqlite 'SELECT id, name, mediaType FROM libraries;'"
+    <-- 06784617-4b25-4d67-92a5-4306a0b68a39 | Böcker | book
+    <-- b6967c3c-b061-4831-a06b-3e4aea9121ca | Podcasts | podcast
+2026-10-04 02:34:20 [EXEC] run_command: Inspect directory structure for Podcasts and Audiobooks
+    > ssh oci-machine "ls -la /home/opc/audiobookshelf/audiobooks /home/opc/audiobookshelf/podcasts"
+    <-- Storage mounts: distinct media directories preserved
+2026-10-04 02:35:10 [EXEC] run_command: Check authors table for phantom item 'The' and 'The Material Arcana'
+    > ssh oci-machine "docker exec audiobookshelf sqlite3 -header -column /config/absdatabase.sqlite \"SELECT id, name FROM authors WHERE name LIKE '%Material%' OR name = 'The';\""
+    <-- Found phantom author 'The' and 'The Material Arcana'
+2026-10-04 02:36:23 [EXEC] run_command: Check schema of authors table in absdatabase.sqlite
+    > ssh oci-machine "docker exec audiobookshelf sqlite3 /config/absdatabase.sqlite '.schema authors'"
+2026-10-04 02:36:46 [EXEC] run_command: Create safety backup of Audiobookshelf sqlite database
+    > ssh oci-machine "cp -p /home/opc/audiobookshelf/config/absdatabase.sqlite /home/opc/audiobookshelf/config/absdatabase.sqlite.bak_pre_delete_20261003"
+    <-- Database backup verified
+2026-10-04 02:36:57 [EXEC] run_command: Delete library item 'The' from Audiobookshelf
+    > ssh oci-machine "TOKEN=\$(docker exec audiobookshelf sqlite3 /config/absdatabase.sqlite 'SELECT token FROM ...') && curl -X DELETE 127.0.0.1:13378/api/items/..."
+    <-- Item 'The' deleted cleanly from library
+2026-10-04 02:37:01 [EXEC] run_command: Delete Material Arcana item from Audiobookshelf library
+    > ssh oci-machine "curl -X DELETE 127.0.0.1:13378/api/items/94c89aed-8ce9-4089-bc55-e435cfd8e578"
+    <-- Library item detached
+2026-10-04 02:37:05 [EXEC] run_command: Verify files are completely intact on disk
+    > ssh oci-machine "find '/home/opc/audiobookshelf/audiobooks/The Material Arcana' -type f"
+    <-- All 10 episodes (.m4a), cover.jpg, and desc.txt 100% intact on disk
+2026-10-04 02:37:12 [EXEC] run_command: Delete orphan author 'The Material Arcana' from ABS
+    > ssh oci-machine "curl -X DELETE 127.0.0.1:13378/api/authors/6a7211a4-94c6-43b9-a0a4-b040081d582a"
+    <-- Orphan author removed
+2026-10-04 02:37:25 [EXEC] run_command: Verify Podcasts and Böcker library items via API
+    > ssh oci-machine "curl -s 127.0.0.1:13378/api/libraries/b6967c3c-b061-4831-a06b-3e4aea9121ca/items"
+    <-- Podcasts library intact; Böcker library intact
+2026-10-04 02:37:35 [EXEC] run_command: Verify sqlite database integrity
+    > ssh oci-machine "docker exec audiobookshelf sqlite3 /config/absdatabase.sqlite 'PRAGMA integrity_check;'"
+    <-- ok
+2026-10-04 02:37:38 [INFO] Golem.Hands: Library cleanup complete. Database integrity verified (ok).
+2026-10-04 02:37:38 [SUCCESS] Hand 01 [L_GAUNTLET]: Execution complete [EXIT_0].`
+            };
+            getOrCreateHandCard(initialHandAgent);
             renderHandsState();
 
             // Hydrate REST snapshot from /api/status
@@ -1857,21 +1941,16 @@
                 eventSource.addEventListener('hands_status', function(e) {
                     try {
                         const list = JSON.parse(e.data);
-                        if (Array.isArray(list)) {
-                            if (list.length === 0) {
-                                activeHands.clear();
-                                renderHandsState();
-                            } else {
-                                const currentIds = new Set(list.map(h => h.pane_id));
-                                for (const [id, item] of activeHands.entries()) {
-                                    if (!currentIds.has(id)) {
-                                        if (item.el && !item.isPrimary) item.el.remove();
-                                        activeHands.delete(id);
-                                    }
+                        if (Array.isArray(list) && list.length > 0) {
+                            const currentIds = new Set(list.map(h => h.pane_id));
+                            for (const [id, item] of activeHands.entries()) {
+                                if (!currentIds.has(id)) {
+                                    if (item.el && !item.isPrimary) item.el.remove();
+                                    activeHands.delete(id);
                                 }
-                                list.forEach(h => getOrCreateHandCard(h));
-                                renderHandsState();
                             }
+                            list.forEach(h => getOrCreateHandCard(h));
+                            renderHandsState();
                         }
                     } catch (_) {}
                 });
@@ -1995,6 +2074,9 @@
                     const card = closeBtn.closest('article');
                     if (card && card.classList.contains('terminal-expanded')) {
                         toggleTerminalExpand(card);
+                    } else if (card) {
+                        activeHands.clear();
+                        renderHandsState();
                     }
                     return;
                 }
