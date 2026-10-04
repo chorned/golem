@@ -2027,12 +2027,12 @@
                 }
             });
 
-            // 16-bit Low Framerate Animated Golem Background Loop (8 frames, ~3 FPS)
+            // 16-bit Low Framerate Animated Golem Background Loop (A -> Z -> A ping-pong loop)
             (function initGolemAnimation() {
                 const colossusEl = document.getElementById('colossus-img');
                 if (!colossusEl) return;
 
-                // Frame 0 is the original background PNG; frames 1-7 provide an authentic 8-frame Nano Banana breath loop
+                // 8 frames generated with Nano Banana
                 const frames = [
                     '/colossus.png',
                     '/static/colossus_1.png',
@@ -2044,18 +2044,27 @@
                     '/static/colossus_7.png'
                 ];
 
-                // Preload frames to eliminate flicker
+                // Preload all frames to ensure zero flicker
                 frames.forEach(src => {
                     const img = new Image();
                     img.src = src;
                 });
 
                 let frameIdx = 0;
-                // ~3 FPS low framerate breathing cadence (320ms per frame = ~2.56s per breath cycle)
+                let direction = 1; // 1 = forward (A -> Z), -1 = reverse (Z -> A)
+
+                // Slightly increased framerate: 220ms (~4.5 FPS)
                 setInterval(() => {
-                    frameIdx = (frameIdx + 1) % frames.length;
+                    frameIdx += direction;
+                    if (frameIdx >= frames.length - 1) {
+                        frameIdx = frames.length - 1;
+                        direction = -1; // Reverse direction toward A
+                    } else if (frameIdx <= 0) {
+                        frameIdx = 0;
+                        direction = 1; // Forward direction toward Z
+                    }
                     colossusEl.src = frames[frameIdx];
-                }, 320);
+                }, 220);
             })();
 
             connectSSE();
