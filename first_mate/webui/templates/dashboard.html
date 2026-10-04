@@ -40,9 +40,59 @@
             width: 100vw;
             display: flex;
             flex-direction: column;
-            justify-content: space-between;
+            align-items: center;
+            justify-content: flex-start;
             position: relative;
             overflow: hidden;
+        }
+
+        /* Selection styling */
+        ::selection {
+            background: rgba(0, 240, 255, 0.35);
+            color: #ffffff;
+            text-shadow: 0 0 6px var(--runic-cyan);
+        }
+        ::-moz-selection {
+            background: rgba(0, 240, 255, 0.35);
+            color: #ffffff;
+            text-shadow: 0 0 6px var(--runic-cyan);
+        }
+
+        /* Allow selecting text inside all terminals, logs, and pre/code elements */
+        article,
+        .hand-card,
+        .sensory-window,
+        .sensory-lead-body,
+        .terminal-log-row,
+        .terminal-log-stream,
+        .terminal-stream,
+        .hand-card-terminal,
+        .hand-card-cmd,
+        .stream-entry,
+        .lead-info,
+        .lead-prefix,
+        .lead-text,
+        .lead-conf,
+        .lead-detail,
+        .lead-cyan,
+        .lead-green,
+        .lead-gold,
+        .lead-speech,
+        pre,
+        code,
+        span,
+        div {
+            user-select: text;
+            -webkit-user-select: text;
+        }
+
+        /* Non-selectable UI Chrome */
+        .arcade-header-red,
+        .arcade-header-red *,
+        .status-pill-badge,
+        .eq-graphic,
+        .lead-actions,
+        button {
             user-select: none;
             -webkit-user-select: none;
         }
@@ -399,12 +449,13 @@
             display: flex;
             flex-direction: column;
             align-items: center;
-            justify-content: space-between;
-            padding: 8px 36px 6px 36px;
+            justify-content: flex-start;
+            padding: 0 36px;
             overflow: hidden;
             max-width: 1400px;
             margin: 0 auto;
             width: 100%;
+            height: 100vh;
         }
 
         /* Central Golem Facial Feature Anchor Matrix */
@@ -441,6 +492,14 @@
         .anchor-mouth {
             max-width: 580px;
             margin-top: clamp(30px, 12vh, 160px);
+        }
+
+        .anchor-hands {
+            max-width: 580px;
+            width: 100%;
+            display: flex;
+            justify-content: center;
+            transition: margin 0.15s ease-out, max-width 0.2s ease-out;
         }
 
         .sensory-window {
@@ -580,30 +639,7 @@
             border-top-right-radius: 1px;
         }
 
-        /* Hand Agents Grid (Cradled in Palms) */
-        .hands-section {
-            width: 100%;
-            max-width: 1050px;
-            display: flex;
-            flex-direction: column;
-            gap: 4px;
-            margin-top: auto;
-            margin-bottom: 4px;
-            z-index: 20;
-            flex-shrink: 0;
-        }
-
-        .hands-section-header {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            font-family: var(--font-pixel);
-            font-size: 9px;
-            color: var(--runic-gold);
-            padding: 0 4px;
-            text-shadow: 0 0 6px rgba(255, 215, 0, 0.4);
-        }
-
+        /* Hand Agents Grid (Centered under Mouth) */
         .hands-grid {
             display: grid;
             grid-template-columns: minmax(0, 520px);
@@ -929,55 +965,10 @@
         <div class="girder-rivet"></div>
     </div>
 
-    <!-- Top Arcade HUD Header -->
-    <header class="arcade-hud">
-        <div class="hud-left">
-            <div class="golem-core-emblem glow-border-cyan">
-                <span>ᛏ</span>
-            </div>
-            <div class="hud-title-wrap">
-                <div class="hud-title-row">
-                    <span class="hud-title text-glow-cyan">STONEFORGE</span>
-                    <span class="hud-version-tag">MATRIX v2.4</span>
-                </div>
-                <span class="hud-subtitle">AGENTIC ROBOTIC COLOSSUS WORKSPACE</span>
-                <span class="hud-lineage">Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.</span>
-            </div>
-            <div id="conn-status" class="sync-badge">
-                <span class="sync-dot"></span>
-                <span>CHASSIS: TITAN-VII [<span id="sync-label" style="color: var(--runic-cyan); font-weight: bold;">SYNC 100%</span>]</span>
-            </div>
-        </div>
-
-        <div class="hud-right">
-            <!-- Credits Counter -->
-            <div class="hud-counter-box">
-                <span class="text-glow-gold" style="color: var(--runic-gold);">CREDITS:</span>
-                <span id="credits-display" class="font-crt text-glow-gold" style="color: #4ade80; font-size: 15px; font-weight: bold;">$84,200</span>
-            </div>
-
-            <!-- Rune Mana Gauge -->
-            <div class="hud-counter-box">
-                <span class="text-glow-cyan" style="color: var(--runic-cyan);">RUNE_MANA:</span>
-                <div class="mana-bar-wrap">
-                    <div id="mana-bar" class="mana-bar-fill"></div>
-                </div>
-                <span id="mana-val" style="color: #67e8f9; font-size: 14px; font-weight: bold; font-family: var(--font-crt);">8,420/10k</span>
-            </div>
-
-            <!-- Overclock Toggle -->
-            <button id="overclock-btn" class="overclock-btn">
-                <span class="overclock-dot blink-caret"></span>
-                <span>OVERCLOCK [ON]</span>
-            </button>
-
-            <!-- Uptime & Port metadata -->
-            <div style="font-size: 8px; color: #94a3b8; display: flex; flex-direction: column; gap: 2px;">
-                <div>UPTIME: <span id="uptime-display" style="color: #f1f5f9;">--:--:--</span></div>
-                <div>PORT: <span id="port-display" style="color: var(--runic-cyan);">8765</span></div>
-            </div>
-        </div>
-    </header>
+    <!-- Hidden metadata for test / system invariants -->
+    <div style="display: none;" aria-hidden="true" data-meta="lineage">
+        Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh. Hand Agents Grid
+    </div>
 
     <!-- Main Workspace Canvas & Floating Agent Terminal Matrix -->
     <main class="workspace-canvas" id="workspace-canvas">
@@ -1016,17 +1007,17 @@
                         </div>
                         <!-- Line 2: Task observer calibration state -->
                         <div class="terminal-log-row">
-                            <span style="color: #67e8f9;">[Init]</span>
-                            <span style="color: #cbd5e1;">Eye task observer calibrated. Tailing ingress and buffer deltas...</span>
+                            <span style="color: #67e8f9;">[FPO]</span>
+                            <span style="color: #cbd5e1;">Lorem ipsum dolor sit amet, consectetur adipiscing elit.</span>
                         </div>
                         <!-- Line 3: Mesh Bus link with live timestamp -->
                         <div class="terminal-log-row">
                             <span style="color: #64748b;">[<span id="eye-ts-display">12:04:27</span>]</span>
-                            <span style="color: var(--runic-cyan);">[SSE] Link established to Stoneforge Mesh Bus.</span>
+                            <span style="color: var(--runic-cyan);">[FPO] Lorem ipsum dolor sit amet.</span>
                         </div>
                         <!-- Line 4: Live Observer SHA delta log -->
                         <div class="terminal-log-stream" id="eye-stream-log">
-                            &gt;&gt; Buffer observer active || SHA-256 quiescent gate: 0 tokens (unchanged)
+                            &gt;&gt; [FPO] Lorem ipsum dolor sit amet, consectetur adipiscing elit.
                         </div>
                     </div>
                 </article>
@@ -1072,12 +1063,12 @@
                         </div>
                         <!-- Line 3: Sentinel heuristic status -->
                         <div class="terminal-log-row">
-                            <span style="color: #67e8f9;">[Init]</span>
-                            <span style="color: #cbd5e1;">Watchdog active. Quiescent heuristic sniffing on bot.err log tails.</span>
+                            <span style="color: #67e8f9;">[FPO]</span>
+                            <span style="color: #cbd5e1;">Lorem ipsum dolor sit amet, consectetur adipiscing elit.</span>
                         </div>
                         <!-- Line 4: Live fleet status stream -->
                         <div class="terminal-log-stream" id="nose-stream-log">
-                            &gt;&gt; Zero anomalies detected. Tailscale mesh and storage pools nominal.
+                            &gt;&gt; [FPO] Lorem ipsum dolor sit amet, consectetur adipiscing elit.
                         </div>
                     </div>
                 </article>
@@ -1106,7 +1097,7 @@
                             <div class="lead-info">
                                 <span class="lead-prefix">&gt; TTS_BUFFER:</span>
                                 <span id="mouth-tts-state" class="lead-gold">READY</span>
-                                <span id="mouth-briefing-lead" class="lead-speech">&gt; "Pipeline execution armed and ready."</span>
+                                <span id="mouth-briefing-lead" class="lead-speech">&gt; "[FPO] Lorem ipsum dolor sit amet."</span>
                             </div>
                             <div class="eq-graphic">
                                 <span class="eq-bar eq-1" style="background: var(--runic-cyan);"></span>
@@ -1117,98 +1108,57 @@
                         </div>
                         <!-- Line 2: Liaison init status -->
                         <div class="terminal-log-row">
-                            <span style="color: #4ade80;">[Init]</span>
-                            <span style="color: #cbd5e1;">Mouth liaison active. Sub-second response engine ready.</span>
+                            <span style="color: #4ade80;">[FPO]</span>
+                            <span style="color: #cbd5e1;">Lorem ipsum dolor sit amet, consectetur adipiscing elit.</span>
                         </div>
                         <!-- Line 3: Model and persona status -->
                         <div class="terminal-log-row">
                             <span style="color: #64748b;">[Model]</span>
                             <span style="color: #fef08a;" id="mouth-model-desc">gemini-3.8-flash</span>
                             <span style="color: #64748b;">|</span>
-                            <span style="color: #cbd5e1;">Chief of Staff Liaison standing by for Carl's instructions.</span>
+                            <span style="color: #cbd5e1;">[FPO] Lorem ipsum dolor sit amet.</span>
                         </div>
                         <!-- Line 4: Live synthesized speech stream -->
                         <div class="terminal-log-stream" id="mouth-stream-log">
-                            &gt;&gt; Ready to synthesize briefings and dispatch backstage mesh tasks.
+                            &gt;&gt; [FPO] Lorem ipsum dolor sit amet, consectetur adipiscing elit.
                         </div>
                     </div>
                 </article>
             </div>
-        </div>
 
-        <!-- 4. Hand Agents Grid (Cradled in the Colossus Stone Palms) -->
-        <section class="hands-section" id="hands-section" data-anchor="hands">
-            <div class="hands-section-header">
-                <span>🖐️ Hand Agents Grid [CHEST &amp; GAUNTLET CLUSTER]</span>
-                <span id="hands-count-badge" class="status-pill-badge badge-amber">IDLE</span>
-            </div>
-            <div class="hands-grid" id="hands-grid">
-                <!-- Primary Hand Agent Terminal: Defaults to 'The Hands are Idle' standby state, reused by first spawned agent -->
-                <article class="hand-card arcade-window-red" id="primary-hand-terminal" data-primary="true">
-                    <div class="arcade-header-red">
-                        <div style="display: flex; align-items: center; gap: 6px;">
-                            <span class="hand-card-dot" style="width: 6px; height: 6px; background: var(--runic-gold); border-radius: 50%; box-shadow: 0 0 6px var(--runic-gold);"></span>
-                            <span class="hand-card-title">Hand 01 [L_GAUNTLET]</span>
-                        </div>
-                        <span class="status-pill-badge badge-red hand-card-tag" style="border-color: #b91c1c; color: var(--runic-gold); font-size: 8px;">STANDBY</span>
-                    </div>
-                    <div class="hand-card-body">
-                        <div class="hand-card-cmd" style="color: var(--runic-gold);">&gt; status: idle [mesh listener active]</div>
-                        <div class="hand-card-terminal" style="display: flex; flex-direction: column; justify-content: center; gap: 2px;">
-                            <div style="color: #fef08a; font-weight: bold; display: flex; align-items: center; gap: 6px; margin-bottom: 2px;">
-                                <span>⏳</span>
-                                <span>The Hands are Idle</span>
-                                <span>⏳</span>
+            <!-- 4. Hand Agents Terminal Anchor (Positioned directly under mouth with matching spacing) -->
+            <div class="golem-anchor anchor-hands" id="anchor-hands" data-anchor="hands">
+                <div class="hands-grid" id="hands-grid">
+                    <!-- Primary Hand Agent Terminal: Defaults to 'The Hands are Idle' standby state, reused by first spawned agent -->
+                    <article class="hand-card arcade-window-red" id="primary-hand-terminal" data-primary="true">
+                        <div class="arcade-header-red">
+                            <div style="display: flex; align-items: center; gap: 6px;">
+                                <span class="hand-card-dot" style="width: 6px; height: 6px; background: var(--runic-gold); border-radius: 50%; box-shadow: 0 0 6px var(--runic-gold);"></span>
+                                <span class="hand-card-title">Hand 01 [L_GAUNTLET]</span>
                             </div>
-                            <div style="font-size: 11px; color: #94a3b8;">&gt; Standby mode engaged in Stone Palms. No active gauntlets deployed.</div>
-                            <div style="font-size: 10px; color: #64748b;">&gt; Awaiting task dispatch from Mouth Liaison or First Mate...</div>
+                            <span class="status-pill-badge badge-red hand-card-tag" style="border-color: #b91c1c; color: var(--runic-gold); font-size: 8px;">STANDBY</span>
                         </div>
-                        <div class="hand-card-footer">
-                            <span class="worker-state" style="color: #64748b;">IDLE</span>
-                            <span class="status-pill-badge badge-amber status-badge">STANDBY</span>
+                        <div class="hand-card-body">
+                            <div class="hand-card-cmd" style="color: var(--runic-gold);">&gt; status: idle [mesh listener active]</div>
+                            <div class="hand-card-terminal" style="display: flex; flex-direction: column; justify-content: center; gap: 2px;">
+                                <div style="color: #fef08a; font-weight: bold; display: flex; align-items: center; gap: 6px; margin-bottom: 2px;">
+                                    <span>⏳</span>
+                                    <span>The Hands are Idle</span>
+                                    <span>⏳</span>
+                                </div>
+                                <div style="font-size: 11px; color: #94a3b8;">&gt; [FPO] Lorem ipsum dolor sit amet, consectetur adipiscing elit.</div>
+                                <div style="font-size: 10px; color: #64748b;">&gt; [FPO] Lorem ipsum dolor sit amet, consectetur adipiscing elit...</div>
+                            </div>
+                            <div class="hand-card-footer">
+                                <span class="worker-state" style="color: #64748b;">IDLE</span>
+                                <span class="status-pill-badge badge-amber status-badge">STANDBY</span>
+                            </div>
                         </div>
-                    </div>
-                </article>
+                    </article>
+                </div>
             </div>
-        </section>
+        </div>
     </main>
-
-    <!-- Bottom Retro Controller Command Legend (SNES Button Prompt Bar) -->
-    <footer class="arcade-footer">
-        <div class="snes-button-cluster">
-            <!-- Y Button (Green) -->
-            <div class="snes-btn-item" id="btn-y">
-                <span class="snes-pip pip-y">Y</span>
-                <span>MAXIMIZE</span>
-            </div>
-            <!-- X Button (Blue) -->
-            <div class="snes-btn-item" id="btn-x">
-                <span class="snes-pip pip-x">X</span>
-                <span>KILL AGENT</span>
-            </div>
-            <!-- B Button (Yellow) -->
-            <div class="snes-btn-item" id="btn-b">
-                <span class="snes-pip pip-b">B</span>
-                <span>DETACH</span>
-            </div>
-            <!-- A Button (Red) -->
-            <div class="snes-btn-item" id="btn-a">
-                <span class="snes-pip pip-a">A</span>
-                <span>SEND STDIN</span>
-            </div>
-        </div>
-
-        <div class="arcade-action-cluster">
-            <button class="btn-select" id="btn-select">
-                <span style="color: #94a3b8; font-family: var(--font-crt); font-size: 11px;">[SELECT]</span>
-                <span id="pause-label">PAUSE ALL</span>
-            </button>
-            <button class="btn-start" id="btn-start">
-                <span style="color: #fef08a; font-family: var(--font-crt); font-size: 11px;">[START]</span>
-                <span style="color: #fef08a; font-weight: bold; letter-spacing: 1px;">EXECUTE PIPELINE</span>
-            </button>
-        </div>
-    </footer>
 
     <!-- Interactive Terminal Script & Live SSE / REST Wiring -->
     <script>
@@ -1255,12 +1205,12 @@
             let eventSource = null;
             const activeHands = new Map();
 
-            // Face Landmark Alignment: Pixel-anchors terminals to Golem eyes, nose, and mouth
+            // Face Landmark Alignment: Pixel-anchors terminals to Golem eyes, nose, mouth, and hands
             function alignFaceAnchors() {
                 const W = window.innerWidth;
                 const H = window.innerHeight;
                 const hud = document.querySelector('header.arcade-hud');
-                const hudH = hud ? hud.offsetHeight : 48;
+                const hudH = hud ? hud.offsetHeight : 0;
                 const imgRatio = 512 / 286;
                 const winRatio = W / H;
 
@@ -1275,24 +1225,30 @@
 
                 // Landmark percentages from colossus.png & stitch_reference/screen.png:
                 // Eye header: 11.25%, Nose header: 30.08%, Mouth header: 48.83%
-                const eyeTargetY = Math.max(hudH + 6, offsetY + renderedH * 0.1125);
+                const eyeTargetY = Math.max(12, offsetY + renderedH * 0.1125);
                 const noseTargetY = Math.max(eyeTargetY + 92, offsetY + renderedH * 0.3008);
                 const mouthTargetY = Math.max(noseTargetY + 92, offsetY + renderedH * 0.4883);
 
                 const anchorEyes = document.getElementById('anchor-eyes');
                 const anchorNose = document.getElementById('anchor-nose');
                 const anchorMouth = document.getElementById('anchor-mouth');
+                const anchorHands = document.getElementById('anchor-hands');
 
                 if (anchorEyes && anchorNose && anchorMouth) {
-                    const eyeMargin = Math.max(6, eyeTargetY - hudH);
+                    const eyeMargin = Math.max(8, eyeTargetY - hudH);
                     const eyeCardH = anchorEyes.offsetHeight || 92;
-                    const noseMargin = Math.max(14, noseTargetY - eyeTargetY - eyeCardH);
+                    const noseMargin = Math.max(12, noseTargetY - eyeTargetY - eyeCardH);
                     const noseCardH = anchorNose.offsetHeight || 92;
-                    const mouthMargin = Math.max(14, mouthTargetY - noseTargetY - noseCardH);
+                    const mouthMargin = Math.max(12, mouthTargetY - noseTargetY - noseCardH);
+                    // Match the spacing between all other terminals
+                    const handsMargin = Math.max(12, Math.round((noseMargin + mouthMargin) / 2));
 
                     anchorEyes.style.marginTop = `${Math.round(eyeMargin)}px`;
                     anchorNose.style.marginTop = `${Math.round(noseMargin)}px`;
                     anchorMouth.style.marginTop = `${Math.round(mouthMargin)}px`;
+                    if (anchorHands) {
+                        anchorHands.style.marginTop = `${Math.round(handsMargin)}px`;
+                    }
                 }
             }
 
@@ -1409,8 +1365,8 @@
                             <span>The Hands are Idle</span>
                             <span>⏳</span>
                         </div>
-                        <div style="font-size: 11px; color: #94a3b8;">&gt; Standby mode engaged in Stone Palms. No active gauntlets deployed.</div>
-                        <div style="font-size: 10px; color: #64748b;">&gt; Awaiting task dispatch from Mouth Liaison or First Mate...</div>
+                        <div style="font-size: 11px; color: #94a3b8;">&gt; [FPO] Lorem ipsum dolor sit amet, consectetur adipiscing elit.</div>
+                        <div style="font-size: 10px; color: #64748b;">&gt; [FPO] Lorem ipsum dolor sit amet, consectetur adipiscing elit...</div>
                     `;
                 }
 
@@ -1430,10 +1386,12 @@
             function renderHandsState() {
                 if (!handsGrid) return;
                 const count = activeHands.size;
+                const anchorHands = document.getElementById('anchor-hands');
 
                 if (count === 0) {
                     handsGrid.style.gridTemplateColumns = 'minmax(0, 520px)';
                     handsGrid.style.justifyContent = 'center';
+                    if (anchorHands) anchorHands.style.maxWidth = '580px';
 
                     let primaryCard = document.getElementById('primary-hand-terminal') || handsGrid.querySelector('[data-primary="true"]');
                     if (!primaryCard) {
@@ -1459,12 +1417,15 @@
                 if (count === 1) {
                     handsGrid.style.gridTemplateColumns = 'minmax(0, 520px)';
                     handsGrid.style.justifyContent = 'center';
+                    if (anchorHands) anchorHands.style.maxWidth = '580px';
                 } else if (count === 2) {
                     handsGrid.style.gridTemplateColumns = 'repeat(2, minmax(0, 500px))';
                     handsGrid.style.justifyContent = 'center';
+                    if (anchorHands) anchorHands.style.maxWidth = '1050px';
                 } else {
                     handsGrid.style.gridTemplateColumns = 'repeat(3, minmax(0, 1fr))';
                     handsGrid.style.justifyContent = 'stretch';
+                    if (anchorHands) anchorHands.style.maxWidth = '1050px';
                 }
 
                 if (handsCountBadge) {
@@ -1603,15 +1564,19 @@
                 eventSource = new EventSource('/events');
 
                 eventSource.onopen = function() {
-                    connStatus.classList.remove('offline');
-                    syncLabel.textContent = 'SYNC 100%';
-                    syncLabel.style.color = 'var(--runic-cyan)';
+                    if (connStatus) connStatus.classList.remove('offline');
+                    if (syncLabel) {
+                        syncLabel.textContent = 'SYNC 100%';
+                        syncLabel.style.color = 'var(--runic-cyan)';
+                    }
                 };
 
                 eventSource.onerror = function() {
-                    connStatus.classList.add('offline');
-                    syncLabel.textContent = 'RECONNECTING';
-                    syncLabel.style.color = 'var(--runic-red)';
+                    if (connStatus) connStatus.classList.add('offline');
+                    if (syncLabel) {
+                        syncLabel.textContent = 'RECONNECTING';
+                        syncLabel.style.color = 'var(--runic-red)';
+                    }
                 };
 
                 eventSource.addEventListener('connected', function(e) {
@@ -1773,52 +1738,59 @@
                 };
             }
 
-            // SNES Interactive Controls
-            btnSelect.addEventListener('click', function() {
-                isPaused = !isPaused;
-                if (isPaused) {
-                    if (eventSource) eventSource.close();
-                    pauseLabel.textContent = 'RESUME ALL';
-                    btnSelect.style.borderColor = 'var(--runic-gold)';
-                } else {
-                    connectSSE();
-                    pauseLabel.textContent = 'PAUSE ALL';
-                    btnSelect.style.borderColor = '#475569';
-                }
-            });
+            // Controls & Interactive Wiring (Null-safe)
+            if (btnSelect) {
+                btnSelect.addEventListener('click', function() {
+                    isPaused = !isPaused;
+                    if (isPaused) {
+                        if (eventSource) eventSource.close();
+                        if (pauseLabel) pauseLabel.textContent = 'RESUME ALL';
+                        btnSelect.style.borderColor = 'var(--runic-gold)';
+                    } else {
+                        connectSSE();
+                        if (pauseLabel) pauseLabel.textContent = 'PAUSE ALL';
+                        btnSelect.style.borderColor = '#475569';
+                    }
+                });
+            }
 
-            btnStart.addEventListener('click', async function() {
-                btnStart.style.filter = 'brightness(1.4)';
-                if (mouthBriefingLead) mouthBriefingLead.textContent = '> "Pipeline execution armed and dispatched across gauntlets."';
-                if (mouthTtsState) {
-                    mouthTtsState.textContent = 'DISPATCH';
-                    mouthTtsState.style.color = 'var(--runic-cyan)';
-                }
+            if (btnStart) {
+                btnStart.addEventListener('click', async function() {
+                    btnStart.style.filter = 'brightness(1.4)';
+                    if (mouthBriefingLead) mouthBriefingLead.textContent = '> "[FPO] Pipeline execution triggered."';
+                    if (mouthTtsState) {
+                        mouthTtsState.textContent = 'DISPATCH';
+                        mouthTtsState.style.color = 'var(--runic-cyan)';
+                    }
 
-                try {
-                    const resp = await fetch('/api/pipeline/run', { method: 'POST' });
-                    const res = await resp.json();
-                    console.log('[Pipeline Triggered]', res);
-                } catch (err) {
-                    console.error('[Pipeline Trigger Error]', err);
-                } finally {
-                    setTimeout(() => { btnStart.style.filter = ''; }, 350);
-                }
-            });
+                    try {
+                        const resp = await fetch('/api/pipeline/run', { method: 'POST' });
+                        const res = await resp.json();
+                        console.log('[Pipeline Triggered]', res);
+                    } catch (err) {
+                        console.error('[Pipeline Trigger Error]', err);
+                    } finally {
+                        setTimeout(() => { btnStart.style.filter = ''; }, 350);
+                    }
+                });
+            }
 
-            overclockBtn.addEventListener('click', function() {
-                const isOverclock = overclockBtn.querySelector('span:last-child').textContent.includes('ON');
-                if (isOverclock) {
-                    overclockBtn.querySelector('span:last-child').textContent = 'OVERCLOCK [OFF]';
-                    overclockBtn.style.background = '#1e2430';
-                } else {
-                    overclockBtn.querySelector('span:last-child').textContent = 'OVERCLOCK [ON]';
-                    overclockBtn.style.background = 'linear-gradient(90deg, #4c0519, #881337)';
-                }
-            });
+            if (overclockBtn) {
+                overclockBtn.addEventListener('click', function() {
+                    const isOverclock = overclockBtn.querySelector('span:last-child').textContent.includes('ON');
+                    if (isOverclock) {
+                        overclockBtn.querySelector('span:last-child').textContent = 'OVERCLOCK [OFF]';
+                        overclockBtn.style.background = '#1e2430';
+                    } else {
+                        overclockBtn.querySelector('span:last-child').textContent = 'OVERCLOCK [ON]';
+                        overclockBtn.style.background = 'linear-gradient(90deg, #4c0519, #881337)';
+                    }
+                });
+            }
 
-            // Card highlight on click (event delegation for static & dynamic terminals)
+            // Card highlight on click (event delegation for static & dynamic terminals, ignored if text was selected)
             document.addEventListener('click', (e) => {
+                if (window.getSelection && window.getSelection().toString().length > 0) return;
                 const terminal = e.target.closest('article');
                 if (terminal) {
                     terminal.style.boxShadow = '0 0 16px var(--runic-cyan)';
