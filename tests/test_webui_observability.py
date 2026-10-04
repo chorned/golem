@@ -339,6 +339,18 @@ class TestWebUIEndpoints(unittest.IsolatedAsyncioTestCase):
             hands = await resp.json()
             self.assertIsInstance(hands, list)
 
+        # Hands with active multi-agent registration and initial execution log trace
+        self.server.register_active_hand("Hand 01 [L_GAUNTLET]", "localhost", "pytest tests/", 101)
+        self.server.register_active_hand("Hand 02 [R_GAUNTLET]", "localhost", "git diff", 102)
+        async with self.session.get(f"{self.base_url}/api/sensory/hands") as resp:
+            self.assertEqual(resp.status, 200)
+            hands = await resp.json()
+            self.assertEqual(len(hands), 2)
+            self.assertIn("Golem.Hands: Agent 'Hand 01 [L_GAUNTLET]'", hands[0]["buffer_tail"])
+            self.assertIn("Golem.Hands: Agent 'Hand 02 [R_GAUNTLET]'", hands[1]["buffer_tail"])
+        self.server.unregister_active_hand("Hand 01 [L_GAUNTLET]")
+        self.server.unregister_active_hand("Hand 02 [R_GAUNTLET]")
+
         # Unknown organ -> 404
         async with self.session.get(f"{self.base_url}/api/sensory/ears") as resp:
             self.assertEqual(resp.status, 404)

@@ -143,21 +143,27 @@ class WebUIServer:
 
     def register_active_hand(self, pane_id: str, node: str, command: str, pid: int) -> None:
         """Register an active hand agent running backstage."""
+        now_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+        initial_log = (
+            f"{now_str} [INFO] Golem.Hands: Agent '{pane_id}' initialized on {node}\n"
+            f"{now_str} [INFO] Golem.Hands: Command: {command} [PID: {pid}]\n"
+            f"{now_str} [INFO] Golem.Hands: Process buffer attached; streaming execution trace...\n"
+        )
         self._active_hands[pane_id] = {
             "pane_id": pane_id,
             "node": node,
             "command": command,
             "pid": pid,
             "status": "RUNNING",
-            "buffer_tail": "",
+            "buffer_tail": initial_log,
         }
 
     def update_hand_buffer(self, pane_id: str, delta: str) -> None:
         """Append output delta to an active hand's buffer tail."""
         if pane_id in self._active_hands:
             tail = self._active_hands[pane_id].get("buffer_tail", "") + delta
-            if len(tail) > 2048:
-                tail = tail[-2048:]
+            if len(tail) > 4096:
+                tail = tail[-4096:]
             self._active_hands[pane_id]["buffer_tail"] = tail
 
     def unregister_active_hand(self, pane_id: str) -> None:
@@ -233,6 +239,7 @@ class WebUIServer:
             "command": cmd,
             "pid": pid,
             "status": "RUNNING",
+            "buffer_tail": self._active_hands[pane_id]["buffer_tail"],
         })
         self.broadcast("eye_log", {
             "message": f"OBSERVING: {cmd} [PID: {pid}]",
