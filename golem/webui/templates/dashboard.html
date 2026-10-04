@@ -2027,19 +2027,21 @@
                 }
             });
 
-            // 16-bit Low Framerate Animated Golem Background Loop (~3 FPS)
+            // 16-bit Low Framerate Animated Golem Background Loop (8 frames, ~3 FPS)
             (function initGolemAnimation() {
                 const colossusEl = document.getElementById('colossus-img');
                 if (!colossusEl) return;
 
-                // Frame 0 is the original background PNG; frames 1-5 provide 16-bit breathing & runic glow
+                // Frame 0 is the original background PNG; frames 1-7 provide an authentic 8-frame Nano Banana breath loop
                 const frames = [
                     '/colossus.png',
                     '/static/colossus_1.png',
                     '/static/colossus_2.png',
                     '/static/colossus_3.png',
                     '/static/colossus_4.png',
-                    '/static/colossus_5.png'
+                    '/static/colossus_5.png',
+                    '/static/colossus_6.png',
+                    '/static/colossus_7.png'
                 ];
 
                 // Preload frames to eliminate flicker
@@ -2049,11 +2051,11 @@
                 });
 
                 let frameIdx = 0;
-                // ~3 FPS low framerate animation (330ms per frame)
+                // ~3 FPS low framerate breathing cadence (320ms per frame = ~2.56s per breath cycle)
                 setInterval(() => {
                     frameIdx = (frameIdx + 1) % frames.length;
                     colossusEl.src = frames[frameIdx];
-                }, 330);
+                }, 320);
             })();
 
             connectSSE();

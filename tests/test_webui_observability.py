@@ -287,6 +287,33 @@ class TestWebUIEndpoints(unittest.IsolatedAsyncioTestCase):
             self.assertIn("Mouth Agent", html)
             self.assertIn("Hand Agents Grid", html)
 
+    async def test_colossus_frames_and_expand_cta(self):
+        """Verify 8-frame Nano Banana breath animation sequence and expand CTAs."""
+        async with self.session.get(f"{self.base_url}/") as resp:
+            html = await resp.text()
+            self.assertIn("btn-expand", html)
+            self.assertIn("terminal-expanded", html)
+            self.assertIn("initGolemAnimation", html)
+
+        # Base image
+        async with self.session.get(f"{self.base_url}/colossus.png") as resp:
+            self.assertEqual(resp.status, 200)
+            self.assertEqual(resp.headers.get("Content-Type"), "image/png")
+            await resp.read()
+
+        # 8 Frames
+        for i in range(8):
+            async with self.session.get(f"{self.base_url}/colossus_{i}.png") as resp:
+                self.assertEqual(resp.status, 200)
+                self.assertEqual(resp.headers.get("Content-Type"), "image/png")
+                await resp.read()
+
+        for i in range(1, 8):
+            async with self.session.get(f"{self.base_url}/static/colossus_{i}.png") as resp:
+                self.assertEqual(resp.status, 200)
+                self.assertEqual(resp.headers.get("Content-Type"), "image/png")
+                await resp.read()
+
     async def test_health_endpoints(self):
         """Verify GET /health and GET /healthz return status ok."""
         for path in ["/health", "/healthz"]:
