@@ -429,32 +429,73 @@
         }
 
         .anchor-eyes {
-            max-width: 540px;
-            margin-top: clamp(16px, 8vh, 100px);
+            max-width: 580px;
+            margin-top: clamp(14px, 6vh, 80px);
         }
 
         .anchor-nose {
-            max-width: 440px;
-            margin-top: clamp(40px, 15vh, 200px);
+            max-width: 520px;
+            margin-top: clamp(30px, 12vh, 160px);
         }
 
         .anchor-mouth {
-            max-width: 540px;
-            margin-top: clamp(40px, 15vh, 200px);
+            max-width: 580px;
+            margin-top: clamp(30px, 12vh, 160px);
         }
 
         .sensory-window {
             width: 100%;
         }
 
-        .compact-lead-body {
+        .sensory-lead-body {
             font-family: var(--font-crt);
-            font-size: 15px;
-            line-height: 1.2;
+            font-size: 14px;
+            line-height: 1.35;
             background: rgba(7, 9, 14, 0.95);
-            padding: 6px 10px;
+            padding: 6px 10px 8px 10px;
             color: #e2e8f0;
             border-top: 1px solid #1e2430;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            min-height: 84px;
+        }
+
+        .terminal-log-row {
+            font-family: var(--font-crt);
+            font-size: 13px;
+            line-height: 1.3;
+            color: #94a3b8;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .terminal-log-stream {
+            font-family: var(--font-crt);
+            font-size: 12px;
+            line-height: 1.3;
+            color: #64748b;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .compact-lead-body {
+            font-family: var(--font-crt);
+            font-size: 14px;
+            line-height: 1.35;
+            background: rgba(7, 9, 14, 0.95);
+            padding: 6px 10px 8px 10px;
+            color: #e2e8f0;
+            border-top: 1px solid #1e2430;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            min-height: 84px;
         }
 
         .sensory-lead-row {
@@ -958,7 +999,8 @@
                             <span style="cursor: pointer;">×</span>
                         </div>
                     </div>
-                    <div class="compact-lead-body">
+                    <div class="sensory-lead-body">
+                        <!-- Line 1: Real-time Frame Diff Detection -->
                         <div class="sensory-lead-row">
                             <div class="lead-info">
                                 <span class="lead-prefix">&gt; DETECTED:</span>
@@ -970,6 +1012,20 @@
                                 <span style="width: 8px; height: 8px; border-radius: 2px; background: var(--runic-cyan); box-shadow: 0 0 6px var(--runic-cyan);" class="pulse-cyan"></span>
                                 <span style="display: inline-block; width: 6px; height: 14px; background: #4ade80;" class="blink-caret"></span>
                             </div>
+                        </div>
+                        <!-- Line 2: Task observer calibration state -->
+                        <div class="terminal-log-row">
+                            <span style="color: #67e8f9;">[Init]</span>
+                            <span style="color: #cbd5e1;">Eye task observer calibrated. Tailing ingress and buffer deltas...</span>
+                        </div>
+                        <!-- Line 3: Mesh Bus link with live timestamp -->
+                        <div class="terminal-log-row">
+                            <span style="color: #64748b;">[<span id="eye-ts-display">12:04:27</span>]</span>
+                            <span style="color: var(--runic-cyan);">[SSE] Link established to Stoneforge Mesh Bus.</span>
+                        </div>
+                        <!-- Line 4: Live Observer SHA delta log -->
+                        <div class="terminal-log-stream" id="eye-stream-log">
+                            &gt;&gt; Buffer observer active || SHA-256 quiescent gate: 0 tokens (unchanged)
                         </div>
                     </div>
                 </article>
@@ -992,7 +1048,8 @@
                             <span style="cursor: pointer;">×</span>
                         </div>
                     </div>
-                    <div class="compact-lead-body">
+                    <div class="sensory-lead-body">
+                        <!-- Line 1: Sniffer latency, smell & drift -->
                         <div class="sensory-lead-row">
                             <div class="lead-info">
                                 <span class="lead-prefix">&gt; SNIFF_LATENCY:</span>
@@ -1001,6 +1058,25 @@
                                 <span id="nose-drift-val" class="lead-detail">| DRIFT: 0.00%</span>
                             </div>
                             <span id="nose-active-pill" class="status-pill-badge badge-cyan">ACTIVE</span>
+                        </div>
+                        <!-- Line 2: Fleet metrics (matches Screenshot 1) -->
+                        <div class="terminal-log-row" style="color: var(--runic-cyan); font-size: 13px;">
+                            <span>DISK: <strong id="disk-val" style="color: #67e8f9;">14%</strong></span>
+                            <span style="color: #475569;">||</span>
+                            <span>CONTAINERS: <strong id="docker-val" style="color: var(--runic-green);">0</strong></span>
+                            <span style="color: #475569;">||</span>
+                            <span>TAILSCALE: <strong id="tailscale-val" style="color: var(--runic-cyan);">ONLINE</strong></span>
+                            <span style="color: #475569;">||</span>
+                            <span>ERRORS: <strong id="error-count-val" style="color: #94a3b8;">0</strong></span>
+                        </div>
+                        <!-- Line 3: Sentinel heuristic status -->
+                        <div class="terminal-log-row">
+                            <span style="color: #67e8f9;">[Init]</span>
+                            <span style="color: #cbd5e1;">Watchdog active. Quiescent heuristic sniffing on bot.err log tails.</span>
+                        </div>
+                        <!-- Line 4: Live fleet status stream -->
+                        <div class="terminal-log-stream" id="nose-stream-log">
+                            &gt;&gt; Zero anomalies detected. Tailscale mesh and storage pools nominal.
                         </div>
                     </div>
                 </article>
@@ -1023,7 +1099,8 @@
                             <span style="cursor: pointer;">×</span>
                         </div>
                     </div>
-                    <div class="compact-lead-body">
+                    <div class="sensory-lead-body">
+                        <!-- Line 1: TTS buffer state & speech quote with equalizer -->
                         <div class="sensory-lead-row">
                             <div class="lead-info">
                                 <span class="lead-prefix">&gt; TTS_BUFFER:</span>
@@ -1036,6 +1113,22 @@
                                 <span class="eq-bar eq-3" style="background: var(--runic-gold);"></span>
                                 <span class="eq-bar eq-1" style="background: var(--runic-red);"></span>
                             </div>
+                        </div>
+                        <!-- Line 2: Liaison init status -->
+                        <div class="terminal-log-row">
+                            <span style="color: #4ade80;">[Init]</span>
+                            <span style="color: #cbd5e1;">Mouth liaison active. Sub-second response engine ready.</span>
+                        </div>
+                        <!-- Line 3: Model and persona status -->
+                        <div class="terminal-log-row">
+                            <span style="color: #64748b;">[Model]</span>
+                            <span style="color: #fef08a;" id="mouth-model-desc">gemini-3.8-flash</span>
+                            <span style="color: #64748b;">|</span>
+                            <span style="color: #cbd5e1;">Chief of Staff Liaison standing by for Carl's instructions.</span>
+                        </div>
+                        <!-- Line 4: Live synthesized speech stream -->
+                        <div class="terminal-log-stream" id="mouth-stream-log">
+                            &gt;&gt; Ready to synthesize briefings and dispatch backstage mesh tasks.
                         </div>
                     </div>
                 </article>
@@ -1156,20 +1249,20 @@
 
                 // Landmark percentages from colossus.png & stitch_reference/screen.png:
                 // Eye header: 11.25%, Nose header: 30.08%, Mouth header: 48.83%
-                const eyeTargetY = Math.max(hudH + 8, offsetY + renderedH * 0.1125);
-                const noseTargetY = Math.max(eyeTargetY + 54, offsetY + renderedH * 0.3008);
-                const mouthTargetY = Math.max(noseTargetY + 54, offsetY + renderedH * 0.4883);
+                const eyeTargetY = Math.max(hudH + 6, offsetY + renderedH * 0.1125);
+                const noseTargetY = Math.max(eyeTargetY + 92, offsetY + renderedH * 0.3008);
+                const mouthTargetY = Math.max(noseTargetY + 92, offsetY + renderedH * 0.4883);
 
                 const anchorEyes = document.getElementById('anchor-eyes');
                 const anchorNose = document.getElementById('anchor-nose');
                 const anchorMouth = document.getElementById('anchor-mouth');
 
                 if (anchorEyes && anchorNose && anchorMouth) {
-                    const eyeMargin = Math.max(8, eyeTargetY - hudH);
-                    const eyeCardH = anchorEyes.offsetHeight || 46;
-                    const noseMargin = Math.max(20, noseTargetY - eyeTargetY - eyeCardH);
-                    const noseCardH = anchorNose.offsetHeight || 46;
-                    const mouthMargin = Math.max(20, mouthTargetY - noseTargetY - noseCardH);
+                    const eyeMargin = Math.max(6, eyeTargetY - hudH);
+                    const eyeCardH = anchorEyes.offsetHeight || 92;
+                    const noseMargin = Math.max(14, noseTargetY - eyeTargetY - eyeCardH);
+                    const noseCardH = anchorNose.offsetHeight || 92;
+                    const mouthMargin = Math.max(14, mouthTargetY - noseTargetY - noseCardH);
 
                     anchorEyes.style.marginTop = `${Math.round(eyeMargin)}px`;
                     anchorNose.style.marginTop = `${Math.round(noseMargin)}px`;
@@ -1243,6 +1336,10 @@
                 }
                 if (data.recent_error_count !== undefined && errorCountVal) {
                     errorCountVal.textContent = `${data.recent_error_count}`;
+                }
+                const noseStreamLog = document.getElementById('nose-stream-log');
+                if (noseStreamLog && data.verdict_summary) {
+                    noseStreamLog.textContent = `>> ${data.verdict_summary}`;
                 }
             }
 
@@ -1454,6 +1551,10 @@
                         if (eyeLeadMsg) eyeLeadMsg.textContent = msg.slice(0, 36);
                         if (data.sha && eyeBboxMsg) eyeBboxMsg.textContent = `| SHA: ${data.sha.slice(0, 8)}`;
                         if (data.confidence && eyeConfMsg) eyeConfMsg.textContent = `[CONFIDENCE: ${(data.confidence * 100).toFixed(1)}%]`;
+                        const eyeTsDisplay = document.getElementById('eye-ts-display');
+                        if (eyeTsDisplay) eyeTsDisplay.textContent = formatTime();
+                        const eyeStreamLog = document.getElementById('eye-stream-log');
+                        if (eyeStreamLog) eyeStreamLog.textContent = `>> ${msg}`;
                         appendStreamLog(eyeStream, `• ${msg}`);
                         if (data.state && eyeStateBadge) eyeStateBadge.textContent = data.state.toUpperCase();
                     } catch (_) {
@@ -1467,6 +1568,8 @@
                         if (data.state && eyeStateBadge) eyeStateBadge.textContent = data.state.toUpperCase();
                         if (data.last_diff && eyeLeadMsg) eyeLeadMsg.textContent = data.last_diff.slice(0, 36);
                         if (data.buffer_hash && eyeBboxMsg) eyeBboxMsg.textContent = `| SHA: ${data.buffer_hash.slice(0, 8)}`;
+                        const eyeStreamLog = document.getElementById('eye-stream-log');
+                        if (eyeStreamLog && data.buffer_hash) eyeStreamLog.textContent = `>> Buffer delta hash: ${data.buffer_hash.slice(0, 16)} (observer active)`;
                     } catch (_) {}
                 });
 
@@ -1484,6 +1587,8 @@
                         const data = JSON.parse(e.data);
                         const txt = data.briefing || data.text || JSON.stringify(data);
                         if (mouthBriefingLead) mouthBriefingLead.textContent = `> "${txt.slice(0, 56)}..."`;
+                        const mouthStreamLog = document.getElementById('mouth-stream-log');
+                        if (mouthStreamLog) mouthStreamLog.textContent = `>> Synthesized: "${txt.slice(0, 56)}..."`;
                         if (mouthTtsState) {
                             mouthTtsState.textContent = 'SPEAKING';
                             mouthTtsState.style.color = 'var(--runic-cyan)';
@@ -1502,6 +1607,8 @@
                     try {
                         const data = JSON.parse(e.data);
                         if (data.model && mouthModelBadge) mouthModelBadge.textContent = data.model;
+                        const mouthModelDesc = document.getElementById('mouth-model-desc');
+                        if (mouthModelDesc && data.model) mouthModelDesc.textContent = data.model;
                         if (data.active_turns !== undefined && mouthTurnsBadge) {
                             mouthTurns = data.active_turns;
                             mouthTurnsBadge.textContent = `${mouthTurns} turns`;
