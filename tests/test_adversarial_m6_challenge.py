@@ -12,8 +12,8 @@ import signal
 import unittest
 from typing import List
 
-import first_mate.transport.chunker as chunker
-import first_mate.transport.normalizer as norm
+import golem.transport.chunker as chunker
+import golem.transport.normalizer as norm
 
 
 class TestAdversarialBareEscapesAndControlChars(unittest.TestCase):

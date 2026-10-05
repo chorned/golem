@@ -32,7 +32,7 @@ if PROJECT_DIR not in sys.path:
     sys.path.insert(0, PROJECT_DIR)
 
 # Core imports
-from first_mate.agent.protocol import (
+from golem.agent.protocol import (
     AgentEvent,
     AgentEventType,
     TextDeltaEvent,
@@ -42,9 +42,9 @@ from first_mate.agent.protocol import (
     AwaitingInputEvent,
     FinishEvent,
 )
-from first_mate.agent.adapter import HeadlessAgentAdapter
-import first_mate.transport.normalizer as canonical_norm
-from first_mate.transport.normalizer import (
+from golem.agent.adapter import HeadlessAgentAdapter
+import golem.transport.normalizer as canonical_norm
+from golem.transport.normalizer import (
     sanitize_for_slack,
     transpile_markdown_to_mrkdwn,
     strip_terminal_chrome,
@@ -53,21 +53,21 @@ from first_mate.transport.normalizer import (
     strip_box_drawing,
     strip_prompt_echoes,
 )
-from first_mate.transport.chunker import split_message_boundary_aware
-from first_mate.transport.slack_client import SlackTransport, SlackClient
-import first_mate.transport as transport_pkg
-from first_mate.gateway import SessionRouter, SessionHandle, SessionState
-from first_mate.gateway.ingress import IngressGateway, strip_bot_mentions
-from first_mate.execution.runner import RunnerExecutor, ExecutionHandle
-from first_mate.execution.buffer import (
+from golem.transport.chunker import split_message_boundary_aware
+from golem.transport.slack_client import SlackTransport, SlackClient
+import golem.transport as transport_pkg
+from golem.gateway import SessionRouter, SessionHandle, SessionState
+from golem.gateway.ingress import IngressGateway, strip_bot_mentions
+from golem.execution.runner import RunnerExecutor, ExecutionHandle
+from golem.execution.buffer import (
     RunnerBufferObserver,
     OAUTH_CALLBACK_PATTERN,
     INTERACTIVE_PROMPT_PATTERNS,
 )
-from first_mate.execution.harness import DualPaneHarness
-from first_mate.execution.delegation import WorkerDelegator, sanitize_worker_output
-import first_mate.execution.mesh as canonical_mesh
-import first_mate.agent as canonical_agent
+from golem.execution.harness import DualPaneHarness
+from golem.execution.delegation import WorkerDelegator, sanitize_worker_output
+import golem.execution.mesh as canonical_mesh
+import golem.agent as canonical_agent
 from herdr_client import HerdrClient
 
 # Root shims
@@ -323,7 +323,7 @@ class TestRootCompatibilityShimsCanonicalIdentity(unittest.TestCase):
             )
 
     def test_transport_package_exports_and_identity(self):
-        """Verify first_mate.transport exports SlackTransport and canonical chunker/normalizer."""
+        """Verify golem.transport exports SlackTransport and canonical chunker/normalizer."""
         self.assertIs(
             transport_pkg.SlackTransport,
             SlackTransport,

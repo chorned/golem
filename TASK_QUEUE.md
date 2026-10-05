@@ -21,6 +21,10 @@
 | `M4-EXEC` | `execution` | `low` | CI syntax verification, automated secret scanning script | Zero credentials in repo, all linters and tests exit code 0 | `[VERIFIED]` |
 | `M5-BUILD` | `build` | `low` | `README.md`, `AGENTS.md` | Architectural flex thoroughly documented, ASCII topology diagrams, lineage invariant verified | `[VERIFIED]` |
 | `M6-EXEC` | `execution` | `high` | `tests/e2e/`, daemon kickstart verification | 100% of 179 E2E tests pass, daemon kickstarted cleanly with exit code 0, Hand B clean-room signoff | `[VERIFIED]` |
+| `R1-BUILD` | `build` | `medium` | `golem/gateway/ingress.py`, `tests/` | Step 2 schema fix, fallback briefings removed, fail-loud errors with :boom:, thread rehydration without mutation, sensory commands routed | `[VERIFIED]` |
+| `R2-BUILD` | `build` | `medium` | `golem/webui/server.py`, `golem/sensory/bus.py`, `golem/gateway/ingress.py`, `app.py` | Headless mode safe, TextDeltaEvent streamed, active hands settled, mouth briefing broadcast, event bus thread-safe | `[VERIFIED]` |
+| `R3-BUILD` | `build` | `medium` | `golem/webui/templates/dashboard.html`, `golem/webui/server.py`, `golem/config.py`, `tests/` | Mock fixtures purged, dynamic hands lifecycle & standby card, nose deduplication, config & log caching, event loop latency < 5ms, 100% test pass | `[VERIFIED: Iteration 5]` |
+| `R4-BUILD` | `build` | `medium` | `golem/sensory/eyes.py`, `golem/execution/runner.py`, `tests/` | Structured lifecycle log markers (`Dispatched`, `exceeded 3.0s yield window`, `settled`), dynamic EyesTaskObserver attachment on runner yield, sensory_bus & webui_server wiring, clean teardown, yield ceiling <= 3.15s preserved, 100% test pass | `[VERIFIED: Iteration 1]` |
 
 ---
 
@@ -35,3 +39,7 @@
 - `M4-EXEC`: `.logs/M4-EXEC.log`
 - `M5-BUILD`: `.logs/M5-BUILD.log`
 - `M6-EXEC`: `.logs/M6-EXEC.log`
+- `R1-BUILD`: `.logs/R1-BUILD.log`
+- `R2-BUILD`: `.logs/R2-BUILD.log`
+- `R3-BUILD`: `.logs/R3-BUILD.log`
+- `R4-BUILD`: `.logs/R4-BUILD.log`

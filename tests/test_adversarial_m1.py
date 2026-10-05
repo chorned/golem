@@ -2,9 +2,9 @@
 """
 tests/test_adversarial_m1.py
 Empirical adversarial stress test suite for First Mate 2.0 Milestone 1:
-- first_mate.transport.chunker
-- first_mate.transport.milestone
-- first_mate.transport.slack_client
+- golem.transport.chunker
+- golem.transport.milestone
+- golem.transport.slack_client
 
 Author: Challenger 2 (Milestone 1)
 """
@@ -16,12 +16,12 @@ from unittest.mock import AsyncMock
 
 from slack_sdk.errors import SlackApiError
 
-from first_mate.transport.chunker import (
+from golem.transport.chunker import (
     split_message_boundary_aware,
     parse_code_blocks,
 )
-from first_mate.transport.milestone import MilestoneUpdater
-from first_mate.transport.slack_client import SlackClient
+from golem.transport.milestone import MilestoneUpdater
+from golem.transport.slack_client import SlackClient
 
 
 class TestChunkerAdversarial(unittest.TestCase):

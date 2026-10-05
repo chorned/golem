@@ -24,27 +24,27 @@ PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_DIR not in sys.path:
     sys.path.insert(0, PROJECT_DIR)
 
-from first_mate.sensory.bus import ShoulderTapEventBus, ShoulderTapAlert
-from first_mate.sensory.nose import (
+from golem.sensory.bus import ShoulderTapEventBus, ShoulderTapAlert
+from golem.sensory.nose import (
     NoseSentinel,
     FleetSnapshot,
     AnomalyVerdict,
     get_default_nose_sentinel,
     set_default_nose_sentinel,
 )
-from first_mate.gateway.session import (
+from golem.gateway.session import (
     SessionHandle,
     EyesStatusResult,
     SessionState,
     is_out_of_band_message,
 )
-from first_mate.gateway.ingress import (
+from golem.gateway.ingress import (
     IngressGateway,
     get_mouth_tools_declaration,
     CHECK_EYES_TOOL_DECLARATION,
     CHECK_NOSE_TOOL_DECLARATION,
 )
-from first_mate.agent.mouth import generate_mouth_response, is_batch_task_command
+from golem.agent.mouth import generate_mouth_response, is_batch_task_command
 
 
 class TestSensoryAdversarialM1(unittest.IsolatedAsyncioTestCase):

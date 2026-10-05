@@ -55,8 +55,8 @@ PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__
 if PROJECT_DIR not in sys.path:
     sys.path.insert(0, PROJECT_DIR)
 
-from first_mate.gateway.router import SessionRouter
-from first_mate.gateway.session import (
+from golem.gateway.router import SessionRouter
+from golem.gateway.session import (
     SessionHandle,
     SessionState,
     CURRENT_SESSION,
@@ -65,22 +65,22 @@ from first_mate.gateway.session import (
     is_conversational_checkin,
     is_out_of_band_message,
 )
-from first_mate.gateway.ingress import IngressGateway
-from first_mate.execution.harness import DualPaneHarness
-from first_mate.execution.runner import RunnerExecutor, ExecutionHandle
-from first_mate.execution.buffer import (
+from golem.gateway.ingress import IngressGateway
+from golem.execution.harness import DualPaneHarness
+from golem.execution.runner import RunnerExecutor, ExecutionHandle
+from golem.execution.buffer import (
     RunnerBufferObserver,
     OAUTH_CALLBACK_PATTERN,
     INTERACTIVE_PROMPT_PATTERNS,
 )
-from first_mate.agent.protocol import (
+from golem.agent.protocol import (
     AgentEvent,
     TextDeltaEvent,
     StatusUpdateEvent,
     FinishEvent,
     AwaitingInputEvent,
 )
-from first_mate.transport.normalizer import (
+from golem.transport.normalizer import (
     sanitize_for_slack,
     transpile_markdown_to_mrkdwn,
     strip_ansi,

@@ -20,7 +20,7 @@ import asyncio
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from first_mate.agent.protocol import (
+from golem.agent.protocol import (
     AgentEvent,
     AgentEventType,
     TextDeltaEvent,
@@ -30,8 +30,8 @@ from first_mate.agent.protocol import (
     AwaitingInputEvent,
     FinishEvent,
 )
-from first_mate.agent.adapter import HeadlessAgentAdapter, DEFAULT_AGY_BIN
-from first_mate.agent.calibration import (
+from golem.agent.adapter import HeadlessAgentAdapter, DEFAULT_AGY_BIN
+from golem.agent.calibration import (
     CALIBRATION_PROMPT,
     SLACK_MRKDWN_RULES,
     CHOICE_FORMATTING_RULES,
@@ -720,9 +720,9 @@ class TestAgentCoreShim(IsolatedAsyncioTestCase):
         self.assertEqual(formatted, "*test*")
 
     def test_module_shims_events_and_prompts(self):
-        """Verify first_mate.agent.events and first_mate.agent.prompts shims match PROJECT.md."""
-        import first_mate.agent.events as events_mod
-        import first_mate.agent.prompts as prompts_mod
+        """Verify golem.agent.events and golem.agent.prompts shims match PROJECT.md."""
+        import golem.agent.events as events_mod
+        import golem.agent.prompts as prompts_mod
         self.assertTrue(hasattr(events_mod, "AgentEvent"))
         self.assertTrue(hasattr(events_mod, "TextDeltaEvent"))
         self.assertTrue(hasattr(events_mod, "StatusUpdateEvent"))

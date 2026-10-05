@@ -11,7 +11,7 @@ except ImportError:
     def setup(*args, **kwargs):
         pass
     def find_packages(*args, **kwargs):
-        return ["golem", "first_mate"]
+        return ["golem"]
 
 setup(
     name="golem",

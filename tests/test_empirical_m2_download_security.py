@@ -6,7 +6,7 @@ Adversarial empirical challenge suite for Milestone 2:
 2. Chunked streaming exceeding 100MB without Content-Length (assert clean abort, bounded memory).
 3. Malicious path traversal payloads (assert confinement to slack_transfers/ and neutralization).
 4. Bounded LRU cache eviction stress under 1000+ entries (assert bounded size, LRU order).
-5. Live HTTP mock server on localhost executing against first_mate.gateway.ingress.
+5. Live HTTP mock server on localhost executing against golem.gateway.ingress.
 """
 
 import os
@@ -25,7 +25,7 @@ PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_DIR not in sys.path:
     sys.path.insert(0, PROJECT_DIR)
 
-from first_mate.gateway.ingress import (
+from golem.gateway.ingress import (
     download_slack_file,
     sanitize_filename,
     save_staged_file,
@@ -33,7 +33,7 @@ from first_mate.gateway.ingress import (
     DEFAULT_MAX_FILE_SIZE_BYTES,
     TRANSFERS_DIR_NAME,
 )
-from first_mate.gateway.router import SessionRouter
+from golem.gateway.router import SessionRouter
 
 
 class MockHeadlessAdapter:

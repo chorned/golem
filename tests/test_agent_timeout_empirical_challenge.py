@@ -25,8 +25,8 @@ import unittest
 from typing import Any, List
 from unittest.mock import MagicMock, AsyncMock, patch
 
-from first_mate.agent.adapter import HeadlessAgentAdapter
-from first_mate.agent.protocol import (
+from golem.agent.adapter import HeadlessAgentAdapter
+from golem.agent.protocol import (
     AgentEvent,
     TextDeltaEvent,
     StatusUpdateEvent,

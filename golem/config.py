@@ -14,6 +14,8 @@ Golem is the open-source evolution of First Mate, powered by Herdr's distributed
 from __future__ import annotations
 
 import os
+import time
+import functools
 from pathlib import Path
 from typing import Optional, Dict, Any
 
@@ -36,17 +38,13 @@ elif load_dotenv:
     load_dotenv(override=False)
 
 
-def _get_file_env() -> Dict[str, str]:
-    """
-    Read key-value pairs directly from .env file on disk without modifying os.environ.
-    Provides safe fallback when os.environ is cleared (e.g. in unit test fixtures).
-    Zero hardcoded strings in Python code.
-    """
-    if dotenv_values and _ENV_PATH.exists():
+@functools.lru_cache(maxsize=1)
+def _get_raw_file_env(mtime: float, env_path: Path) -> Dict[str, str]:
+    if dotenv_values:
         try:
             return {
                 k: str(v)
-                for k, v in dotenv_values(_ENV_PATH).items()
+                for k, v in dotenv_values(env_path).items()
                 if v is not None and str(v).strip()
             }
         except Exception:
@@ -54,8 +52,62 @@ def _get_file_env() -> Dict[str, str]:
     return {}
 
 
+# In-memory TTL cache state for .env file resolution
+_ENV_CACHE_TTL: float = float(os.environ.get("GOLEM_ENV_CACHE_TTL", "2.0"))
+_FILE_ENV_CACHE: Optional[Dict[str, str]] = None
+_FILE_ENV_CACHE_MTIME: Optional[float] = None
+_FILE_ENV_LAST_CHECK: float = 0.0
+
+
+def clear_env_cache() -> None:
+    """Clear cached .env values to force re-reading from disk."""
+    global _FILE_ENV_CACHE, _FILE_ENV_CACHE_MTIME, _FILE_ENV_LAST_CHECK
+    _FILE_ENV_CACHE = None
+    _FILE_ENV_CACHE_MTIME = None
+    _FILE_ENV_LAST_CHECK = 0.0
+    _get_raw_file_env.cache_clear()
+
+
+def _get_file_env() -> Dict[str, str]:
+    """
+    Read key-value pairs directly from .env file on disk without modifying os.environ.
+    Provides safe fallback when os.environ is cleared (e.g. in unit test fixtures).
+    Backed by an in-memory mtime-validated cache with a lightweight TTL to eliminate
+    synchronous disk I/O and stat() syscalls during high-frequency REST polling.
+    Zero hardcoded strings in Python code.
+    """
+    global _FILE_ENV_CACHE, _FILE_ENV_CACHE_MTIME, _FILE_ENV_LAST_CHECK
+    now = time.monotonic()
+
+    # Fast-path: return cached dictionary within TTL window without any stat() syscalls
+    if _FILE_ENV_CACHE is not None and (now - _FILE_ENV_LAST_CHECK) < _ENV_CACHE_TTL:
+        if _FILE_ENV_CACHE_MTIME is not None:
+            # Invoking _get_raw_file_env with cached mtime preserves cache_info hit tracking
+            return dict(_get_raw_file_env(_FILE_ENV_CACHE_MTIME, _ENV_PATH))
+        return dict(_FILE_ENV_CACHE)
+
+    _FILE_ENV_LAST_CHECK = now
+    if not dotenv_values:
+        _FILE_ENV_CACHE = {}
+        _FILE_ENV_CACHE_MTIME = None
+        return {}
+
+    # Single-stat optimization: catch OSError directly to eliminate redundant _ENV_PATH.exists()
+    try:
+        mtime = _ENV_PATH.stat().st_mtime
+    except (OSError, ValueError):
+        _FILE_ENV_CACHE = {}
+        _FILE_ENV_CACHE_MTIME = None
+        return {}
+
+    _FILE_ENV_CACHE_MTIME = mtime
+    _FILE_ENV_CACHE = dict(_get_raw_file_env(mtime, _ENV_PATH))
+    return dict(_FILE_ENV_CACHE)
+
+
 def reload_config() -> None:
     """Re-read .env file and update os.environ."""
+    clear_env_cache()
     if load_dotenv and _ENV_PATH.exists():
         load_dotenv(dotenv_path=_ENV_PATH, override=True)
 

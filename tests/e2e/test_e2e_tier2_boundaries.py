@@ -46,7 +46,7 @@ class TestTier2PortBoundaries(unittest.TestCase):
     """
 
     def _get_webui_mod(self):
-        for name in ["golem.webui.server", "golem.webui", "first_mate.webui.server"]:
+        for name in ["golem.webui.server", "golem.webui", "golem.webui.server"]:
             try:
                 return importlib.import_module(name)
             except ImportError:
@@ -106,7 +106,7 @@ class TestTier2EnvVarBoundaries(unittest.TestCase):
     """
 
     def _get_config_mod(self):
-        for name in ["golem.config", "first_mate.config"]:
+        for name in ["golem.config", "golem.config"]:
             try:
                 return importlib.import_module(name)
             except ImportError:
@@ -169,7 +169,7 @@ class TestTier2WorkerNameBoundaries(unittest.TestCase):
     """
 
     def _get_delegation_mod(self):
-        for name in ["golem.execution.delegation", "first_mate.execution.delegation"]:
+        for name in ["golem.execution.delegation", "golem.execution.delegation"]:
             try:
                 return importlib.import_module(name)
             except ImportError:
@@ -227,7 +227,7 @@ class TestTier2StreamingChunkBoundaries(unittest.TestCase):
     """
 
     def _get_webui_mod(self):
-        for name in ["golem.webui.server", "golem.webui", "first_mate.webui.server"]:
+        for name in ["golem.webui.server", "golem.webui", "golem.webui.server"]:
             try:
                 return importlib.import_module(name)
             except ImportError:
@@ -316,11 +316,11 @@ class TestTier2ConcurrentShimImports(unittest.TestCase):
             try:
                 if GOLEM_AVAILABLE:
                     g = importlib.import_module("golem.config")
-                    fm = importlib.import_module("first_mate.config")
+                    fm = importlib.import_module("golem.config")
                     with lock:
                         modules_retrieved.append((g, fm))
                 else:
-                    fm = importlib.import_module("first_mate.config")
+                    fm = importlib.import_module("golem.config")
                     with lock:
                         modules_retrieved.append(fm)
             except Exception as ex:
@@ -339,15 +339,15 @@ class TestTier2ConcurrentShimImports(unittest.TestCase):
     def test_bidirectional_mock_patch_concurrency(self):
         """B05: Concurrently reading through first_mate while mock patched maintains consistent behavior."""
         try:
-            from first_mate.config import get_mouth_model
+            from golem.config import get_mouth_model
         except (ImportError, AttributeError):
-            self.skipTest("get_mouth_model not available in first_mate.config")
+            self.skipTest("get_mouth_model not available in golem.config")
 
-        with patch("first_mate.config.get_mouth_model", return_value="gemini-custom-patch"):
+        with patch("golem.config.get_mouth_model", return_value="gemini-custom-patch"):
             results: list[str] = []
 
             def read_mock():
-                from first_mate.config import get_mouth_model
+                from golem.config import get_mouth_model
                 results.append(get_mouth_model())
 
             threads = [threading.Thread(target=read_mock) for _ in range(10)]

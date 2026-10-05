@@ -19,8 +19,9 @@ import json
 import asyncio
 import logging
 import socket
+import threading
 from pathlib import Path
-from typing import Dict, Any, Optional, Set, List, Union
+from typing import Dict, Any, Optional, Set, List, Union, Callable
 
 from aiohttp import web
 
@@ -93,6 +94,21 @@ def _json_default(obj: Any) -> Any:
 
 
 
+class _SyncAndAwaitableNone:
+    """
+    Polymorphic return object enabling dual sync/async method execution.
+    Executes synchronously when invoked as a normal function, but can also
+    be awaited without raising 'TypeError: NoneType object cannot be awaited'.
+    Produces zero RuntimeWarnings when discarded without being awaited.
+    """
+    __slots__ = ()
+
+    def __await__(self):
+        async def _noop():
+            return None
+        return _noop().__await__()
+
+
 def format_sse_event(event: str, data: Any) -> str:
     """
     Format a valid Server-Sent Events (SSE) message chunk.
@@ -116,7 +132,12 @@ class WebUIServer:
     Runs on an aiohttp TCPSite alongside existing event loops without starvation.
     """
 
-    def __init__(self, host: str = "127.0.0.1", port: int = 8765):
+    def __init__(
+        self,
+        host: str = "127.0.0.1",
+        port: int = 8765,
+        event_bus: Optional[Any] = None,
+    ):
         if not isinstance(port, int) or port < 1 or port > 65535:
             raise ValueError(f"Port must be an integer between 1 and 65535, got {port}")
         self.host = host
@@ -129,6 +150,14 @@ class WebUIServer:
         self._lock = asyncio.Lock()
         self._active_hands: Dict[str, Dict[str, Any]] = {}
         self._telemetry_task: Optional[asyncio.Task] = None
+        self.loop: Optional[asyncio.AbstractEventLoop] = None
+        self.event_bus: Optional[Any] = event_bus
+        self._bus_unsubscribe: Optional[Callable[[], None]] = None
+        self._recent_logs: Dict[str, List[str]] = {
+            "eyes": [],
+            "nose": [],
+            "mouth": [],
+        }
         self._setup_routes()
 
     @property
@@ -141,12 +170,21 @@ class WebUIServer:
         """Return the number of actively connected SSE client queues."""
         return len(self._subscribers)
 
-    def register_active_hand(self, pane_id: str, node: str, command: str, pid: int) -> None:
+    def register_active_hand(
+        self,
+        pane_id: str,
+        node: str = "localhost",
+        command: str = "",
+        pid: Optional[int] = None,
+        worker: Optional[str] = "agy",
+        **kwargs: Any,
+    ) -> Any:
         """Register an active hand agent running backstage."""
         now_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+        pid_str = f"PID: {pid}" if pid is not None else "PID: N/A"
         initial_log = (
             f"{now_str} [INFO] Golem.Hands: Agent '{pane_id}' initialized on {node}\n"
-            f"{now_str} [INFO] Golem.Hands: Command: {command} [PID: {pid}]\n"
+            f"{now_str} [INFO] Golem.Hands: Command: {command} [{pid_str}]\n"
             f"{now_str} [INFO] Golem.Hands: Process buffer attached; streaming execution trace...\n"
         )
         self._active_hands[pane_id] = {
@@ -156,25 +194,60 @@ class WebUIServer:
             "pid": pid,
             "status": "RUNNING",
             "buffer_tail": initial_log,
+            "worker": worker or "agy",
+            "started_at": kwargs.get("started_at", time.time()),
         }
+        return _SyncAndAwaitableNone()
 
-    def update_hand_buffer(self, pane_id: str, delta: str) -> None:
+    async def register_active_hand_async(
+        self,
+        pane_id: str,
+        node: str = "localhost",
+        command: str = "",
+        pid: Optional[int] = None,
+        worker: Optional[str] = "agy",
+        **kwargs: Any,
+    ) -> None:
+        """Asynchronous variant of register_active_hand."""
+        self.register_active_hand(pane_id, node, command, pid, worker, **kwargs)
+
+    def update_hand_buffer(self, pane_id: str, delta: str) -> Any:
         """Append output delta to an active hand's buffer tail."""
-        if pane_id in self._active_hands:
-            tail = self._active_hands[pane_id].get("buffer_tail", "") + delta
+        hand = self._active_hands.get(pane_id)
+        if hand is None:
+            self.register_active_hand(pane_id=pane_id, node="localhost", command="Task", pid=None)
+            hand = self._active_hands.get(pane_id)
+        if hand is not None:
+            tail = hand.get("buffer_tail", "") + delta
             if len(tail) > 4096:
                 tail = tail[-4096:]
-            self._active_hands[pane_id]["buffer_tail"] = tail
+            hand["buffer_tail"] = tail
+        return _SyncAndAwaitableNone()
 
-    def unregister_active_hand(self, pane_id: str) -> None:
+    async def update_hand_buffer_async(self, pane_id: str, delta: str) -> None:
+        """Asynchronous variant of update_hand_buffer."""
+        self.update_hand_buffer(pane_id, delta)
+
+    def unregister_active_hand(self, pane_id: str) -> Any:
         """Remove a settled hand agent from active registry."""
         self._active_hands.pop(pane_id, None)
+        return _SyncAndAwaitableNone()
+
+    async def unregister_active_hand_async(self, pane_id: str) -> None:
+        """Asynchronous variant of unregister_active_hand."""
+        self.unregister_active_hand(pane_id)
+
+    @property
+    def active_hands(self) -> Dict[str, Dict[str, Any]]:
+        """Return a shallow copy of active hands registry."""
+        return dict(self._active_hands)
 
     def _setup_routes(self) -> None:
         """Register REST and SSE route handlers."""
         self.app.router.add_get("/", self.handle_index)
         self.app.router.add_get("/events", self.handle_events)
         self.app.router.add_get("/api/events", self.handle_events)
+        self.app.router.add_get("/api/stream", self.handle_events)
         self.app.router.add_get("/api/status", self.handle_status)
         self.app.router.add_get("/api/sensory/{organ}", self.handle_sensory)
         self.app.router.add_get("/health", self.handle_health)
@@ -238,6 +311,17 @@ class WebUIServer:
         status["port"] = self.port
         status["host"] = self.host
         status["subscribers"] = self.subscriber_count
+        hands_snapshot = []
+        if self._active_hands:
+            try:
+                hands_snapshot = list(self._active_hands.values())
+            except RuntimeError:
+                try:
+                    hands_snapshot = list(dict(self._active_hands).values())
+                except Exception:
+                    hands_snapshot = []
+        if hands_snapshot:
+            status["hands"] = [dict(h) for h in hands_snapshot]
         return web.json_response(status)
 
     async def handle_pipeline_run(self, request: web.Request) -> web.Response:
@@ -319,7 +403,7 @@ class WebUIServer:
     async def handle_sensory(self, request: web.Request) -> web.Response:
         """Return organ-specific telemetry for eye, nose, mouth, or hands."""
         organ = request.match_info.get("organ", "").lower().strip()
-        status = get_system_status()
+        status = await asyncio.to_thread(get_system_status)
         if organ in ("eye", "eyes"):
             return web.json_response(status.get("eyes", {}))
         elif organ in ("nose", "fleet"):
@@ -327,6 +411,9 @@ class WebUIServer:
         elif organ in ("mouth", "liaison"):
             return web.json_response(status.get("mouth", {}))
         elif organ in ("hand", "hands", "runner"):
+            hands_snapshot = list(self._active_hands.values()) if self._active_hands else []
+            if hands_snapshot:
+                return web.json_response([dict(h) for h in hands_snapshot])
             return web.json_response(status.get("hands", []))
         else:
             return web.json_response(
@@ -364,6 +451,9 @@ class WebUIServer:
         })
         try:
             await response.write(init_event.encode("utf-8"))
+            if self._active_hands:
+                init_hands = format_sse_event("hands_status", list(self._active_hands.values()))
+                await response.write(init_hands.encode("utf-8"))
         except Exception:
             self._subscribers.discard(queue)
             return response
@@ -395,13 +485,30 @@ class WebUIServer:
                 logger.info(f"WebUI server already running on http://{self.host}:{self.port}")
                 return
 
-            self._runner = web.AppRunner(self.app)
+            self._runner = web.AppRunner(self.app, access_log=None)
             await self._runner.setup()
 
-            self._site = web.TCPSite(self._runner, self.host, self.port)
+            self._site = web.TCPSite(self._runner, self.host, self.port, reuse_address=True)
             try:
                 await self._site.start()
                 logger.info(f"Golem Observability WebUI active on http://{self.host}:{self.port}")
+                self.loop = asyncio.get_running_loop()
+                if self.event_bus is None:
+                    try:
+                        from golem.sensory.bus import get_default_event_bus
+                        self.event_bus = get_default_event_bus()
+                    except Exception:
+                        pass
+                if self.event_bus is not None and self._bus_unsubscribe is None:
+                    self.attach_event_bus(self.event_bus)
+                global _GLOBAL_WEBUI_SERVER
+                if _GLOBAL_WEBUI_SERVER is None or not _GLOBAL_WEBUI_SERVER.is_running:
+                    _GLOBAL_WEBUI_SERVER = self
+                # Warm up status cache and thread pool so subsequent REST queries resolve in-memory
+                try:
+                    await asyncio.to_thread(get_system_status)
+                except Exception:
+                    pass
                 self._telemetry_task = asyncio.create_task(self._telemetry_loop())
             except OSError as err:
                 logger.error(f"Failed to bind WebUI server to {self.host}:{self.port}: {err}")
@@ -425,6 +532,13 @@ class WebUIServer:
         Guarantees zero EADDRINUSE leaks.
         """
         async with self._lock:
+            if self._bus_unsubscribe is not None:
+                try:
+                    self._bus_unsubscribe()
+                except Exception as e:
+                    logger.debug(f"Error unsubscribing from event bus: {e}")
+                self._bus_unsubscribe = None
+
             if self._telemetry_task is not None:
                 self._telemetry_task.cancel()
                 try:
@@ -455,6 +569,24 @@ class WebUIServer:
                     logger.debug(f"Error cleaning up WebUI AppRunner: {e}")
                 self._runner = None
 
+            global _GLOBAL_WEBUI_SERVER
+            if _GLOBAL_WEBUI_SERVER is self:
+                _GLOBAL_WEBUI_SERVER = None
+
+            # Reset agent logs and error log caches to prevent cross-test cache pollution
+            with _AGENT_LOGS_LOCK:
+                _AGENT_LOGS_CACHE["timestamp"] = 0.0
+                _AGENT_LOGS_CACHE["data"] = None
+
+            with _ERROR_LOG_LOCK:
+                _ERROR_LOG_CACHE["timestamp"] = 0.0
+                _ERROR_LOG_CACHE["count"] = 0
+
+            with _HOST_TELEMETRY_LOCK:
+                _HOST_TELEMETRY_CACHE["timestamp"] = 0.0
+                _HOST_TELEMETRY_CACHE["disk"] = None
+                _HOST_TELEMETRY_CACHE["docker_running"] = False
+
             logger.info(f"Golem Observability WebUI on port {self.port} stopped cleanly.")
 
     async def _telemetry_loop(self) -> None:
@@ -465,7 +597,7 @@ class WebUIServer:
                 if not self.is_running:
                     break
                 if self.subscriber_count > 0:
-                    status = get_system_status()
+                    status = await asyncio.to_thread(get_system_status)
                     self.broadcast("heartbeat", {
                         "uptime": status.get("uptime", 0.0),
                         "uptime_formatted": status.get("uptime_formatted", "00:00:00"),
@@ -480,10 +612,11 @@ class WebUIServer:
             except Exception as e:
                 logger.debug(f"Telemetry broadcast loop error: {e}")
 
-    def broadcast(self, event: str, data: Any) -> None:
+    def broadcast(self, event: str, data: Any) -> Any:
         """
         Push an SSE event synchronously to all connected subscriber queues.
         Non-blocking, drops oldest queued item if queue is full to prevent memory starvation.
+        Returns _SyncAndAwaitableNone to allow both sync calls and await expressions.
         """
         chunk = format_sse_event(event, data)
         for q in list(self._subscribers):
@@ -497,14 +630,199 @@ class WebUIServer:
                     pass
             except Exception:
                 pass
+        return _SyncAndAwaitableNone()
 
     async def broadcast_async(self, event: str, data: Any) -> None:
         """Asynchronous broadcast wrapper."""
         self.broadcast(event, data)
 
+    def attach_event_bus(self, event_bus: Any) -> None:
+        """
+        Bridge ShoulderTapEventBus alerts directly to WebUI SSE queues.
+        Thread-safe: dispatches onto the server's asyncio loop via call_soon_threadsafe.
+        """
+        if self._bus_unsubscribe is not None:
+            try:
+                self._bus_unsubscribe()
+            except Exception:
+                pass
+            self._bus_unsubscribe = None
+        self.event_bus = event_bus
+        if self.event_bus is not None and hasattr(self.event_bus, "subscribe"):
+            self._bus_unsubscribe = self.event_bus.subscribe(self._on_bus_alert)
+
+    def detach_event_bus(self) -> None:
+        """Detach from current event bus."""
+        if self._bus_unsubscribe is not None:
+            try:
+                self._bus_unsubscribe()
+            except Exception:
+                pass
+            self._bus_unsubscribe = None
+        self.event_bus = None
+
+    def _on_bus_alert(self, alert: Any) -> None:
+        """
+        Synchronous subscriber callback invoked by event bus on publish.
+        Thread-safe: schedules _process_bus_alert onto the server's asyncio event loop.
+        """
+        loop = getattr(self, "loop", None)
+        if loop is not None and loop.is_running() and not loop.is_closed():
+            loop.call_soon_threadsafe(self._process_bus_alert, alert)
+        else:
+            try:
+                curr_loop = asyncio.get_running_loop()
+                if curr_loop.is_running() and not curr_loop.is_closed():
+                    curr_loop.call_soon_threadsafe(self._process_bus_alert, alert)
+                else:
+                    self._process_bus_alert(alert)
+            except RuntimeError:
+                self._process_bus_alert(alert)
+
+    def _process_bus_alert(self, alert: Any) -> None:
+        """
+        Process bus alert on the server event loop and broadcast to SSE channels:
+        eye_log, eye_telemetry, nose_alert (and nose_telemetry), mouth_briefing.
+        """
+        source = getattr(alert, "source", "")
+        summary = getattr(alert, "summary", "") or ""
+        data = getattr(alert, "data", {}) or {}
+        alert_type = getattr(alert, "alert_type", "")
+        timestamp = getattr(alert, "timestamp", time.time())
+        to_dict = getattr(alert, "to_dict", lambda: {"summary": summary, "data": data})()
+        now_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(timestamp))
+
+        # 1. Route Eyes / Blocker / Completion
+        if source == "eyes" or alert_type in ("blocker", "completion", "eye_log", "eye_telemetry"):
+            is_blocker = getattr(alert, "is_blocker", False) or alert_type == "blocker"
+            is_comp = getattr(alert, "is_completion", False) or alert_type == "completion"
+            state = "BLOCKER" if is_blocker else ("IDLE" if is_comp else "RUNNING")
+
+            if is_blocker:
+                b_type = data.get("type") or data.get("blocker_type") or "BLOCKER"
+                msg = f"[BLOCKER] {summary}" if summary else f"[BLOCKER] {b_type} detected in runner pane"
+                log_line = f"{now_str} [WARN] Golem.Sensory.Eyes: {msg}"
+                self._append_recent_log("eyes", log_line)
+                self.broadcast("eye_log", {
+                    "message": msg,
+                    "state": "BLOCKER",
+                    "blocker_type": b_type,
+                    "timestamp": timestamp,
+                    "data": data,
+                    "alert": to_dict,
+                })
+                self.broadcast("eye_telemetry", {
+                    "state": "BLOCKER",
+                    "command": data.get("command", ""),
+                    "active_command": data.get("command", ""),
+                    "pid": data.get("pid"),
+                    "blocker": data,
+                    "buffer_tail": data.get("buffer_tail", ""),
+                    "timestamp": timestamp,
+                })
+            elif is_comp:
+                is_err = data.get("is_error", False)
+                state = "ERROR" if is_err else "IDLE"
+                msg = f"[COMPLETED] {summary}" if not is_err else f"[ERROR] {summary}"
+                log_line = f"{now_str} [INFO] Golem.Sensory.Eyes: {msg}"
+                self._append_recent_log("eyes", log_line)
+                self.broadcast("eye_log", {
+                    "message": msg,
+                    "state": state,
+                    "timestamp": timestamp,
+                    "data": data,
+                    "alert": to_dict,
+                })
+                self.broadcast("eye_telemetry", {
+                    "state": state,
+                    "command": "",
+                    "active_command": "",
+                    "pid": None,
+                    "blocker": None,
+                    "buffer_tail": data.get("buffer_tail", ""),
+                    "timestamp": timestamp,
+                })
+            elif alert_type == "eye_log":
+                msg = summary or data.get("message", "")
+                st = data.get("state", "RUNNING")
+                log_line = f"{now_str} [INFO] Golem.Sensory.Eyes: {msg}"
+                self._append_recent_log("eyes", log_line)
+                self.broadcast("eye_log", {
+                    "message": msg,
+                    "state": st,
+                    "timestamp": timestamp,
+                    "data": data,
+                    "alert": to_dict,
+                })
+            elif alert_type == "eye_telemetry":
+                self.broadcast("eye_telemetry", data if data else to_dict)
+
+        # 2. Route Nose / Health Anomaly
+        elif source == "nose" or alert_type in ("health_anomaly", "nose_alert") or getattr(alert, "is_health_anomaly", False):
+            smells_off = bool(data.get("smells_off", True))
+            log_line = f"{now_str} [{'WARN' if smells_off else 'INFO'}] Golem.Sensory.Nose: {summary}"
+            self._append_recent_log("nose", log_line)
+            payload = dict(data)
+            payload["summary"] = summary
+            payload["timestamp"] = timestamp
+            payload["smells_off"] = smells_off
+            payload["verdict_summary"] = summary
+            payload["alert"] = to_dict
+            self.broadcast("nose_alert", payload)
+            self.broadcast("nose_telemetry", payload)
+
+        # 3. Route Mouth Briefings
+        elif source == "mouth" or alert_type == "mouth_briefing":
+            briefing = data.get("briefing") or summary
+            log_line = f"{now_str} [INFO] Golem.Agent.Mouth: Executive briefing: \"{briefing}\""
+            self._append_recent_log("mouth", log_line)
+            payload = data if data else {"briefing": summary}
+            self.broadcast("mouth_briefing", payload)
+
+    def _append_recent_log(self, organ: str, line: str, max_entries: int = 50) -> None:
+        """Store log line in memory ring buffer."""
+        logs = self._recent_logs.setdefault(organ, [])
+        logs.append(line)
+        if len(logs) > max_entries:
+            del logs[:-max_entries]
+        # Invalidate agent logs cache so new live logs are immediately visible
+        with _AGENT_LOGS_LOCK:
+            _AGENT_LOGS_CACHE["timestamp"] = 0.0
+            _AGENT_LOGS_CACHE["data"] = None
+
 
 # Global Singleton Reference
 _GLOBAL_WEBUI_SERVER: Optional[WebUIServer] = None
+
+# Short-lived error log scan cache to prevent event loop disk I/O starvation
+_ERROR_LOG_CACHE: Dict[str, Any] = {
+    "timestamp": 0.0,
+    "count": 0,
+}
+_ERROR_LOG_LOCK = threading.Lock()
+
+# Short-lived agent logs cache to eliminate synchronous disk I/O when ring buffers are empty
+_AGENT_LOGS_CACHE: Dict[str, Any] = {
+    "timestamp": 0.0,
+    "data": None,
+}
+_AGENT_LOGS_LOCK = threading.Lock()
+
+# Short-lived host telemetry cache (disk usage, docker socket) to eliminate synchronous filesystem syscalls
+_HOST_TELEMETRY_CACHE: Dict[str, Any] = {
+    "timestamp": 0.0,
+    "disk": None,
+    "docker_running": False,
+}
+_HOST_TELEMETRY_LOCK = threading.Lock()
+
+
+def clear_host_telemetry_cache() -> None:
+    """Explicitly reset host telemetry cache (for testing and clean teardown)."""
+    with _HOST_TELEMETRY_LOCK:
+        _HOST_TELEMETRY_CACHE["timestamp"] = 0.0
+        _HOST_TELEMETRY_CACHE["disk"] = None
+        _HOST_TELEMETRY_CACHE["docker_running"] = False
 
 
 def get_active_webui_server() -> Optional[WebUIServer]:
@@ -519,7 +837,7 @@ class WebUILauncher:
     and socket collision validation.
     """
 
-    def __init__(self, host: str, port: int):
+    def __init__(self, host: str, port: int, event_bus: Optional[Any] = None):
         if not isinstance(port, int) or port < 1 or port > 65535:
             raise ValueError(f"Port must be an integer between 1 and 65535, got {port}")
 
@@ -533,6 +851,7 @@ class WebUILauncher:
         ):
             self.host = host
             self.port = port
+            self.event_bus = event_bus
             self._coro = self._start()
             return
 
@@ -546,6 +865,7 @@ class WebUILauncher:
 
         self.host = host
         self.port = port
+        self.event_bus = event_bus
         self._coro = self._start()
 
     def __await__(self):
@@ -555,22 +875,24 @@ class WebUILauncher:
         global _GLOBAL_WEBUI_SERVER
         if _GLOBAL_WEBUI_SERVER is not None and _GLOBAL_WEBUI_SERVER.is_running:
             if _GLOBAL_WEBUI_SERVER.host == self.host and _GLOBAL_WEBUI_SERVER.port == self.port:
+                if self.event_bus is not None and _GLOBAL_WEBUI_SERVER.event_bus != self.event_bus:
+                    _GLOBAL_WEBUI_SERVER.attach_event_bus(self.event_bus)
                 return _GLOBAL_WEBUI_SERVER
             await _GLOBAL_WEBUI_SERVER.stop()
             _GLOBAL_WEBUI_SERVER = None
 
-        server = WebUIServer(host=self.host, port=self.port)
+        server = WebUIServer(host=self.host, port=self.port, event_bus=self.event_bus)
         await server.start()
         _GLOBAL_WEBUI_SERVER = server
         return server
 
 
-def start_webui_server(host: str = "127.0.0.1", port: int = 8765) -> WebUILauncher:
+def start_webui_server(host: str = "127.0.0.1", port: int = 8765, event_bus: Optional[Any] = None) -> WebUILauncher:
     """
     Launch the global WebUI server on host:port.
     Validates port synchronously and returns an awaitable WebUILauncher.
     """
-    return WebUILauncher(host=host, port=port)
+    return WebUILauncher(host=host, port=port, event_bus=event_bus)
 
 
 
@@ -580,6 +902,16 @@ async def stop_webui_server() -> None:
     if _GLOBAL_WEBUI_SERVER is not None:
         await _GLOBAL_WEBUI_SERVER.stop()
         _GLOBAL_WEBUI_SERVER = None
+    with _AGENT_LOGS_LOCK:
+        _AGENT_LOGS_CACHE["timestamp"] = 0.0
+        _AGENT_LOGS_CACHE["data"] = None
+    with _ERROR_LOG_LOCK:
+        _ERROR_LOG_CACHE["timestamp"] = 0.0
+        _ERROR_LOG_CACHE["count"] = 0
+    with _HOST_TELEMETRY_LOCK:
+        _HOST_TELEMETRY_CACHE["timestamp"] = 0.0
+        _HOST_TELEMETRY_CACHE["disk"] = None
+        _HOST_TELEMETRY_CACHE["docker_running"] = False
 
 
 def webui_broadcast(event: str, data: Any) -> None:
@@ -604,35 +936,59 @@ def create_app() -> web.Application:
 
 
 def extract_recent_agent_logs() -> Dict[str, List[str]]:
-    """Extract recent log lines partitioned by agent from bot.err or bot.log."""
+    """Extract recent log lines partitioned by agent from memory ring buffers or bot.err / bot.log."""
     logs: Dict[str, List[str]] = {
         "eyes": [],
         "nose": [],
         "mouth": [],
     }
-    candidates = [
-        Path("bot.err"),
-        Path("bot.log"),
-        Path("/Users/hermes/projects/first-mate/bot.err"),
-        Path("/Users/hermes/projects/first-mate/bot.log"),
-    ]
-    for p in candidates:
-        if p.exists():
-            try:
-                lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
-                for line in lines[-800:]:
-                    l = line.strip()
-                    if not l:
-                        continue
-                    if any(k in l for k in ["Nose", "NoseSentinel", "Fleet Health Sentinel"]):
-                        logs["nose"].append(l)
-                    elif any(k in l for k in ["Mouth", "Ingress", "Triage", "Gateway", "Router", "Session", "Chief of Staff"]):
-                        logs["mouth"].append(l)
-                    elif any(k in l for k in ["Eyes", "Observer", "Harness", "Execution", "EyesTaskObserver"]):
-                        logs["eyes"].append(l)
-                break
-            except Exception:
-                pass
+    active_server = get_active_webui_server()
+    if active_server is not None and hasattr(active_server, "_recent_logs"):
+        for organ in ("eyes", "nose", "mouth"):
+            mem_logs = active_server._recent_logs.get(organ, [])
+            if mem_logs:
+                logs[organ].extend(mem_logs)
+
+    if not any(logs.values()):
+        # Check thread-safe in-memory cache to eliminate disk I/O when ring buffers are empty
+        now = time.monotonic()
+        with _AGENT_LOGS_LOCK:
+            cached_data = _AGENT_LOGS_CACHE.get("data")
+            cached_ts = _AGENT_LOGS_CACHE.get("timestamp", 0.0)
+            if cached_data is not None and (now - cached_ts) < 60.0:
+                return {
+                    "eyes": list(cached_data.get("eyes", [])),
+                    "nose": list(cached_data.get("nose", [])),
+                    "mouth": list(cached_data.get("mouth", [])),
+                }
+
+        candidates = [
+            Path("bot.err"),
+            Path("bot.log"),
+            Path("/Users/hermes/projects/first-mate/bot.err"),
+            Path("/Users/hermes/projects/first-mate/bot.log"),
+        ]
+        for p in candidates:
+            if p.exists():
+                try:
+                    size = p.stat().st_size
+                    with p.open("r", encoding="utf-8", errors="replace") as f:
+                        if size > 16384:
+                            f.seek(size - 16384)
+                        lines = f.read().splitlines()
+                    for line in lines[-100:]:
+                        l = line.strip()
+                        if not l:
+                            continue
+                        if any(k in l for k in ["Nose", "NoseSentinel", "Fleet Health Sentinel"]):
+                            logs["nose"].append(l)
+                        elif any(k in l for k in ["Mouth", "Ingress", "Triage", "Gateway", "Router", "Session", "Chief of Staff"]):
+                            logs["mouth"].append(l)
+                        elif any(k in l for k in ["Eyes", "Observer", "Harness", "Execution", "EyesTaskObserver"]):
+                            logs["eyes"].append(l)
+                    break
+                except Exception:
+                    pass
 
     # Provide realistic operational fallbacks if log files have sparse lines for any organ
     now_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
@@ -658,11 +1014,28 @@ def extract_recent_agent_logs() -> Dict[str, List[str]]:
             f"{now_str} [INFO] Golem.Agent.Mouth: Sub-second response engine ready; out-of-band inquiries armed",
         ]
 
-    return {
+    result = {
         "eyes": logs["eyes"][-16:],
         "nose": logs["nose"][-16:],
         "mouth": logs["mouth"][-16:],
     }
+
+    # Populate cache when memory ring buffers are unpopulated
+    active_server = get_active_webui_server()
+    has_mem = False
+    if active_server is not None and hasattr(active_server, "_recent_logs"):
+        has_mem = any(active_server._recent_logs.values())
+    if not has_mem:
+        now = time.monotonic()
+        with _AGENT_LOGS_LOCK:
+            _AGENT_LOGS_CACHE["timestamp"] = now
+            _AGENT_LOGS_CACHE["data"] = {
+                "eyes": list(result["eyes"]),
+                "nose": list(result["nose"]),
+                "mouth": list(result["mouth"]),
+            }
+
+    return result
 
 
 def get_system_status() -> Dict[str, Any]:
@@ -724,38 +1097,95 @@ def get_system_status() -> Dict[str, Any]:
     except Exception:
         pass
 
-    # Real host disk usage fallback/enhancement
+    # Real host telemetry (disk usage and docker socket check)
+    # Cached with 10.0s TTL and mutex lock to prevent synchronous filesystem syscalls on the event loop
     try:
-        import shutil
-        total, used, free = shutil.disk_usage("/")
-        free_gb = round(free / (1024 ** 3), 1)
-        used_pct = round((used / total) * 100.0, 1)
-        nose_data["disk"] = {
-            "free_gb": free_gb,
-            "percent_used": used_pct,
-            "pressure": used_pct > 90.0,
-        }
+        now = time.monotonic()
+        cached_disk = None
+        cached_docker = False
+        with _HOST_TELEMETRY_LOCK:
+            if (now - _HOST_TELEMETRY_CACHE.get("timestamp", 0.0)) < 10.0 and _HOST_TELEMETRY_CACHE.get("disk") is not None:
+                cached_disk = dict(_HOST_TELEMETRY_CACHE["disk"])
+                cached_docker = bool(_HOST_TELEMETRY_CACHE.get("docker_running", False))
+
+        if cached_disk is not None:
+            nose_data["disk"] = cached_disk
+            if cached_docker:
+                nose_data["docker"]["running"] = True
+        else:
+            fresh_disk = None
+            try:
+                import shutil
+                total, used, free = shutil.disk_usage("/")
+                free_gb = round(free / (1024 ** 3), 1)
+                used_pct = round((used / total) * 100.0, 1)
+                fresh_disk = {
+                    "free_gb": free_gb,
+                    "percent_used": used_pct,
+                    "pressure": used_pct > 90.0,
+                }
+            except Exception:
+                pass
+
+            fresh_docker = False
+            try:
+                if os.path.exists("/var/run/docker.sock"):
+                    fresh_docker = True
+            except Exception:
+                pass
+
+            if fresh_disk is not None:
+                nose_data["disk"] = fresh_disk
+            if fresh_docker:
+                nose_data["docker"]["running"] = True
+
+            with _HOST_TELEMETRY_LOCK:
+                _HOST_TELEMETRY_CACHE["timestamp"] = now
+                if fresh_disk is not None:
+                    _HOST_TELEMETRY_CACHE["disk"] = dict(fresh_disk)
+                _HOST_TELEMETRY_CACHE["docker_running"] = fresh_docker
     except Exception:
         pass
 
-    # Real docker socket check
-    try:
-        if os.path.exists("/var/run/docker.sock"):
-            nose_data["docker"]["running"] = True
-    except Exception:
-        pass
-
-    # Real bot.err scan
+    # Real bot.err scan (tail-seek + 60.0s TTL cache with mutex lock to prevent event loop latency lag)
     try:
         from pathlib import Path
-        for err_path in [Path("bot.err"), Path("bot.log")]:
-            if err_path.exists():
-                content = err_path.read_text(encoding="utf-8", errors="replace")[-16384:]
-                err_lines = [l for l in content.splitlines() if any(kw in l.lower() for kw in ("traceback", "[error]", "[critical]", "exception"))]
-                if err_lines:
-                    nose_data["error_count"] = len(err_lines)
-                    nose_data["recent_error_count"] = len(err_lines)
-                break
+        now = time.monotonic()
+        with _ERROR_LOG_LOCK:
+            cached_ts = _ERROR_LOG_CACHE.get("timestamp", 0.0)
+            if (now - cached_ts) < 60.0:
+                cached_count = _ERROR_LOG_CACHE.get("count", 0)
+                if cached_count > 0:
+                    nose_data["error_count"] = cached_count
+                    nose_data["recent_error_count"] = cached_count
+            else:
+                found_count = 0
+                for err_path in [
+                    Path("bot.err"),
+                    Path("bot.log"),
+                    Path("/Users/hermes/projects/first-mate/bot.err"),
+                    Path("/Users/hermes/projects/first-mate/bot.log"),
+                ]:
+                    if err_path.exists():
+                        try:
+                            size = err_path.stat().st_size
+                            with err_path.open("r", encoding="utf-8", errors="replace") as f:
+                                if size > 16384:
+                                    f.seek(size - 16384)
+                                content = f.read()
+                            err_lines = [
+                                l for l in content.splitlines()
+                                if any(kw in l.lower() for kw in ("traceback", "[error]", "[critical]", "exception"))
+                            ]
+                            if err_lines:
+                                found_count = len(err_lines)
+                                nose_data["error_count"] = found_count
+                                nose_data["recent_error_count"] = found_count
+                            break
+                        except Exception:
+                            pass
+                _ERROR_LOG_CACHE["timestamp"] = now
+                _ERROR_LOG_CACHE["count"] = found_count
     except Exception:
         pass
 
@@ -772,12 +1202,17 @@ def get_system_status() -> Dict[str, Any]:
         "logs": agent_logs.get("eyes", []),
     }
     if active_server is not None and getattr(active_server, "_active_hands", None):
-        first_hand = next(iter(active_server._active_hands.values()))
-        eyes_data["state"] = "RUNNING"
-        eyes_data["active_command"] = first_hand.get("command", "")
-        eyes_data["command"] = first_hand.get("command", "")
-        eyes_data["pid"] = first_hand.get("pid")
-        eyes_data["buffer_tail"] = first_hand.get("buffer_tail", "")
+        try:
+            hands_list = list(active_server._active_hands.values())
+        except Exception:
+            hands_list = []
+        if hands_list:
+            first_hand = hands_list[0]
+            eyes_data["state"] = "RUNNING"
+            eyes_data["active_command"] = first_hand.get("command", "")
+            eyes_data["command"] = first_hand.get("command", "")
+            eyes_data["pid"] = first_hand.get("pid")
+            eyes_data["buffer_tail"] = first_hand.get("buffer_tail", "")
 
     # 3. Mouth status
     mouth_model = ""
@@ -798,7 +1233,11 @@ def get_system_status() -> Dict[str, Any]:
     # 4. Hands status
     hands_data: List[Dict[str, Any]] = []
     if active_server is not None and getattr(active_server, "_active_hands", None):
-        for h in active_server._active_hands.values():
+        try:
+            hands_list = list(active_server._active_hands.values())
+        except Exception:
+            hands_list = []
+        for h in hands_list:
             hands_data.append(dict(h))
 
     return {
@@ -826,5 +1265,7 @@ __all__ = [
     "webui_broadcast_async",
     "format_sse_event",
     "get_system_status",
+    "clear_host_telemetry_cache",
     "create_app",
+    "_SyncAndAwaitableNone",
 ]

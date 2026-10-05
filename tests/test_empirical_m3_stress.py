@@ -21,15 +21,15 @@ PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_DIR not in sys.path:
     sys.path.insert(0, PROJECT_DIR)
 
-from first_mate.agent.protocol import (
+from golem.agent.protocol import (
     TextDeltaEvent,
     StatusUpdateEvent,
     FinishEvent,
     AgentEvent,
 )
-from first_mate.execution.runner import ExecutionHandle
-from first_mate.execution.buffer import RunnerBufferObserver
-from first_mate.gateway.session import (
+from golem.execution.runner import ExecutionHandle
+from golem.execution.buffer import RunnerBufferObserver
+from golem.gateway.session import (
     SessionHandle,
     SessionState,
     is_cancellation_message,
@@ -37,8 +37,8 @@ from first_mate.gateway.session import (
     is_conversational_checkin,
     is_out_of_band_message,
 )
-from first_mate.gateway.router import SessionRouter
-from first_mate.gateway.ingress import IngressGateway
+from golem.gateway.router import SessionRouter
+from golem.gateway.ingress import IngressGateway
 
 
 class MockRecordingSlackClient:

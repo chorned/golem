@@ -18,7 +18,7 @@ import time
 import tracemalloc
 import unittest
 
-import first_mate.transport.normalizer as canonical_normalizer
+import golem.transport.normalizer as canonical_normalizer
 import normalizer as shim_normalizer
 
 
@@ -555,7 +555,7 @@ class TestTC05InvariantsFuzzing(unittest.TestCase):
 
 
 class TestBackwardsCompatibilityParity(unittest.TestCase):
-    """Verify that root normalizer.py is a 100% transparent shim for first_mate.transport.normalizer."""
+    """Verify that root normalizer.py is a 100% transparent shim for golem.transport.normalizer."""
 
     def test_all_symbols_identical(self):
         shim_symbols = shim_normalizer.__all__
@@ -564,7 +564,7 @@ class TestBackwardsCompatibilityParity(unittest.TestCase):
         for sym in shim_symbols:
             self.assertTrue(
                 hasattr(canonical_normalizer, sym),
-                f"Symbol {sym} in normalizer.__all__ missing from first_mate.transport.normalizer"
+                f"Symbol {sym} in normalizer.__all__ missing from golem.transport.normalizer"
             )
             canon_val = getattr(canonical_normalizer, sym)
             shim_val = getattr(shim_normalizer, sym)

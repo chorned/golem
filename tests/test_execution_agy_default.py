@@ -11,7 +11,7 @@ Covers:
    - Precedence: GOLEM_DEFAULT_HAND_WORKER > FIRSTMATE > GOLEM_ENGINE > FIRST_MATE_ENGINE
    - Whitespace stripping and case insensitivity
    - Standardization of 'antigravity' to 'agy'
-   - Re-exported in golem.execution, golem.execution.delegation, first_mate.execution, herdr_tools
+   - Re-exported in golem.execution, golem.execution.delegation, golem.execution, herdr_tools
 
 2. herdr_tools Standardized Signatures & AGY Default:
    - herdr_spawn defaults worker to 'agy' without error when omitted or None
@@ -57,9 +57,9 @@ if PROJECT_DIR not in sys.path:
     sys.path.insert(0, PROJECT_DIR)
 
 import golem.config
-import first_mate.config
+import golem.config
 import golem.execution
-import first_mate.execution
+import golem.execution
 from golem.execution.harness import DualPaneHarness
 from golem.execution.runner import RunnerExecutor, ExecutionHandle
 from golem.execution.delegation import WorkerDelegator, sanitize_worker_output
@@ -165,16 +165,16 @@ class TestCentralizedHandWorkerResolution(unittest.TestCase):
                 self.assertEqual(golem.config.get_default_hand_worker(), "agy")
 
     def test_re_exports_across_modules(self):
-        """get_default_hand_worker is exported across golem.execution, first_mate.execution, herdr_tools."""
+        """get_default_hand_worker is exported across golem.execution, golem.execution, herdr_tools."""
         self.assertTrue(callable(golem.config.get_default_hand_worker))
-        self.assertTrue(callable(first_mate.config.get_default_hand_worker))
+        self.assertTrue(callable(golem.config.get_default_hand_worker))
         self.assertTrue(callable(golem.execution.get_default_hand_worker))
-        self.assertTrue(callable(first_mate.execution.get_default_hand_worker))
+        self.assertTrue(callable(golem.execution.get_default_hand_worker))
         self.assertTrue(callable(herdr_tools.get_default_hand_worker))
 
         # Check values match
         self.assertEqual(golem.config.get_default_hand_worker(), golem.execution.get_default_hand_worker())
-        self.assertEqual(golem.config.get_default_hand_worker(), first_mate.execution.get_default_hand_worker())
+        self.assertEqual(golem.config.get_default_hand_worker(), golem.execution.get_default_hand_worker())
         self.assertEqual(golem.config.get_default_hand_worker(), herdr_tools.get_default_hand_worker())
 
 

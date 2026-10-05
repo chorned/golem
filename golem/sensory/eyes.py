@@ -56,6 +56,7 @@ class EyesTaskObserver:
         self,
         event_bus: Optional[ShoulderTapEventBus] = None,
         bus: Optional[ShoulderTapEventBus] = None,
+        sensory_bus: Optional[ShoulderTapEventBus] = None,
         buffer_observer: Optional[Any] = None,
         model: Optional[str] = None,
         poll_interval: float = 15.0,
@@ -67,10 +68,20 @@ class EyesTaskObserver:
         thread_ts: Optional[str] = None,
         api_key: Optional[str] = None,
         timeout_seconds: float = 15.0,
+        webui_server: Optional[Any] = None,
+        **kwargs: Any,
     ) -> None:
-        self.event_bus = event_bus or bus or get_default_event_bus()
+        self.event_bus = sensory_bus or event_bus or bus or get_default_event_bus()
+        self.sensory_bus = self.event_bus
         self.bus = self.event_bus
-        self.buffer_observer = buffer_observer
+        if buffer_observer is None:
+            try:
+                from golem.execution.buffer import RunnerBufferObserver
+                self.buffer_observer = RunnerBufferObserver()
+            except Exception:
+                self.buffer_observer = None
+        else:
+            self.buffer_observer = buffer_observer
         self.model = model or get_eyes_model()
         self.poll_interval = interval if interval is not None else poll_interval
         self.interval = self.poll_interval
@@ -81,6 +92,7 @@ class EyesTaskObserver:
         self.thread_ts = thread_ts
         self.api_key = api_key
         self.timeout_seconds = timeout_seconds
+        self.webui_server = webui_server
 
         # Buffer hashing & deduplication state
         self._last_buffer_hash: Optional[str] = None
@@ -352,6 +364,11 @@ class EyesTaskObserver:
         blocker_prompt = classification.get("blocker_prompt")
 
         clean_buffer = self.normalize_buffer_text(buffer_text)
+        if self.webui_server is not None and hasattr(self.webui_server, "update_hand_buffer"):
+            try:
+                self.webui_server.update_hand_buffer(target_pane, clean_buffer)
+            except Exception as e:
+                logger.debug(f"EyesTaskObserver: Failed to update webui hand buffer: {e}")
         lines = [l for l in clean_buffer.splitlines() if l.strip()]
         buffer_tail = "\n".join(lines[-10:]) if lines else ""
 
@@ -470,22 +487,27 @@ class EyesTaskObserver:
     async def _watch_loop(self) -> None:
         """Internal monitoring loop running every poll_interval seconds."""
         logger.info(f"EyesTaskObserver started monitoring pane '{self.pane}' (interval={self.poll_interval}s)")
-        while self._is_running and not self._stop_event.is_set():
-            try:
-                alert = await self.tick()
-                if alert and alert.alert_type == "completion":
-                    logger.info(f"EyesTaskObserver: Received completion alert; stopping watcher loop for pane '{self.pane}'.")
+        try:
+            while self._is_running and not self._stop_event.is_set():
+                try:
+                    alert = await self.tick()
+                    if alert and alert.alert_type == "completion":
+                        logger.info(f"EyesTaskObserver: Received completion alert; stopping watcher loop for pane '{self.pane}'.")
+                        break
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    logger.error(f"Error during EyesTaskObserver tick for pane '{self.pane}': {e}", exc_info=True)
+
+                try:
+                    await asyncio.wait_for(self._stop_event.wait(), timeout=self.poll_interval)
                     break
-            except Exception as e:
-                logger.error(f"Error during EyesTaskObserver tick for pane '{self.pane}': {e}", exc_info=True)
-
-            try:
-                await asyncio.wait_for(self._stop_event.wait(), timeout=self.poll_interval)
-                break
-            except asyncio.TimeoutError:
-                pass
-
-        self._is_running = False
+                except asyncio.TimeoutError:
+                    pass
+        except asyncio.CancelledError:
+            pass
+        finally:
+            self._is_running = False
 
     async def stop_monitoring(self) -> None:
         """Stop and cancel the background watcher task cleanly."""
@@ -500,6 +522,16 @@ class EyesTaskObserver:
                     pass
             self._watch_task = None
         logger.info(f"EyesTaskObserver stopped monitoring pane '{self.pane}'")
+
+    def stop_monitoring_sync(self) -> None:
+        """Synchronously stop and cancel the background watcher task cleanly."""
+        self._is_running = False
+        self._stop_event.set()
+        if self._watch_task is not None:
+            if not self._watch_task.done():
+                self._watch_task.cancel()
+            self._watch_task = None
+        logger.info(f"EyesTaskObserver stopped monitoring pane '{self.pane}' (sync)")
 
     async def stop(self) -> None:
         """Alias for stop_monitoring."""

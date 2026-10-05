@@ -26,7 +26,7 @@ if PROJECT_DIR not in sys.path:
     sys.path.insert(0, PROJECT_DIR)
 
 import app
-from first_mate.gateway.ingress import (
+from golem.gateway.ingress import (
     IngressGateway,
     download_slack_file,
     sanitize_filename,
@@ -34,7 +34,7 @@ from first_mate.gateway.ingress import (
     DEFAULT_MAX_FILE_SIZE_BYTES,
     TRANSFERS_DIR_NAME,
 )
-from first_mate.gateway.router import SessionRouter
+from golem.gateway.router import SessionRouter
 
 
 class MockHeadlessAdapter:
@@ -379,7 +379,7 @@ class TestInboundFileIngressAndPromptEnrichment(unittest.IsolatedAsyncioTestCase
         }
 
         # Mock download_slack_file
-        with patch("first_mate.gateway.ingress.download_slack_file", new_callable=AsyncMock) as mock_download:
+        with patch("golem.gateway.ingress.download_slack_file", new_callable=AsyncMock) as mock_download:
             mock_download.return_value = file_data
 
             # Track what prompt is passed to session.send_user_message
@@ -435,7 +435,7 @@ class TestInboundFileIngressAndPromptEnrichment(unittest.IsolatedAsyncioTestCase
             "cwd": self.temp_dir,
         }
 
-        with patch("first_mate.gateway.ingress.download_slack_file", new_callable=AsyncMock) as mock_download:
+        with patch("golem.gateway.ingress.download_slack_file", new_callable=AsyncMock) as mock_download:
             mock_download.return_value = file_data
             sent_prompts = []
 
@@ -471,7 +471,7 @@ class TestInboundFileIngressAndPromptEnrichment(unittest.IsolatedAsyncioTestCase
             "cwd": self.temp_dir,
         }
 
-        with patch("first_mate.gateway.ingress.download_slack_file", new_callable=AsyncMock) as mock_download:
+        with patch("golem.gateway.ingress.download_slack_file", new_callable=AsyncMock) as mock_download:
             mock_download.return_value = b"sample_data"
             sent_prompts = []
 
@@ -510,7 +510,7 @@ class TestInboundFileIngressAndPromptEnrichment(unittest.IsolatedAsyncioTestCase
             "cwd": self.temp_dir,
         }
 
-        with patch("first_mate.gateway.ingress.download_slack_file", new_callable=AsyncMock) as mock_download:
+        with patch("golem.gateway.ingress.download_slack_file", new_callable=AsyncMock) as mock_download:
             sent_prompts = []
 
             async def mock_send(prompt):
@@ -594,7 +594,7 @@ class TestDualDeliveryDeduplication(unittest.IsolatedAsyncioTestCase):
             "cwd": self.temp_dir,
         }
 
-        with patch("first_mate.gateway.ingress.download_slack_file", new_callable=AsyncMock) as mock_download:
+        with patch("golem.gateway.ingress.download_slack_file", new_callable=AsyncMock) as mock_download:
             mock_download.return_value = file_bytes
             sent_prompts = []
 
@@ -660,7 +660,7 @@ class TestDualDeliveryDeduplication(unittest.IsolatedAsyncioTestCase):
             "event_ts": "1720000020.000100",
         }
 
-        with patch("first_mate.gateway.ingress.download_slack_file", new_callable=AsyncMock) as mock_download:
+        with patch("golem.gateway.ingress.download_slack_file", new_callable=AsyncMock) as mock_download:
             mock_download.return_value = file_bytes
 
             async def mock_send(prompt):
@@ -734,7 +734,7 @@ class TestDualDeliveryDeduplication(unittest.IsolatedAsyncioTestCase):
 
         session.send_user_message = mock_send
 
-        with patch("first_mate.gateway.ingress.download_slack_file", side_effect=slow_download):
+        with patch("golem.gateway.ingress.download_slack_file", side_effect=slow_download):
             await asyncio.gather(
                 self.gateway.handle_file_shared(file_shared_event, self.client),
                 self.gateway.handle_message(message_event, self.client),

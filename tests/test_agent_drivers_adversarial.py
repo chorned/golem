@@ -17,7 +17,7 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 from typing import AsyncGenerator, List, Dict, Optional, Any
 
-from first_mate.config import (
+from golem.config import (
     get_active_engine,
     get_engine_model,
     get_mouth_model,
@@ -25,7 +25,7 @@ from first_mate.config import (
     get_nose_model,
     get_config_dict,
 )
-from first_mate.agent.protocol import (
+from golem.agent.protocol import (
     AgentEvent,
     TextDeltaEvent,
     StatusUpdateEvent,
@@ -33,19 +33,19 @@ from first_mate.agent.protocol import (
     ToolEndEvent,
     FinishEvent,
 )
-from first_mate.agent.drivers.base import BaseAgentDriver
-from first_mate.agent.drivers.antigravity import AntigravityDriver
-from first_mate.agent.drivers.claude_code import ClaudeCodeDriver
-from first_mate.agent.drivers.opencode import OpenCodeDriver
-from first_mate.agent.drivers import (
+from golem.agent.drivers.base import BaseAgentDriver
+from golem.agent.drivers.antigravity import AntigravityDriver
+from golem.agent.drivers.claude_code import ClaudeCodeDriver
+from golem.agent.drivers.opencode import OpenCodeDriver
+from golem.agent.drivers import (
     DRIVER_REGISTRY,
     get_driver_class,
     register_driver,
     create_driver,
 )
-from first_mate.agent.adapter import HeadlessAgentAdapter
-from first_mate.gateway.session import SessionHandle, SessionState
-from first_mate.gateway.router import SessionRouter
+from golem.agent.adapter import HeadlessAgentAdapter
+from golem.gateway.session import SessionHandle, SessionState
+from golem.gateway.router import SessionRouter
 
 
 class DummyConcreteDriver(BaseAgentDriver):
@@ -252,13 +252,13 @@ class TestAntigravityDriverCommandLineAdversarial(unittest.TestCase):
 
     def test_dynamic_model_fallback_on_init(self) -> None:
         with patch.dict(os.environ, {"ANTIGRAVITY_MODEL": "gemini-test-fallback"}):
-            with patch("first_mate.config.get_engine_model", return_value="gemini-test-config"):
+            with patch("golem.config.get_engine_model", return_value="gemini-test-config"):
                 driver = AntigravityDriver(cwd="/tmp", model=None)
                 self.assertEqual(driver.model, "gemini-test-config")
 
         # When config raises or missing
         with patch.dict(os.environ, {"ANTIGRAVITY_MODEL": "gemini-test-env-fallback"}):
-            with patch("first_mate.config.get_engine_model", side_effect=ImportError("No config")):
+            with patch("golem.config.get_engine_model", side_effect=ImportError("No config")):
                 driver2 = AntigravityDriver(cwd="/tmp", model=None)
                 self.assertEqual(driver2.model, "gemini-test-env-fallback")
 
@@ -707,7 +707,7 @@ class TestConfigResilienceAdversarial(unittest.TestCase):
         self.assertIn("nose_model", cfg)
 
     def test_reload_config_safe(self) -> None:
-        from first_mate.config import reload_config
+        from golem.config import reload_config
         # Should execute safely without exceptions
         reload_config()
 
@@ -751,7 +751,7 @@ class TestZeroHardcodedModelsAudit(unittest.TestCase):
     def test_zero_hardcoded_model_strings_in_repo(self) -> None:
         pattern = re.compile(r'gemini-[a-zA-Z0-9.-]+|claude-[a-zA-Z0-9.-]+')
         root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        target_dirs = [os.path.join(root_dir, "first_mate")]
+        target_dirs = [os.path.join(root_dir, "golem")]
         target_files = [os.path.join(root_dir, "agent_core.py")]
 
         violations: List[str] = []

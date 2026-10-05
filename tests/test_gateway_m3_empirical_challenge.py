@@ -32,17 +32,17 @@ import asyncio
 import unittest
 from typing import Optional, List, Dict, Any, AsyncGenerator
 
-from first_mate.agent.protocol import (
+from golem.agent.protocol import (
     TextDeltaEvent,
     StatusUpdateEvent,
     AwaitingInputEvent,
     FinishEvent,
     AgentEvent,
 )
-from first_mate.agent.adapter import HeadlessAgentAdapter
-from first_mate.gateway.session import SessionHandle, SessionState
-from first_mate.gateway.router import SessionRouter
-from first_mate.gateway.ingress import (
+from golem.agent.adapter import HeadlessAgentAdapter
+from golem.gateway.session import SessionHandle, SessionState
+from golem.gateway.router import SessionRouter
+from golem.gateway.ingress import (
     IngressGateway,
     strip_bot_mentions,
     swap_reaction,

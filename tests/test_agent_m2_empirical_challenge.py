@@ -24,7 +24,7 @@ import tempfile
 import unittest
 from typing import List
 
-from first_mate.agent.protocol import (
+from golem.agent.protocol import (
     AgentEvent,
     TextDeltaEvent,
     StatusUpdateEvent,
@@ -33,7 +33,7 @@ from first_mate.agent.protocol import (
     AwaitingInputEvent,
     FinishEvent,
 )
-from first_mate.agent.adapter import HeadlessAgentAdapter
+from golem.agent.adapter import HeadlessAgentAdapter
 
 
 class TestAgentM2EmpiricalChallenge(unittest.IsolatedAsyncioTestCase):

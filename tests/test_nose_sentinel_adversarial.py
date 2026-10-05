@@ -23,8 +23,8 @@ import threading
 import unittest
 from typing import List
 
-from first_mate.sensory.nose import NoseSentinel
-from first_mate.sensory.bus import ShoulderTapEventBus
+from golem.sensory.nose import NoseSentinel
+from golem.sensory.bus import ShoulderTapEventBus
 
 
 class TestLogSnifferAdversarial(unittest.IsolatedAsyncioTestCase):
@@ -488,7 +488,7 @@ class TestLogSnifferAdversarial(unittest.IsolatedAsyncioTestCase):
         """
         import json
         from unittest.mock import patch, MagicMock, AsyncMock
-        from first_mate.sensory.nose import ZeroRegexEvaluator
+        from golem.sensory.nose import ZeroRegexEvaluator
 
         evaluator = ZeroRegexEvaluator(model="gemini-flash-lite-latest", api_key="fake-test-key")
 

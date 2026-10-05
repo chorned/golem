@@ -11,7 +11,7 @@ Covers:
 - REST endpoints: /, /events, /api/events, /api/status, /api/sensory/*, /health
 - HTML Command Center dashboard dark mode and 4-pane structure
 - High-velocity event broadcast and event-loop non-starvation
-- Dual-layer compatibility shim identity (first_mate.webui is golem.webui)
+- Dual-layer compatibility shim identity (golem.webui is golem.webui)
 - CLI argument parsing (--webUI, --webui) in app.py
 
 Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
@@ -32,7 +32,7 @@ import aiohttp
 from aiohttp import web, ClientSession
 
 import golem.config as golem_cfg
-import first_mate.config as fm_cfg
+import golem.config as fm_cfg
 import golem.webui as webui
 from golem.webui.server import (
     LINEAGE,
@@ -48,7 +48,7 @@ from golem.webui.server import (
     webui_broadcast,
     webui_broadcast_async,
 )
-import first_mate.webui as fm_webui
+import golem.webui as fm_webui
 import app
 
 
@@ -110,8 +110,8 @@ class TestWebUIConfiguration(unittest.TestCase):
             self.assertEqual(cfg.get("webui_port"), "8888")
             self.assertEqual(cfg.get("webui_host"), "127.0.0.1")
 
-    def test_first_mate_config_shim_parity(self):
-        """Verify first_mate.config re-exports WebUI configuration functions with exact identity."""
+    def test_golem_config_parity(self):
+        """Verify golem.config re-exports WebUI configuration functions with exact identity."""
         self.assertIs(fm_cfg.is_webui_enabled, golem_cfg.is_webui_enabled)
         self.assertIs(fm_cfg.get_webui_host, golem_cfg.get_webui_host)
         self.assertIs(fm_cfg.get_webui_port, golem_cfg.get_webui_port)
@@ -442,7 +442,7 @@ class TestWebUIEventLoopNonStarvation(unittest.IsolatedAsyncioTestCase):
 
 
 class TestDualLayerCompatibilityShim(unittest.TestCase):
-    """Verify first_mate.webui provides 100% object identity with golem.webui."""
+    """Verify golem.webui provides 100% object identity with golem.webui."""
 
     def test_shim_exports_identity(self):
         """Check all exported functions and classes are identical."""

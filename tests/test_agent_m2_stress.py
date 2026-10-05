@@ -25,7 +25,7 @@ import tracemalloc
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from first_mate.agent.protocol import (
+from golem.agent.protocol import (
     AgentEvent,
     TextDeltaEvent,
     StatusUpdateEvent,
@@ -34,7 +34,7 @@ from first_mate.agent.protocol import (
     AwaitingInputEvent,
     FinishEvent,
 )
-from first_mate.agent.adapter import HeadlessAgentAdapter
+from golem.agent.adapter import HeadlessAgentAdapter
 
 
 class FakeStressStreamProcess:

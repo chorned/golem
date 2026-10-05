@@ -40,8 +40,8 @@ if PROJECT_DIR not in sys.path:
 from golem.execution.runner import RunnerExecutor, ExecutionHandle
 from golem.execution.delegation import WorkerDelegator, sanitize_worker_output
 from golem.execution.buffer import RunnerBufferObserver
-import first_mate.execution.runner
-import first_mate.execution.delegation
+import golem.execution.runner
+import golem.execution.delegation
 
 
 # ===========================================================================

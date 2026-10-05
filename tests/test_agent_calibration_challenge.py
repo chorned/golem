@@ -32,7 +32,7 @@ import unittest
 import time
 from typing import List
 
-from first_mate.agent.calibration import (
+from golem.agent.calibration import (
     SLACK_MRKDWN_RULES,
     CHOICE_FORMATTING_RULES,
     PACING_CALIBRATION_RULES,
@@ -41,7 +41,7 @@ from first_mate.agent.calibration import (
     get_calibration_rules,
     build_calibrated_system_prompt,
 )
-from first_mate.transport.normalizer import (
+from golem.transport.normalizer import (
     sanitize_for_slack,
     transpile_markdown_to_mrkdwn,
     strip_tui_debris,
@@ -230,7 +230,7 @@ class TestAdversarialPromptBuilder(unittest.TestCase):
 class TestCalibratedOutputTC05Compliance(unittest.TestCase):
     """
     Verify that assistant output adhering to or deviating from calibration
-    achieves 100% TC-05 compliance when processed through first_mate.transport.normalizer.
+    achieves 100% TC-05 compliance when processed through golem.transport.normalizer.
     TC-05: 0 raw ATX hashes (#), 0 double asterisks (**), 0 terminal widgets/runes, Slack links.
     """
 

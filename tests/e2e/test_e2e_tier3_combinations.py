@@ -47,7 +47,7 @@ class TestTier3WebUIAndAGYExecution(unittest.IsolatedAsyncioTestCase):
     """
 
     def _get_webui_mod(self):
-        for name in ["golem.webui.server", "golem.webui", "first_mate.webui.server"]:
+        for name in ["golem.webui.server", "golem.webui", "golem.webui.server"]:
             try:
                 return importlib.import_module(name)
             except ImportError:
@@ -55,7 +55,7 @@ class TestTier3WebUIAndAGYExecution(unittest.IsolatedAsyncioTestCase):
         return None
 
     def _get_runner_mod(self):
-        for name in ["golem.execution.runner", "first_mate.execution.runner"]:
+        for name in ["golem.execution.runner", "golem.execution.runner"]:
             try:
                 return importlib.import_module(name)
             except ImportError:
@@ -110,7 +110,7 @@ class TestTier3DualLayerShimNestedImports(unittest.TestCase):
 
         # Patch via first_mate namespace
         try:
-            with patch("first_mate.config.get_default_hand_worker", return_value="custom-worker"):
+            with patch("golem.config.get_default_hand_worker", return_value="custom-worker"):
                 import golem.config
                 val = golem.config.get_default_hand_worker()
                 self.assertEqual(val, "custom-worker", "Patching first_mate must mutate golem object")
@@ -123,9 +123,9 @@ class TestTier3DualLayerShimNestedImports(unittest.TestCase):
             self.skipTest("Milestone M1 pending: dual-layer shim not yet active")
 
         submodules_to_test = [
-            ("first_mate.sensory.bus", "golem.sensory.bus"),
-            ("first_mate.execution.runner", "golem.execution.runner"),
-            ("first_mate.transport.normalizer", "golem.transport.normalizer"),
+            ("golem.sensory.bus", "golem.sensory.bus"),
+            ("golem.execution.runner", "golem.execution.runner"),
+            ("golem.transport.normalizer", "golem.transport.normalizer"),
         ]
 
         for fm_name, g_name in submodules_to_test:
@@ -148,7 +148,7 @@ class TestTier3WebUITelemetryAndNoseSniffer(unittest.IsolatedAsyncioTestCase):
     """
 
     def _get_webui_mod(self):
-        for name in ["golem.webui.server", "golem.webui", "first_mate.webui.server"]:
+        for name in ["golem.webui.server", "golem.webui", "golem.webui.server"]:
             try:
                 return importlib.import_module(name)
             except ImportError:
@@ -156,7 +156,7 @@ class TestTier3WebUITelemetryAndNoseSniffer(unittest.IsolatedAsyncioTestCase):
         return None
 
     def _get_bus_mod(self):
-        for name in ["golem.sensory.bus", "first_mate.sensory.bus"]:
+        for name in ["golem.sensory.bus", "golem.sensory.bus"]:
             try:
                 return importlib.import_module(name)
             except ImportError:
@@ -209,7 +209,7 @@ class TestTier3LaunchdEnvAndWorkerDelegation(unittest.TestCase):
 
     def test_dual_key_env_resolves_worker_selection(self):
         """C04: Launchd dual-key environment variables configure default worker dispatch."""
-        for cfg_name in ["golem.config", "first_mate.config"]:
+        for cfg_name in ["golem.config", "golem.config"]:
             try:
                 cfg = importlib.import_module(cfg_name)
                 break
@@ -249,7 +249,7 @@ class TestTier3GolemIdentityStackIntegration(unittest.TestCase):
         self.assertIn(LINEAGE_INVARIANT, p_content)
 
         # Check golem package docstring or config LINEAGE constant
-        for mod_name in ["golem.config", "first_mate.config"]:
+        for mod_name in ["golem.config", "golem.config"]:
             try:
                 mod = importlib.import_module(mod_name)
                 if hasattr(mod, "LINEAGE") or hasattr(mod, "LINEAGE_INVARIANT"):

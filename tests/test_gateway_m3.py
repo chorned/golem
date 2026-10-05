@@ -22,7 +22,7 @@ PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_DIR not in sys.path:
     sys.path.insert(0, PROJECT_DIR)
 
-from first_mate.agent.protocol import (
+from golem.agent.protocol import (
     TextDeltaEvent,
     StatusUpdateEvent,
     ToolStartEvent,
@@ -31,9 +31,9 @@ from first_mate.agent.protocol import (
     FinishEvent,
     AgentEvent,
 )
-from first_mate.gateway.session import SessionHandle, SessionState
-from first_mate.gateway.router import SessionRouter
-from first_mate.gateway.ingress import (
+from golem.gateway.session import SessionHandle, SessionState
+from golem.gateway.router import SessionRouter
+from golem.gateway.ingress import (
     IngressGateway,
     add_reaction,
     remove_reaction,
@@ -943,8 +943,8 @@ class TestExplicitCommands(unittest.IsolatedAsyncioTestCase):
         self.assertIn("audiobooks", received_prompt)
         self.assertIn("where did we end up with this?", received_prompt)
 
-    async def test_thread_context_not_rehydrated_on_warm_second_turn(self) -> None:
-        """Verify that second turn in an already-warm session does not fetch Slack history again."""
+    async def test_thread_context_rehydrated_on_warm_second_turn(self) -> None:
+        """Verify that second turn in an active thread rehydrates Slack thread history."""
         adapter = MockHeadlessAdapter()
         self.router.adapter_factory = lambda cwd: adapter
 
@@ -971,8 +971,10 @@ class TestExplicitCommands(unittest.IsolatedAsyncioTestCase):
         }
         await self.gateway.handle_message(event2, self.client)
         self.assertEqual(len(adapter.turns_received), 2)
-        # Turn 2 must NOT have re-fetched thread context since session was already warm
-        self.assertEqual(adapter.turns_received[1], "Turn 2 follow-up")
+        # Turn 2 must rehydrate thread context for continuous conversational history
+        self.assertIn("Previous Slack Thread Context", adapter.turns_received[1])
+        self.assertIn("Initial thread question", adapter.turns_received[1])
+        self.assertIn("Turn 2 follow-up", adapter.turns_received[1])
 
 
 if __name__ == "__main__":

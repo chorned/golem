@@ -25,8 +25,8 @@ PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_DIR not in sys.path:
     sys.path.insert(0, PROJECT_DIR)
 
-from first_mate.agent.mouth import generate_mouth_response
-from first_mate.gateway.ingress import (
+from golem.agent.mouth import generate_mouth_response
+from golem.gateway.ingress import (
     CHECK_EYES_TOOL_DECLARATION,
     CHECK_NOSE_TOOL_DECLARATION,
     DISPATCH_TASK_TOOL_DECLARATION,
@@ -34,11 +34,11 @@ from first_mate.gateway.ingress import (
     call_gemini_api,
     get_mouth_tools_declaration,
 )
-from first_mate.gateway.router import SessionRouter
-from first_mate.gateway.session import EyesStatusResult, SessionHandle
-from first_mate.execution.runner import ExecutionHandle
-from first_mate.sensory.bus import ShoulderTapAlert, ShoulderTapEventBus
-from first_mate.sensory.nose import AnomalyVerdict, FleetSnapshot, NoseSentinel
+from golem.gateway.router import SessionRouter
+from golem.gateway.session import EyesStatusResult, SessionHandle
+from golem.execution.runner import ExecutionHandle
+from golem.sensory.bus import ShoulderTapAlert, ShoulderTapEventBus
+from golem.sensory.nose import AnomalyVerdict, FleetSnapshot, NoseSentinel
 
 
 class MockSlackClient:
@@ -494,7 +494,8 @@ class TestSensoryToolExecution(unittest.IsolatedAsyncioTestCase):
 
         res = await self.gateway._execute_check_eyes(session=mock_session)
         self.assertIsInstance(res, dict)
-        self.assertEqual(res["state"], "IDLE")
+        self.assertEqual(res["state"], "ERROR")
+        self.assertIn("error", res)
 
     async def test_check_nose_sentinel_exception_defensive(self) -> None:
         """Verify _execute_check_nose handles exception in sentinel query cleanly."""
@@ -509,7 +510,7 @@ class TestSensoryToolExecution(unittest.IsolatedAsyncioTestCase):
         )
         res = await gateway._execute_check_nose()
         self.assertIn("error", res)
-        self.assertFalse(res["smells_off"])
+        self.assertTrue(res["smells_off"])
 
 
 class TestSensoryToolSynthesis(unittest.IsolatedAsyncioTestCase):
@@ -571,7 +572,7 @@ class TestSensoryToolSynthesis(unittest.IsolatedAsyncioTestCase):
         }
 
         with patch(
-            "first_mate.gateway.ingress.call_gemini_api",
+            "golem.gateway.ingress.call_gemini_api",
             new_callable=AsyncMock,
         ) as mock_gemini:
             mock_gemini.side_effect = [turn1_resp, turn2_resp]
@@ -654,7 +655,7 @@ class TestSensoryToolSynthesis(unittest.IsolatedAsyncioTestCase):
         }
 
         with patch(
-            "first_mate.gateway.ingress.call_gemini_api",
+            "golem.gateway.ingress.call_gemini_api",
             new_callable=AsyncMock,
         ) as mock_gemini:
             mock_gemini.side_effect = [turn1_resp, turn2_resp]
@@ -719,7 +720,7 @@ class TestSensoryToolSynthesis(unittest.IsolatedAsyncioTestCase):
 
         for idx, q in enumerate(queries):
             with patch(
-                "first_mate.gateway.ingress.call_gemini_api",
+                "golem.gateway.ingress.call_gemini_api",
                 new_callable=AsyncMock,
             ) as mock_gemini:
                 mock_gemini.return_value = {
@@ -776,7 +777,7 @@ class TestSensoryToolSynthesis(unittest.IsolatedAsyncioTestCase):
         }
 
         with patch(
-            "first_mate.gateway.ingress.call_gemini_api",
+            "golem.gateway.ingress.call_gemini_api",
             new_callable=AsyncMock,
         ) as mock_gemini:
             mock_gemini.side_effect = [turn1_resp, turn2_resp]
@@ -809,7 +810,7 @@ class TestSensoryToolSynthesis(unittest.IsolatedAsyncioTestCase):
         }
 
         with patch(
-            "first_mate.gateway.ingress.call_gemini_api",
+            "golem.gateway.ingress.call_gemini_api",
             new_callable=AsyncMock,
         ) as mock_gemini:
             # Turn 1 tool call, Turn 2 synthesis returns None (triggers fallback)
@@ -834,9 +835,9 @@ class TestSensoryToolSynthesis(unittest.IsolatedAsyncioTestCase):
                 await self.gateway.handle_message(event, self.client)
 
                 msg = self.client.posted_messages[0]["text"]
-                self.assertIn("👀 *Runner Observer:*", msg)
-                self.assertIn("*RUNNING*", msg)
+                self.assertIn("⚠️ *Executive Synthesis Failed*", msg)
                 self.assertIn("cargo test --release", msg)
+                self.assertIn("boom", [r["name"] for r in self.client.reactions_added])
                 self.assertNotIn("\x1b", msg)
                 self.assertNotIn("###", msg)
 
@@ -856,7 +857,7 @@ class TestSensoryToolSynthesis(unittest.IsolatedAsyncioTestCase):
         }
 
         with patch(
-            "first_mate.gateway.ingress.call_gemini_api",
+            "golem.gateway.ingress.call_gemini_api",
             new_callable=AsyncMock,
         ) as mock_gemini:
             mock_gemini.side_effect = [turn1_resp, None]
@@ -884,14 +885,12 @@ class TestSensoryToolSynthesis(unittest.IsolatedAsyncioTestCase):
                 await self.gateway.handle_message(event, self.client)
 
                 msg = self.client.posted_messages[0]["text"]
-                self.assertIn("Waiting for authorization", msg)
-                self.assertIn(
-                    "<http://127.0.0.1:53682/auth|Click here to authenticate>",
-                    msg,
-                )
+                self.assertIn("⚠️ *Executive Synthesis Failed*", msg)
+                self.assertIn("http://127.0.0.1:53682/auth", msg)
+                self.assertIn("boom", [r["name"] for r in self.client.reactions_added])
 
     async def test_fallback_synthesis_nose_nominal_mrkdwn(self) -> None:
-        """Verify fallback synthesis for check_nose produces clean mrkdwn for nominal state."""
+        """Verify fallback synthesis for check_nose fails loudly with raw error and boom reaction instead of simulating nominal state."""
         turn1_resp = {
             "candidates": [
                 {
@@ -911,7 +910,7 @@ class TestSensoryToolSynthesis(unittest.IsolatedAsyncioTestCase):
         }
 
         with patch(
-            "first_mate.gateway.ingress.call_gemini_api",
+            "golem.gateway.ingress.call_gemini_api",
             new_callable=AsyncMock,
         ) as mock_gemini:
             mock_gemini.side_effect = [turn1_resp, None]
@@ -937,8 +936,11 @@ class TestSensoryToolSynthesis(unittest.IsolatedAsyncioTestCase):
                 await self.gateway.handle_message(event, self.client)
 
                 msg = self.client.posted_messages[0]["text"]
-                self.assertIn("👃 *Fleet Health:* Air is clean", msg)
-                self.assertIn("120.0 GB free", msg)
+                self.assertIn("⚠️ *Executive Synthesis Failed*", msg)
+                self.assertIn("120.0", msg)
+                self.assertIn("All systems nominal", msg)
+                added = [r["name"] for r in self.client.reactions_added]
+                self.assertIn("boom", added)
 
     async def test_fallback_synthesis_nose_anomaly_mrkdwn(self) -> None:
         """Verify fallback synthesis for check_nose surfaces health anomalies."""
@@ -961,7 +963,7 @@ class TestSensoryToolSynthesis(unittest.IsolatedAsyncioTestCase):
         }
 
         with patch(
-            "first_mate.gateway.ingress.call_gemini_api",
+            "golem.gateway.ingress.call_gemini_api",
             new_callable=AsyncMock,
         ) as mock_gemini:
             mock_gemini.side_effect = [turn1_resp, None]
@@ -987,8 +989,9 @@ class TestSensoryToolSynthesis(unittest.IsolatedAsyncioTestCase):
                 await self.gateway.handle_message(event, self.client)
 
                 msg = self.client.posted_messages[0]["text"]
-                self.assertIn("👃 *Fleet Health Anomaly:*", msg)
+                self.assertIn("⚠️ *Executive Synthesis Failed*", msg)
                 self.assertIn("Root disk exhaustion", msg)
+                self.assertIn("boom", [r["name"] for r in self.client.reactions_added])
 
     async def test_slack_reaction_markers_eyes_blocker(self) -> None:
         """Verify check_eyes swaps reaction to :warning: when a blocker is active."""
@@ -1018,7 +1021,7 @@ class TestSensoryToolSynthesis(unittest.IsolatedAsyncioTestCase):
         }
 
         with patch(
-            "first_mate.gateway.ingress.call_gemini_api",
+            "golem.gateway.ingress.call_gemini_api",
             new_callable=AsyncMock,
         ) as mock_gemini:
             mock_gemini.side_effect = [turn1_resp, turn2_resp]
@@ -1073,7 +1076,7 @@ class TestSensoryToolSynthesis(unittest.IsolatedAsyncioTestCase):
         }
 
         with patch(
-            "first_mate.gateway.ingress.call_gemini_api",
+            "golem.gateway.ingress.call_gemini_api",
             new_callable=AsyncMock,
         ) as mock_gemini:
             mock_gemini.side_effect = [turn1_resp, turn2_resp]
@@ -1138,7 +1141,7 @@ class TestMidStreamSensoryGrounding(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "first_mate.gateway.ingress.generate_mouth_response",
+            "golem.gateway.ingress.generate_mouth_response",
             new_callable=AsyncMock,
         ) as mock_mouth_gen:
             mock_mouth_gen.return_value = (
@@ -1176,18 +1179,38 @@ class TestMidStreamSensoryGrounding(unittest.IsolatedAsyncioTestCase):
             "tailscale": {"online": True},
         }
 
-        with patch.dict(os.environ, {"FIRSTMATE_TEST_MODE": "1"}):
+        mock_gemini_response = {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [
+                            {"text": "⚓ *Liaison Update:* Active execution is underway with cargo build (PID 1234)."}
+                        ]
+                    }
+                }
+            ]
+        }
+        mock_resp_obj = AsyncMock()
+        mock_resp_obj.status = 200
+        mock_resp_obj.json = AsyncMock(return_value=mock_gemini_response)
+
+        mock_post_cm = AsyncMock()
+        mock_post_cm.__aenter__.return_value = mock_resp_obj
+        mock_post_cm.__aexit__.return_value = None
+
+        with patch("aiohttp.ClientSession.post", return_value=mock_post_cm):
             t0 = time.perf_counter()
             resp = await generate_mouth_response(
                 "Can I ask a question while this is running?",
                 {"status": "running", "pid": 1234, "command": "cargo build"},
                 eyes_status=eyes_status,
                 nose_status=nose_status,
+                api_key="test-key",
             )
             elapsed = time.perf_counter() - t0
 
             self.assertLess(
-                elapsed, 0.1, "Local test-mode response must complete in < 100ms"
+                elapsed, 0.5, "Local mocked response must complete in < 500ms"
             )
             self.assertIn("Liaison Update", resp)
 
@@ -1200,11 +1223,31 @@ class TestMidStreamSensoryGrounding(unittest.IsolatedAsyncioTestCase):
             "buffer_tail": "PASS src/index.test.ts",
         }
 
-        with patch.dict(os.environ, {"FIRSTMATE_TEST_MODE": "1"}):
+        mock_gemini_response = {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [
+                            {"text": "👀 *Runner Observer:* Status is *RUNNING* (PID 4321). Command: `npm test`."}
+                        ]
+                    }
+                }
+            ]
+        }
+        mock_resp_obj = AsyncMock()
+        mock_resp_obj.status = 200
+        mock_resp_obj.json = AsyncMock(return_value=mock_gemini_response)
+
+        mock_post_cm = AsyncMock()
+        mock_post_cm.__aenter__.return_value = mock_resp_obj
+        mock_post_cm.__aexit__.return_value = None
+
+        with patch("aiohttp.ClientSession.post", return_value=mock_post_cm):
             resp = await generate_mouth_response(
                 "What do you see in the terminal?",
                 {"status": "running", "pid": 4321, "command": "npm test"},
                 eyes_status=eyes_status,
+                api_key="test-key",
             )
             self.assertIn("Runner Observer", resp)
             self.assertIn("RUNNING", resp)
@@ -1222,11 +1265,31 @@ class TestMidStreamSensoryGrounding(unittest.IsolatedAsyncioTestCase):
             "tailscale": {"online": True},
         }
 
-        with patch.dict(os.environ, {"FIRSTMATE_TEST_MODE": "1"}):
+        mock_gemini_response = {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [
+                            {"text": "👃 *Fleet Health:* All systems nominal; root disk 128.0 GB free."}
+                        ]
+                    }
+                }
+            ]
+        }
+        mock_resp_obj = AsyncMock()
+        mock_resp_obj.status = 200
+        mock_resp_obj.json = AsyncMock(return_value=mock_gemini_response)
+
+        mock_post_cm = AsyncMock()
+        mock_post_cm.__aenter__.return_value = mock_resp_obj
+        mock_post_cm.__aexit__.return_value = None
+
+        with patch("aiohttp.ClientSession.post", return_value=mock_post_cm):
             resp = await generate_mouth_response(
                 "What does The Nose smell right now?",
                 {"status": "running", "pid": 5555, "command": "sleep 10"},
                 nose_status=nose_status,
+                api_key="test-key",
             )
             self.assertIn("Fleet Health", resp)
             self.assertIn("nominal", resp.lower())
@@ -1340,7 +1403,7 @@ class TestSensoryAdversarialPhrasing(unittest.IsolatedAsyncioTestCase):
             }
 
             with patch(
-                "first_mate.gateway.ingress.call_gemini_api",
+                "golem.gateway.ingress.call_gemini_api",
                 new_callable=AsyncMock,
             ) as mock_gemini:
                 mock_gemini.side_effect = [turn1, turn2]
@@ -1405,7 +1468,7 @@ class TestSensoryAdversarialPhrasing(unittest.IsolatedAsyncioTestCase):
             }
 
             with patch(
-                "first_mate.gateway.ingress.call_gemini_api",
+                "golem.gateway.ingress.call_gemini_api",
                 new_callable=AsyncMock,
             ) as mock_gemini:
                 mock_gemini.side_effect = [turn1, turn2]
@@ -1459,7 +1522,7 @@ class TestSensoryAdversarialPhrasing(unittest.IsolatedAsyncioTestCase):
         }
 
         with patch(
-            "first_mate.gateway.ingress.call_gemini_api",
+            "golem.gateway.ingress.call_gemini_api",
             new_callable=AsyncMock,
         ) as mock_gemini:
             mock_gemini.side_effect = [turn1, turn2]
@@ -1511,7 +1574,7 @@ class TestSensoryAdversarialPhrasing(unittest.IsolatedAsyncioTestCase):
         }
 
         with patch(
-            "first_mate.gateway.ingress.call_gemini_api",
+            "golem.gateway.ingress.call_gemini_api",
             new_callable=AsyncMock,
         ) as mock_gemini:
             mock_gemini.side_effect = [turn1, turn2]
@@ -1601,7 +1664,7 @@ class TestSensoryAdversarialPhrasing(unittest.IsolatedAsyncioTestCase):
             return turn1_nose
 
         with patch(
-            "first_mate.gateway.ingress.call_gemini_api",
+            "golem.gateway.ingress.call_gemini_api",
             new_callable=AsyncMock,
         ) as mock_gem:
             mock_gem.side_effect = mock_gemini_dispatcher

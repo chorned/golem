@@ -41,7 +41,7 @@ Test coverage:
      - Subscriber receiving health_anomaly alert.
      - Subscriber exception isolation without crashing the sentinel.
   6. TestDaemonIntegration:
-     - Clean re-export of NoseSentinel and get_nose_model in first_mate.sensory.
+     - Clean re-export of NoseSentinel and get_nose_model in golem.sensory.
      - app.nose_sentinel singleton existence and configuration.
      - app.py main() lifecycle start and stop hooks.
 """
@@ -63,20 +63,20 @@ PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_DIR not in sys.path:
     sys.path.insert(0, PROJECT_DIR)
 
-from first_mate.sensory.bus import (
+from golem.sensory.bus import (
     ShoulderTapEventBus,
     ShoulderTapAlert,
     get_default_event_bus,
     reset_default_event_bus,
 )
-from first_mate.sensory.nose import (
+from golem.sensory.nose import (
     NoseSentinel,
     get_nose_model,
     FleetSnapshot,
     StatusDelta,
     AnomalyVerdict,
 )
-from first_mate.config import get_nose_model as config_get_nose_model
+from golem.config import get_nose_model as config_get_nose_model
 
 
 # ==============================================================================
@@ -684,8 +684,8 @@ class TestDaemonIntegration(unittest.TestCase):
     """Unit tests verifying daemon integration in app.py and package exports."""
 
     def test_sensory_init_reexports(self) -> None:
-        """Verify NoseSentinel, get_nose_model, and contracts are exported from first_mate.sensory."""
-        import first_mate.sensory as sensory
+        """Verify NoseSentinel, get_nose_model, and contracts are exported from golem.sensory."""
+        import golem.sensory as sensory
         self.assertTrue(hasattr(sensory, "NoseSentinel"))
         self.assertTrue(hasattr(sensory, "get_nose_model"))
         self.assertTrue(hasattr(sensory, "FleetSnapshot"))

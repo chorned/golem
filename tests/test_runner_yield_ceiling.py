@@ -26,8 +26,8 @@ PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_DIR not in sys.path:
     sys.path.insert(0, PROJECT_DIR)
 
-from first_mate.execution.runner import RunnerExecutor, ExecutionHandle
-from first_mate.agent.prompts import (
+from golem.execution.runner import RunnerExecutor, ExecutionHandle
+from golem.agent.prompts import (
     CALIBRATION_PROMPT,
     DUAL_PANE_EXECUTION_RULES,
     build_calibrated_system_prompt,
@@ -266,7 +266,7 @@ class TestLiaisonSubprocessConstraints(unittest.TestCase):
         self.assertIn("Out-of-Band Status Checking", rules)
 
     def test_prompts_reexports_dual_pane_rules(self):
-        """Verify first_mate.agent.prompts re-exports DUAL_PANE_EXECUTION_RULES."""
+        """Verify golem.agent.prompts re-exports DUAL_PANE_EXECUTION_RULES."""
         self.assertTrue(len(DUAL_PANE_EXECUTION_RULES) > 50)
         self.assertIn("herdr_pane_run", DUAL_PANE_EXECUTION_RULES)
         self.assertIn("RunnerExecutor", DUAL_PANE_EXECUTION_RULES)
@@ -284,18 +284,18 @@ class TestHerdrToolsRunCommandDelegation(unittest.IsolatedAsyncioTestCase):
 
     async def test_run_command_delegates_to_runner_executor_fast_completion(self):
         """Verify run_command delegates to RunnerExecutor and returns stdout on success."""
-        with patch("first_mate.execution.runner.RunnerExecutor.run_command") as mock_run:
+        with patch("golem.execution.runner.RunnerExecutor.run_command") as mock_run:
             mock_run.return_value = ExecutionHandle(
                 status="completed",
                 pane="runner",
                 command="git status -s",
                 returncode=0,
-                stdout="M first_mate/execution/runner.py",
+                stdout="M golem/execution/runner.py",
                 stderr=""
             )
 
             result = await herdr_tools.run_command(cmd="git status -s", cwd="/Users/hermes")
-            self.assertEqual(result, "M first_mate/execution/runner.py")
+            self.assertEqual(result, "M golem/execution/runner.py")
             mock_run.assert_called_once()
             called_kwargs = mock_run.call_args[1]
             self.assertEqual(called_kwargs.get("pane"), "runner")
@@ -303,7 +303,7 @@ class TestHerdrToolsRunCommandDelegation(unittest.IsolatedAsyncioTestCase):
 
     async def test_run_command_returns_nonblocking_message_on_yield(self):
         """Verify run_command returns non-blocking status message when command runs > 3.0s."""
-        with patch("first_mate.execution.runner.RunnerExecutor.run_command") as mock_run:
+        with patch("golem.execution.runner.RunnerExecutor.run_command") as mock_run:
             mock_run.return_value = ExecutionHandle(
                 status="running",
                 pane="runner",
@@ -318,7 +318,7 @@ class TestHerdrToolsRunCommandDelegation(unittest.IsolatedAsyncioTestCase):
 
     async def test_run_command_returns_error_message_on_failure(self):
         """Verify run_command returns formatted error message when command fails."""
-        with patch("first_mate.execution.runner.RunnerExecutor.run_command") as mock_run:
+        with patch("golem.execution.runner.RunnerExecutor.run_command") as mock_run:
             mock_run.return_value = ExecutionHandle(
                 status="error",
                 pane="runner",

@@ -37,13 +37,13 @@ PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_DIR not in sys.path:
     sys.path.insert(0, PROJECT_DIR)
 
-from first_mate.sensory.bus import (
+from golem.sensory.bus import (
     ShoulderTapEventBus,
     ShoulderTapAlert,
     get_default_event_bus,
     reset_default_event_bus,
 )
-from first_mate.sensory.eyes import EyesTaskObserver
+from golem.sensory.eyes import EyesTaskObserver
 
 
 class TestAdversarialBufferHashing(unittest.IsolatedAsyncioTestCase):

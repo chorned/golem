@@ -20,31 +20,31 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 from typing import AsyncGenerator, List, Dict, Optional, Any
 
-from first_mate.config import (
+from golem.config import (
     get_active_engine,
     get_engine_model,
     get_mouth_model,
     get_eyes_model,
     get_nose_model,
 )
-from first_mate.agent.protocol import (
+from golem.agent.protocol import (
     AgentEvent,
     TextDeltaEvent,
     StatusUpdateEvent,
     FinishEvent,
 )
-from first_mate.agent.drivers.base import BaseAgentDriver
-from first_mate.agent.drivers.antigravity import AntigravityDriver
-from first_mate.agent.drivers.claude_code import ClaudeCodeDriver
-from first_mate.agent.drivers.opencode import OpenCodeDriver
-from first_mate.agent.drivers import (
+from golem.agent.drivers.base import BaseAgentDriver
+from golem.agent.drivers.antigravity import AntigravityDriver
+from golem.agent.drivers.claude_code import ClaudeCodeDriver
+from golem.agent.drivers.opencode import OpenCodeDriver
+from golem.agent.drivers import (
     DRIVER_REGISTRY,
     get_driver_class,
     create_driver,
 )
-from first_mate.agent.adapter import HeadlessAgentAdapter
-from first_mate.gateway.session import SessionHandle, SessionState
-from first_mate.gateway.router import SessionRouter
+from golem.agent.adapter import HeadlessAgentAdapter
+from golem.gateway.session import SessionHandle, SessionState
+from golem.gateway.router import SessionRouter
 
 
 class DummyConcreteDriver(BaseAgentDriver):
@@ -197,7 +197,7 @@ class TestConfigModule(unittest.TestCase):
             self.assertEqual(get_active_engine(), "antigravity")
 
     def test_zero_hardcoding_when_env_file_missing(self) -> None:
-        with patch("first_mate.config._get_file_env", return_value={}):
+        with patch("golem.config._get_file_env", return_value={}):
             with patch.dict(os.environ, {}, clear=True):
                 self.assertEqual(get_mouth_model(), "")
                 self.assertEqual(get_eyes_model(), "")

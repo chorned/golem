@@ -25,9 +25,9 @@ if PROJECT_DIR not in sys.path:
     sys.path.insert(0, PROJECT_DIR)
 
 import golem.config
-import first_mate.config
+import golem.config
 import golem.execution
-import first_mate.execution
+import golem.execution
 from golem.execution.delegation import WorkerDelegator, sanitize_worker_output
 from golem.execution.runner import ExecutionHandle, RunnerExecutor
 import herdr_tools
@@ -416,18 +416,18 @@ class TestAdversarialEnvVarOverrides(unittest.TestCase):
                 self.assertEqual(golem.config.get_default_hand_worker(), "hermes")
 
     def test_shim_parity_first_mate_config(self):
-        """Verifies first_mate.config exports identical behavior under all adversarial conditions."""
+        """Verifies golem.config exports identical behavior under all adversarial conditions."""
         with patch.object(golem.config, "_get_file_env", return_value={}):
-            with patch.object(first_mate.config, "_get_file_env", return_value={}):
+            with patch.object(golem.config, "_get_file_env", return_value={}):
                 # Claude code exclusion
                 with patch.dict(os.environ, {"FIRST_MATE_ENGINE": "claude_code"}, clear=True):
-                    self.assertEqual(first_mate.config.get_default_hand_worker(), "agy")
-                    self.assertEqual(first_mate.config.get_default_hand_worker(), golem.config.get_default_hand_worker())
+                    self.assertEqual(golem.config.get_default_hand_worker(), "agy")
+                    self.assertEqual(golem.config.get_default_hand_worker(), golem.config.get_default_hand_worker())
 
                 # Hierarchy resolution
                 with patch.dict(os.environ, {"GOLEM_DEFAULT_HAND_WORKER": "opencode"}, clear=True):
-                    self.assertEqual(first_mate.config.get_default_hand_worker(), "opencode")
-                    self.assertEqual(first_mate.config.get_default_hand_worker(), golem.config.get_default_hand_worker())
+                    self.assertEqual(golem.config.get_default_hand_worker(), "opencode")
+                    self.assertEqual(golem.config.get_default_hand_worker(), golem.config.get_default_hand_worker())
 
 
 # ===========================================================================

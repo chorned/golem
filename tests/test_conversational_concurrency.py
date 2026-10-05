@@ -23,15 +23,15 @@ PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_DIR not in sys.path:
     sys.path.insert(0, PROJECT_DIR)
 
-from first_mate.agent.protocol import (
+from golem.agent.protocol import (
     TextDeltaEvent,
     StatusUpdateEvent,
     FinishEvent,
     AgentEvent,
 )
-from first_mate.execution.runner import ExecutionHandle
-from first_mate.execution.buffer import RunnerBufferObserver
-from first_mate.gateway.session import (
+from golem.execution.runner import ExecutionHandle
+from golem.execution.buffer import RunnerBufferObserver
+from golem.gateway.session import (
     SessionHandle,
     SessionState,
     is_cancellation_message,
@@ -39,8 +39,8 @@ from first_mate.gateway.session import (
     is_conversational_checkin,
     is_out_of_band_message,
 )
-from first_mate.gateway.router import SessionRouter
-from first_mate.gateway.ingress import IngressGateway
+from golem.gateway.router import SessionRouter
+from golem.gateway.ingress import IngressGateway
 
 
 class MockSlowAdapter:
@@ -446,7 +446,7 @@ class TestConversationalConcurrency(unittest.IsolatedAsyncioTestCase):
         )
         self.assertTrue(self.session.is_executing)
 
-        with patch("first_mate.gateway.session.os.kill") as mock_kill:
+        with patch("golem.gateway.session.os.kill") as mock_kill:
             event = {
                 "channel": "test_channel",
                 "thread_ts": "100.1",
@@ -485,7 +485,7 @@ class TestConversationalConcurrency(unittest.IsolatedAsyncioTestCase):
         )
 
         try:
-            with patch("first_mate.gateway.session.os.kill") as mock_kill:
+            with patch("golem.gateway.session.os.kill") as mock_kill:
                 events: List[AgentEvent] = []
                 async for ev in self.session.send_user_message("stop"):
                     events.append(ev)
@@ -601,7 +601,7 @@ class TestConversationalConcurrency(unittest.IsolatedAsyncioTestCase):
             command="python -m http.server",
             pid=112233,
         )
-        with patch("first_mate.gateway.session.os.kill") as mock_kill:
+        with patch("golem.gateway.session.os.kill") as mock_kill:
             await self.session.close()
             self.assertIsNone(self.session.active_execution)
             self.assertEqual(self.session.state, SessionState.CLOSED)
@@ -664,7 +664,7 @@ class TestConversationalConcurrency(unittest.IsolatedAsyncioTestCase):
     async def test_error_handling_in_cancel_execution(self) -> None:
         """Verify cancel_execution handles exceptions gracefully and still resets active_execution."""
         self.session.active_execution = ExecutionHandle(status="running", pid=-999, pane="runner", command="test")
-        with patch("first_mate.gateway.session.os.kill", side_effect=Exception("Failed to kill")):
+        with patch("golem.gateway.session.os.kill", side_effect=Exception("Failed to kill")):
             res = await self.session.cancel_execution()
             self.assertTrue(res)
             self.assertIsNone(self.session.active_execution)
@@ -674,7 +674,7 @@ class TestConversationalConcurrency(unittest.IsolatedAsyncioTestCase):
         Verify that _get_pane_foreground_pid retains last_pid on query timeout
         instead of returning None (fixing the false-positive completion defect).
         """
-        from first_mate.execution.runner import RunnerExecutor
+        from golem.execution.runner import RunnerExecutor
         executor = RunnerExecutor()
 
         with patch("asyncio.create_subprocess_exec") as mock_exec:
@@ -794,7 +794,7 @@ class TestConversationalConcurrency(unittest.IsolatedAsyncioTestCase):
 
         class BackgroundCommandAdapter:
             async def send_turn(self, prompt: str) -> AsyncGenerator[AgentEvent, None]:
-                with patch("first_mate.execution.runner.RunnerExecutor.run_command") as mock_run:
+                with patch("golem.execution.runner.RunnerExecutor.run_command") as mock_run:
                     mock_run.return_value = ExecutionHandle(
                         status="running",
                         pane="runner",
@@ -867,7 +867,7 @@ class TestConversationalConcurrency(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(detect_session.active_execution)
         self.assertFalse(detect_session.is_executing)
 
-        with patch("first_mate.execution.runner.RunnerExecutor._get_pane_foreground_pid", return_value=9876):
+        with patch("golem.execution.runner.RunnerExecutor._get_pane_foreground_pid", return_value=9876):
             status_info = await detect_session.get_runner_status()
 
             self.assertEqual(status_info["status"], "running")

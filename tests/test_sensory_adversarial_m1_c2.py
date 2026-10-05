@@ -30,23 +30,23 @@ PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_DIR not in sys.path:
     sys.path.insert(0, PROJECT_DIR)
 
-from first_mate.sensory.bus import ShoulderTapEventBus
-from first_mate.sensory.nose import (
+from golem.sensory.bus import ShoulderTapEventBus
+from golem.sensory.nose import (
     NoseSentinel,
     FleetSnapshot,
     AnomalyVerdict,
     get_default_nose_sentinel,
     set_default_nose_sentinel,
 )
-from first_mate.gateway.session import SessionHandle, EyesStatusResult, is_out_of_band_message
-from first_mate.gateway.ingress import (
+from golem.gateway.session import SessionHandle, EyesStatusResult, is_out_of_band_message
+from golem.gateway.ingress import (
     IngressGateway,
     get_mouth_tools_declaration,
     CHECK_EYES_TOOL_DECLARATION,
     CHECK_NOSE_TOOL_DECLARATION,
     DISPATCH_TASK_TOOL_DECLARATION,
 )
-from first_mate.agent.mouth import generate_mouth_response, is_batch_task_command
+from golem.agent.mouth import generate_mouth_response, is_batch_task_command
 
 
 class TestSensoryAdversarialM1Challenger2(unittest.IsolatedAsyncioTestCase):
@@ -401,10 +401,9 @@ class TestSensoryAdversarialM1Challenger2(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("###", posted_text, "No CommonMark ATX headers allowed")
         self.assertNotIn("\x1b[", posted_text, "No ANSI color/escape sequences allowed")
         self.assertNotIn("**", posted_text, "Must use single asterisks *bold* for Slack mrkdwn")
-        self.assertIn("*Runner Observer:*", posted_text)
-        self.assertIn("*RUNNING*", posted_text)
-        self.assertIn("`pytest -v`", posted_text)
-        self.assertIn("• Command:", posted_text)
+        self.assertIn("⚠️ *Executive Synthesis Failed*", posted_text)
+        self.assertIn("pytest -v", posted_text)
+        self.assertIn('"state": "RUNNING"', posted_text)
 
         # Scenario B: check_nose anomaly
         self.sentinel.last_verdict = AnomalyVerdict(
@@ -445,9 +444,8 @@ class TestSensoryAdversarialM1Challenger2(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("###", posted_nose_text)
         self.assertNotIn("\x1b[", posted_nose_text)
         self.assertNotIn("**", posted_nose_text)
-        self.assertIn("*Fleet Health Anomaly:*", posted_nose_text)
+        self.assertIn("⚠️ *Executive Synthesis Failed*", posted_nose_text)
         self.assertIn("Disk pressure critical", posted_nose_text)
-        self.assertIn("1.2 GB free", posted_nose_text)
 
     # --------------------------------------------------------------------------
     # 4. Reaction Lifecycle Swaps
@@ -532,13 +530,33 @@ class TestSensoryAdversarialM1Challenger2(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(is_out_of_band_message(query), f"'{query}' must qualify as out-of-band message")
 
             # 2. Sub-second latency check (<1s)
-            with patch.dict(os.environ, {"FIRSTMATE_TEST_MODE": "1"}):
+            mock_gemini_response = {
+                "candidates": [
+                    {
+                        "content": {
+                            "parts": [
+                                {"text": f"Status response for: {query}"}
+                            ]
+                        }
+                    }
+                ]
+            }
+            mock_resp_obj = AsyncMock()
+            mock_resp_obj.status = 200
+            mock_resp_obj.json = AsyncMock(return_value=mock_gemini_response)
+
+            mock_post_cm = AsyncMock()
+            mock_post_cm.__aenter__.return_value = mock_resp_obj
+            mock_post_cm.__aexit__.return_value = None
+
+            with patch("aiohttp.ClientSession.post", return_value=mock_post_cm):
                 t0 = time.perf_counter()
                 resp = await generate_mouth_response(
                     prompt=query,
                     status_info=status_info,
                     eyes_status=eyes_status,
                     nose_status=nose_status,
+                    api_key="test-key",
                 )
                 elapsed = time.perf_counter() - t0
 
@@ -557,7 +575,7 @@ class TestSensoryAdversarialM1Challenger2(unittest.IsolatedAsyncioTestCase):
         mock_router_no_sentinel = MagicMock()
         mock_router_no_sentinel.nose_sentinel = None
         gw_no_nose = IngressGateway(router=mock_router_no_sentinel, bot_user_id="U_BOT", nose_sentinel=None)
-        with patch("first_mate.sensory.nose.get_default_nose_sentinel", return_value=None):
+        with patch("golem.sensory.nose.get_default_nose_sentinel", return_value=None):
             nose_dict = await gw_no_nose._execute_check_nose(trigger_fresh_sniff=False)
             self.assertIsInstance(nose_dict, dict)
             self.assertIn("verdict_summary", nose_dict)

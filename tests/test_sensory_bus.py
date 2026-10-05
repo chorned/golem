@@ -23,15 +23,15 @@ PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_DIR not in sys.path:
     sys.path.insert(0, PROJECT_DIR)
 
-from first_mate.sensory.bus import (
+from golem.sensory.bus import (
     ShoulderTapEventBus,
     ShoulderTapAlert,
     get_default_event_bus,
     peek_default_event_bus,
     reset_default_event_bus,
 )
-from first_mate.gateway.session import SessionHandle
-from first_mate.gateway.router import SessionRouter
+from golem.gateway.session import SessionHandle
+from golem.gateway.router import SessionRouter
 
 
 class TestShoulderTapAlert(unittest.TestCase):

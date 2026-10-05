@@ -1150,69 +1150,17 @@
             <!-- 4. Hand Agents Terminal Anchor (Positioned directly under mouth with matching spacing) -->
             <div class="golem-anchor anchor-hands" id="anchor-hands" data-anchor="hands">
                 <div class="hands-grid" id="hands-grid">
-                    <!-- Primary Hand Agent Terminal: Defaults to 'The Hands are Idle' standby state, reused by first spawned agent -->
-                    <article class="hand-card arcade-window-red" id="primary-hand-terminal" data-primary="true">
-                        <div class="arcade-header-red">
-                            <div style="display: flex; align-items: center; gap: 6px;">
-                                <span class="hand-card-dot" style="width: 6px; height: 6px; background: var(--runic-cyan); border-radius: 50%; box-shadow: 0 0 6px var(--runic-cyan);"></span>
-                                <span class="hand-card-title">Hand 01 [L_GAUNTLET]</span>
+                    <!-- Standby view: cleanly rendered when 0 active hands are registered -->
+                    <div class="hands-idle-card" id="hands-standby-card">
+                        <div class="hands-idle-content">
+                            <div class="idle-title-line">
+                                <span class="idle-symbol">⏳</span>
+                                <span class="idle-title-text">HANDS STANDBY — 0 ACTIVE TASKS</span>
+                                <span class="idle-symbol">⏳</span>
                             </div>
-                            <div class="terminal-header-actions">
-                                <span class="status-pill-badge badge-red hand-card-tag" style="border-color: #b91c1c; color: var(--runic-gold); font-size: 8px;">OCI_OPS</span>
-                                <button class="arcade-ctrl-btn btn-expand" title="Expand to full viewport height" aria-label="Expand terminal">□</button>
-                                <button class="arcade-ctrl-btn btn-close" title="Close" aria-label="Close">×</button>
-                            </div>
+                            <div class="idle-desc-text">Mesh listeners active &bull; Awaiting backstage task dispatch from Mouth Liaison</div>
                         </div>
-                        <div class="hand-card-body">
-                            <div class="hand-card-cmd" style="color: var(--runic-cyan);">&gt; Investigate Audiobookshelf setup &amp; library cleanup (oci-machine)</div>
-                            <div class="hand-card-terminal" style="display: block;">2026-10-04 02:32:51 [INFO] Golem.Hands: Agent 'Hand 01 [L_GAUNTLET]' initialized on localhost
-2026-10-04 02:32:54 [INFO] Golem.Hands: Command: Investigate Audiobookshelf setup and perform requested library cleanup [PID: 58236]
-2026-10-04 02:32:54 [INFO] Golem.Hands: Process buffer attached; streaming execution trace across mesh...
-2026-10-04 02:33:00 [INFO] Golem.Hands.Runner: Connecting to oci-machine (100.113.173.33) via Tailscale mesh...
-2026-10-04 02:33:15 [EXEC] run_command: Inspect Audiobookshelf docker-compose configuration
-    &gt; ssh oci-machine "cat /home/opc/audiobookshelf/docker-compose.yml"
-    &lt;-- container_name: audiobookshelf | image: ghcr.io/advplyr/audiobookshelf:latest
-2026-10-04 02:33:45 [EXEC] run_command: Query existing libraries in Audiobookshelf database
-    &gt; ssh oci-machine "docker exec audiobookshelf sqlite3 /config/absdatabase.sqlite 'SELECT id, name, mediaType FROM libraries;'"
-    &lt;-- 06784617-4b25-4d67-92a5-4306a0b68a39 | Böcker | book
-    &lt;-- b6967c3c-b061-4831-a06b-3e4aea9121ca | Podcasts | podcast
-2026-10-04 02:34:20 [EXEC] run_command: Inspect directory structure for Podcasts and Audiobooks
-    &gt; ssh oci-machine "ls -la /home/opc/audiobookshelf/audiobooks /home/opc/audiobookshelf/podcasts"
-    &lt;-- Storage mounts: distinct media directories preserved
-2026-10-04 02:35:10 [EXEC] run_command: Check authors table for phantom item 'The' and 'The Material Arcana'
-    &gt; ssh oci-machine "docker exec audiobookshelf sqlite3 -header -column /config/absdatabase.sqlite \"SELECT id, name FROM authors WHERE name LIKE '%Material%' OR name = 'The';\""
-    &lt;-- Found phantom author 'The' and 'The Material Arcana'
-2026-10-04 02:36:23 [EXEC] run_command: Check schema of authors table in absdatabase.sqlite
-    &gt; ssh oci-machine "docker exec audiobookshelf sqlite3 /config/absdatabase.sqlite '.schema authors'"
-2026-10-04 02:36:46 [EXEC] run_command: Create safety backup of Audiobookshelf sqlite database
-    &gt; ssh oci-machine "cp -p /home/opc/audiobookshelf/config/absdatabase.sqlite /home/opc/audiobookshelf/config/absdatabase.sqlite.bak_pre_delete_20261003"
-    &lt;-- Database backup verified
-2026-10-04 02:36:57 [EXEC] run_command: Delete library item 'The' from Audiobookshelf
-    &gt; ssh oci-machine "TOKEN=\$(docker exec audiobookshelf sqlite3 /config/absdatabase.sqlite 'SELECT token FROM ...') && curl -X DELETE 127.0.0.1:13378/api/items/..."
-    &lt;-- Item 'The' deleted cleanly from library
-2026-10-04 02:37:01 [EXEC] run_command: Delete Material Arcana item from Audiobookshelf library
-    &gt; ssh oci-machine "curl -X DELETE 127.0.0.1:13378/api/items/94c89aed-8ce9-4089-bc55-e435cfd8e578"
-    &lt;-- Library item detached
-2026-10-04 02:37:05 [EXEC] run_command: Verify files are completely intact on disk
-    &gt; ssh oci-machine "find '/home/opc/audiobookshelf/audiobooks/The Material Arcana' -type f"
-    &lt;-- All 10 episodes (.m4a), cover.jpg, and desc.txt 100% intact on disk
-2026-10-04 02:37:12 [EXEC] run_command: Delete orphan author 'The Material Arcana' from ABS
-    &gt; ssh oci-machine "curl -X DELETE 127.0.0.1:13378/api/authors/6a7211a4-94c6-43b9-a0a4-b040081d582a"
-    &lt;-- Orphan author removed
-2026-10-04 02:37:25 [EXEC] run_command: Verify Podcasts and Böcker library items via API
-    &gt; ssh oci-machine "curl -s 127.0.0.1:13378/api/libraries/b6967c3c-b061-4831-a06b-3e4aea9121ca/items"
-    &lt;-- Podcasts library intact; Böcker library intact
-2026-10-04 02:37:35 [EXEC] run_command: Verify sqlite database integrity
-    &gt; ssh oci-machine "docker exec audiobookshelf sqlite3 /config/absdatabase.sqlite 'PRAGMA integrity_check;'"
-    &lt;-- ok
-2026-10-04 02:37:38 [INFO] Golem.Hands: Library cleanup complete. Database integrity verified (ok).
-2026-10-04 02:37:38 [SUCCESS] Hand 01 [L_GAUNTLET]: Execution complete [EXIT_0].</div>
-                            <div class="hand-card-footer">
-                                <span class="worker-state" style="color: var(--runic-cyan);">COMPLETED [EXIT_0]</span>
-                                <span class="status-pill-badge badge-green status-badge">ONLINE</span>
-                            </div>
-                        </div>
-                    </article>
+                    </div>
                 </div>
             </div>
         </div>
@@ -1262,6 +1210,8 @@
             let isPaused = false;
             let eventSource = null;
             const activeHands = new Map();
+            let last_verdict_summary = null;
+            let last_smells_off = null;
 
             // Face Landmark Alignment: Pixel-anchors terminals to Golem eyes, nose, mouth, and hands
             function alignFaceAnchors() {
@@ -1455,88 +1405,27 @@
                 container.scrollTop = container.scrollHeight;
             }
 
-            // Hand Agents State Management
-            function setPrimaryToStandby(card) {
-                if (!card) return;
-                card.id = 'primary-hand-terminal';
-                card.setAttribute('data-primary', 'true');
+            // Hand Agents Dynamic Lifecycle Management
+            function unmountHandCard(paneId) {
+                const item = activeHands.get(paneId);
+                if (!item) return;
 
-                // Collapse if previously expanded
-                card.classList.remove('terminal-expanded');
-                card.style.width = '';
-                card.style.maxWidth = '';
-
-                const dot = card.querySelector('.hand-card-dot');
-                if (dot) {
-                    dot.style.background = 'var(--runic-gold)';
-                    dot.style.boxShadow = '0 0 6px var(--runic-gold)';
-                }
-                const title = card.querySelector('.hand-card-title');
-                if (title) title.textContent = 'Hand 01 [L_GAUNTLET]';
-
-                const tag = card.querySelector('.hand-card-tag');
-                if (tag) {
-                    tag.textContent = 'STANDBY';
-                    tag.className = 'status-pill-badge badge-red hand-card-tag';
-                    tag.style.borderColor = '#b91c1c';
-                    tag.style.color = 'var(--runic-gold)';
+                if (item.settleTimeout) {
+                    clearTimeout(item.settleTimeout);
+                    item.settleTimeout = null;
                 }
 
-                let actions = card.querySelector('.terminal-header-actions');
-                if (!actions) {
-                    const header = card.querySelector('.arcade-header-red');
-                    if (header) {
-                        actions = document.createElement('div');
-                        actions.className = 'terminal-header-actions';
-                        if (tag) actions.appendChild(tag);
-                        actions.innerHTML += `
-                            <button class="arcade-ctrl-btn btn-expand" title="Expand to full viewport height" aria-label="Expand terminal">□</button>
-                            <button class="arcade-ctrl-btn btn-close" title="Close" aria-label="Close">×</button>
-                        `;
-                        header.appendChild(actions);
+                if (item.el) {
+                    if (item.el.classList.contains('terminal-expanded')) {
+                        item.el.classList.remove('terminal-expanded');
+                        item.el.style.width = '';
+                        item.el.style.maxWidth = '';
                     }
-                } else {
-                    const expandBtn = actions.querySelector('.btn-expand');
-                    if (expandBtn) {
-                        expandBtn.textContent = '□';
-                        expandBtn.title = 'Expand to full viewport height';
-                    }
+                    item.el.remove();
                 }
 
-                const cmd = card.querySelector('.hand-card-cmd');
-                if (cmd) {
-                    cmd.innerHTML = '&gt; status: idle [mesh listener active]';
-                    cmd.style.color = 'var(--runic-gold)';
-                }
-
-                const term = card.querySelector('.hand-card-terminal');
-                if (term) {
-                    term.style.display = 'flex';
-                    term.style.flexDirection = 'column';
-                    term.style.justifyContent = 'center';
-                    term.style.alignItems = 'center';
-                    term.style.gap = '4px';
-                    term.innerHTML = `
-                        <div style="color: #fef08a; font-weight: bold; font-size: 13px; display: flex; align-items: center; gap: 8px;">
-                            <span>⏳</span>
-                            <span>The Hands are Idle</span>
-                            <span>⏳</span>
-                        </div>
-                        <div style="font-size: 11px; color: #64748b;">Standby mode engaged &bull; Awaiting task dispatch from Mouth Liaison</div>
-                    `;
-                }
-
-                const worker = card.querySelector('.worker-state');
-                if (worker) {
-                    worker.textContent = 'IDLE';
-                    worker.style.color = '#64748b';
-                }
-
-                const status = card.querySelector('.status-badge');
-                if (status) {
-                    status.textContent = 'STANDBY';
-                    status.className = 'status-pill-badge badge-amber status-badge';
-                }
+                activeHands.delete(paneId);
+                renderHandsState();
             }
 
             function renderHandsState() {
@@ -1546,22 +1435,32 @@
                 if (anchorHands) anchorHands.style.maxWidth = '1240px';
 
                 if (count === 0) {
-                    handsGrid.style.gridTemplateColumns = 'repeat(3, minmax(0, 390px))';
+                    // Standby View: render clean, high-contrast standby card
+                    handsGrid.style.gridTemplateColumns = '1fr';
                     handsGrid.style.justifyContent = 'center';
 
-                    let primaryCard = document.getElementById('primary-hand-terminal') || handsGrid.querySelector('[data-primary="true"]');
-                    if (!primaryCard) {
-                        primaryCard = document.createElement('article');
-                        primaryCard.className = 'hand-card arcade-window-red';
-                        primaryCard.id = 'primary-hand-terminal';
-                        primaryCard.setAttribute('data-primary', 'true');
-                        handsGrid.appendChild(primaryCard);
-                    }
+                    // Clean up any remaining non-standby children
                     Array.from(handsGrid.children).forEach(child => {
-                        if (child !== primaryCard) child.remove();
+                        if (child.id !== 'hands-standby-card') child.remove();
                     });
-                    setPrimaryToStandby(primaryCard);
-                    primaryCard.style.gridColumn = '2 / 3'; // Centered directly under the mouth!
+
+                    let standbyCard = document.getElementById('hands-standby-card');
+                    if (!standbyCard) {
+                        standbyCard = document.createElement('div');
+                        standbyCard.className = 'hands-idle-card';
+                        standbyCard.id = 'hands-standby-card';
+                        standbyCard.innerHTML = `
+                            <div class="hands-idle-content">
+                                <div class="idle-title-line">
+                                    <span class="idle-symbol">⏳</span>
+                                    <span class="idle-title-text">HANDS STANDBY — 0 ACTIVE TASKS</span>
+                                    <span class="idle-symbol">⏳</span>
+                                </div>
+                                <div class="idle-desc-text">Mesh listeners active &bull; Awaiting backstage task dispatch from Mouth Liaison</div>
+                            </div>
+                        `;
+                        handsGrid.appendChild(standbyCard);
+                    }
 
                     if (handsCountBadge) {
                         handsCountBadge.textContent = 'IDLE';
@@ -1570,7 +1469,11 @@
                     return;
                 }
 
-                // Active Hand agents deployed: 3-column grid fits up to 3x3 hands comfortably
+                // Active hands deployed: purge standby card if present
+                const standbyCard = document.getElementById('hands-standby-card');
+                if (standbyCard) standbyCard.remove();
+
+                // Responsive Grid Layout
                 if (count === 1) {
                     handsGrid.style.gridTemplateColumns = 'repeat(3, minmax(0, 390px))';
                     handsGrid.style.justifyContent = 'center';
@@ -1593,9 +1496,14 @@
             }
 
             function getOrCreateHandCard(h) {
-                const paneId = h.pane_id || 'Hand 01 [L_GAUNTLET]';
+                if (!h) return null;
+                const paneId = h.pane_id || 'runner';
                 if (activeHands.has(paneId)) {
                     const item = activeHands.get(paneId);
+                    if (item.settleTimeout) {
+                        clearTimeout(item.settleTimeout);
+                        item.settleTimeout = null;
+                    }
                     Object.assign(item, h);
                     updateCardUi(item);
                     return item.el;
@@ -1610,26 +1518,17 @@
                 else if (cmd.includes('lint')) tag = 'LINTER';
                 else if (cmd.includes('df') || cmd.includes('sniff')) tag = 'DIAGNOSTIC';
                 else if (cmd.includes('mesh') || cmd.includes('ws')) tag = 'WEBSOCKET';
+                else if (h.node && h.node !== 'localhost') tag = h.node.toUpperCase();
 
-                let card = null;
-                let isPrimary = false;
+                const safePaneId = paneId.replace(/[^a-zA-Z0-9_-]/g, '_');
+                const card = document.createElement('article');
+                card.className = 'hand-card arcade-window-red';
+                card.id = `dyn-hand-${safePaneId}`;
+                card.setAttribute('data-pane-id', paneId);
 
-                // When activeHands is empty, morph and reuse the existing primary standby terminal!
-                if (activeHands.size === 0) {
-                    card = document.getElementById('primary-hand-terminal') || handsGrid.querySelector('[data-primary="true"]');
-                    if (card) {
-                        isPrimary = true;
-                    }
-                }
+                const pidDisplay = (h.pid !== undefined && h.pid !== null) ? ` [PID: ${h.pid}]` : '';
+                const cmdText = (h.command || 'Active Task') + pidDisplay;
 
-                if (!card) {
-                    card = document.createElement('article');
-                    card.className = 'hand-card arcade-window-red';
-                    handsGrid.appendChild(card);
-                }
-
-                card.id = `dyn-hand-${paneId.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
-                card.setAttribute('data-primary', isPrimary ? 'true' : 'false');
                 card.innerHTML = `
                     <div class="arcade-header-red">
                         <div style="display: flex; align-items: center; gap: 6px;">
@@ -1643,7 +1542,7 @@
                         </div>
                     </div>
                     <div class="hand-card-body">
-                        <div class="hand-card-cmd" style="color: var(--runic-cyan);">&gt; ${escapeHtml(h.command || 'Active Task')}</div>
+                        <div class="hand-card-cmd" style="color: var(--runic-cyan);">&gt; ${escapeHtml(cmdText)}</div>
                         <div class="hand-card-terminal" style="display: block;"></div>
                         <div class="hand-card-footer">
                             <span class="worker-state" style="color: #94a3b8;">${escapeHtml(h.status || 'RUNNING')}</span>
@@ -1652,21 +1551,38 @@
                     </div>
                 `;
 
+                // Wire window controls
+                const expandBtn = card.querySelector('.btn-expand');
+                if (expandBtn) {
+                    expandBtn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        toggleTerminalExpand(card);
+                    });
+                }
+                const closeBtn = card.querySelector('.btn-close');
+                if (closeBtn) {
+                    closeBtn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        unmountHandCard(paneId);
+                    });
+                }
+
                 const nowTs = formatFullTimestamp();
-                const defaultLog = `${nowTs} [INFO] Golem.Hands: Agent '${paneId}' initialized on ${h.node || 'localhost'}\n${nowTs} [INFO] Golem.Hands: Command: ${h.command || 'Active Task'} [PID: ${h.pid || 'active'}]\n${nowTs} [INFO] Golem.Hands: Process buffer attached; streaming execution trace...`;
+                const defaultLog = `${nowTs} [INFO] Golem.Hands: Agent '${paneId}' initialized on ${h.node || 'localhost'}\n${nowTs} [INFO] Golem.Hands: Command: ${h.command || 'Active Task'}${pidDisplay}\n${nowTs} [INFO] Golem.Hands: Process buffer attached; streaming execution trace...`;
 
                 const term = card.querySelector('.hand-card-terminal');
                 if (term) {
-                    term.style.display = 'block';
                     term.textContent = h.buffer_tail || defaultLog;
                     term.scrollTop = term.scrollHeight;
                 }
+
+                handsGrid.appendChild(card);
 
                 const item = {
                     ...h,
                     buffer_tail: h.buffer_tail || defaultLog,
                     el: card,
-                    isPrimary: isPrimary
+                    settleTimeout: null
                 };
                 activeHands.set(paneId, item);
                 renderHandsState();
@@ -1678,7 +1594,6 @@
                 if (!item || !item.el) return;
                 const term = item.el.querySelector('.hand-card-terminal');
                 if (term) {
-                    term.style.display = 'block';
                     if (item.buffer_tail !== undefined && item.buffer_tail !== null && item.buffer_tail !== '') {
                         term.textContent = item.buffer_tail;
                         term.scrollTop = term.scrollHeight;
@@ -1686,74 +1601,49 @@
                 }
                 const cmdEl = item.el.querySelector('.hand-card-cmd');
                 if (cmdEl && item.command) {
-                    cmdEl.textContent = `> ${item.command}`;
+                    const pidDisplay = (item.pid !== undefined && item.pid !== null) ? ` [PID: ${item.pid}]` : '';
+                    cmdEl.textContent = `> ${item.command}${pidDisplay}`;
                 }
                 const stateEl = item.el.querySelector('.worker-state');
                 const badgeEl = item.el.querySelector('.status-badge');
-                if (stateEl && item.status) stateEl.textContent = item.status;
-                if (badgeEl && item.status) {
-                    badgeEl.textContent = item.status;
-                    if (item.status === 'EXIT_0' || item.status === 'SUCCESS') {
+                const dotEl = item.el.querySelector('.hand-card-dot');
+
+                const status = item.status || 'RUNNING';
+                if (stateEl) {
+                    stateEl.textContent = status;
+                    if (status === 'EXIT_0' || status === 'SUCCESS') {
+                        stateEl.style.color = 'var(--runic-green)';
+                    } else if (status === 'FAILED') {
+                        stateEl.style.color = 'var(--runic-red)';
+                    } else {
+                        stateEl.style.color = '#94a3b8';
+                    }
+                }
+                if (badgeEl) {
+                    badgeEl.textContent = status;
+                    if (status === 'EXIT_0' || status === 'SUCCESS') {
                         badgeEl.className = 'status-pill-badge badge-green status-badge';
-                    } else if (item.status === 'FAILED') {
+                        if (dotEl) {
+                            dotEl.style.background = 'var(--runic-green)';
+                            dotEl.style.boxShadow = '0 0 6px var(--runic-green)';
+                        }
+                    } else if (status === 'FAILED') {
                         badgeEl.className = 'status-pill-badge badge-red status-badge';
+                        if (dotEl) {
+                            dotEl.style.background = 'var(--runic-red)';
+                            dotEl.style.boxShadow = '0 0 6px var(--runic-red)';
+                        }
                     } else {
                         badgeEl.className = 'status-pill-badge badge-cyan status-badge';
+                        if (dotEl) {
+                            dotEl.style.background = 'var(--runic-cyan)';
+                            dotEl.style.boxShadow = '0 0 6px var(--runic-cyan)';
+                        }
                     }
                 }
             }
 
-            // Initial render: Populate active Hand Agent trace from current backstage session
-            const initialHandAgent = {
-                pane_id: 'Hand 01 [L_GAUNTLET]',
-                node: 'oci-machine',
-                command: 'Investigate Audiobookshelf setup & library cleanup',
-                pid: 58236,
-                status: 'COMPLETED [EXIT_0]',
-                buffer_tail: `2026-10-04 02:32:51 [INFO] Golem.Hands: Agent 'Hand 01 [L_GAUNTLET]' initialized on localhost
-2026-10-04 02:32:54 [INFO] Golem.Hands: Command: Investigate Audiobookshelf setup and perform requested library cleanup [PID: 58236]
-2026-10-04 02:32:54 [INFO] Golem.Hands: Process buffer attached; streaming execution trace across mesh...
-2026-10-04 02:33:00 [INFO] Golem.Hands.Runner: Connecting to oci-machine (100.113.173.33) via Tailscale mesh...
-2026-10-04 02:33:15 [EXEC] run_command: Inspect Audiobookshelf docker-compose configuration
-    > ssh oci-machine "cat /home/opc/audiobookshelf/docker-compose.yml"
-    <-- container_name: audiobookshelf | image: ghcr.io/advplyr/audiobookshelf:latest
-2026-10-04 02:33:45 [EXEC] run_command: Query existing libraries in Audiobookshelf database
-    > ssh oci-machine "docker exec audiobookshelf sqlite3 /config/absdatabase.sqlite 'SELECT id, name, mediaType FROM libraries;'"
-    <-- 06784617-4b25-4d67-92a5-4306a0b68a39 | Böcker | book
-    <-- b6967c3c-b061-4831-a06b-3e4aea9121ca | Podcasts | podcast
-2026-10-04 02:34:20 [EXEC] run_command: Inspect directory structure for Podcasts and Audiobooks
-    > ssh oci-machine "ls -la /home/opc/audiobookshelf/audiobooks /home/opc/audiobookshelf/podcasts"
-    <-- Storage mounts: distinct media directories preserved
-2026-10-04 02:35:10 [EXEC] run_command: Check authors table for phantom item 'The' and 'The Material Arcana'
-    > ssh oci-machine "docker exec audiobookshelf sqlite3 -header -column /config/absdatabase.sqlite \"SELECT id, name FROM authors WHERE name LIKE '%Material%' OR name = 'The';\""
-    <-- Found phantom author 'The' and 'The Material Arcana'
-2026-10-04 02:36:23 [EXEC] run_command: Check schema of authors table in absdatabase.sqlite
-    > ssh oci-machine "docker exec audiobookshelf sqlite3 /config/absdatabase.sqlite '.schema authors'"
-2026-10-04 02:36:46 [EXEC] run_command: Create safety backup of Audiobookshelf sqlite database
-    > ssh oci-machine "cp -p /home/opc/audiobookshelf/config/absdatabase.sqlite /home/opc/audiobookshelf/config/absdatabase.sqlite.bak_pre_delete_20261003"
-    <-- Database backup verified
-2026-10-04 02:36:57 [EXEC] run_command: Delete library item 'The' from Audiobookshelf
-    > ssh oci-machine "TOKEN=\$(docker exec audiobookshelf sqlite3 /config/absdatabase.sqlite 'SELECT token FROM ...') && curl -X DELETE 127.0.0.1:13378/api/items/..."
-    <-- Item 'The' deleted cleanly from library
-2026-10-04 02:37:01 [EXEC] run_command: Delete Material Arcana item from Audiobookshelf library
-    > ssh oci-machine "curl -X DELETE 127.0.0.1:13378/api/items/94c89aed-8ce9-4089-bc55-e435cfd8e578"
-    <-- Library item detached
-2026-10-04 02:37:05 [EXEC] run_command: Verify files are completely intact on disk
-    > ssh oci-machine "find '/home/opc/audiobookshelf/audiobooks/The Material Arcana' -type f"
-    <-- All 10 episodes (.m4a), cover.jpg, and desc.txt 100% intact on disk
-2026-10-04 02:37:12 [EXEC] run_command: Delete orphan author 'The Material Arcana' from ABS
-    > ssh oci-machine "curl -X DELETE 127.0.0.1:13378/api/authors/6a7211a4-94c6-43b9-a0a4-b040081d582a"
-    <-- Orphan author removed
-2026-10-04 02:37:25 [EXEC] run_command: Verify Podcasts and Böcker library items via API
-    > ssh oci-machine "curl -s 127.0.0.1:13378/api/libraries/b6967c3c-b061-4831-a06b-3e4aea9121ca/items"
-    <-- Podcasts library intact; Böcker library intact
-2026-10-04 02:37:35 [EXEC] run_command: Verify sqlite database integrity
-    > ssh oci-machine "docker exec audiobookshelf sqlite3 /config/absdatabase.sqlite 'PRAGMA integrity_check;'"
-    <-- ok
-2026-10-04 02:37:38 [INFO] Golem.Hands: Library cleanup complete. Database integrity verified (ok).
-2026-10-04 02:37:38 [SUCCESS] Hand 01 [L_GAUNTLET]: Execution complete [EXIT_0].`
-            };
-            getOrCreateHandCard(initialHandAgent);
+            // Initial render: Hands start in standby mode until hydrated via /api/status or SSE
             renderHandsState();
 
             // Hydrate REST snapshot from /api/status
@@ -1770,6 +1660,12 @@
                                 noseTerm.innerHTML = data.nose.logs.map(formatLogLine).join('');
                                 noseTerm.scrollTop = noseTerm.scrollHeight;
                             }
+                        }
+                        if (data.nose.verdict_summary) {
+                            last_verdict_summary = String(data.nose.verdict_summary).trim();
+                        }
+                        if (data.nose.smells_off !== undefined) {
+                            last_smells_off = Boolean(data.nose.smells_off);
                         }
                     }
                     if (data.eyes) {
@@ -1798,8 +1694,18 @@
                             }
                         }
                     }
-                    if (Array.isArray(data.hands) && data.hands.length > 0) {
-                        data.hands.forEach(h => getOrCreateHandCard(h));
+                    if (Array.isArray(data.hands)) {
+                        if (data.hands.length === 0) {
+                            for (const [id, item] of activeHands.entries()) {
+                                if (item.settleTimeout) clearTimeout(item.settleTimeout);
+                                if (item.el) item.el.remove();
+                            }
+                            activeHands.clear();
+                            renderHandsState();
+                        } else {
+                            data.hands.forEach(h => getOrCreateHandCard(h));
+                            renderHandsState();
+                        }
                     }
                     alignFaceAnchors();
                 })
@@ -1866,13 +1772,37 @@
                     } catch (_) {}
                 });
 
+                function handleNoseTelemetryUpdate(data, isAlert = false) {
+                    if (!data) return;
+                    updateNoseData(data);
+
+                    const summary = (data.verdict_summary || data.summary || '').trim();
+                    if (!summary) return;
+
+                    const smellsOff = Boolean(data.smells_off);
+                    const summaryChanged = Boolean(last_verdict_summary === null || summary !== last_verdict_summary);
+                    const anomalyOccurred = Boolean(smellsOff && last_smells_off !== true);
+
+                    // Strictly append when verdict_summary changes, an anomaly occurs (smells_off == true), or an explicit bus alert arrives
+                    if (summaryChanged || anomalyOccurred || isAlert) {
+                        const level = smellsOff ? '[WARN]' : '[INFO]';
+                        appendAgentLog(document.getElementById('nose-terminal-body'), `${level} Golem.Sensory.Nose: ${summary}`);
+                        last_verdict_summary = summary;
+                        last_smells_off = smellsOff;
+                    }
+                }
+
                 eventSource.addEventListener('nose_telemetry', function(e) {
                     try {
                         const data = JSON.parse(e.data);
-                        updateNoseData(data);
-                        if (data.verdict_summary) {
-                            appendAgentLog(document.getElementById('nose-terminal-body'), `[INFO] Golem.Sensory.Nose: ${data.verdict_summary}`);
-                        }
+                        handleNoseTelemetryUpdate(data, false);
+                    } catch (_) {}
+                });
+
+                eventSource.addEventListener('nose_alert', function(e) {
+                    try {
+                        const data = JSON.parse(e.data);
+                        handleNoseTelemetryUpdate(data, true);
                     } catch (_) {}
                 });
 
@@ -1911,17 +1841,29 @@
                 eventSource.addEventListener('hand_buffer', function(e) {
                     try {
                         const data = JSON.parse(e.data);
-                        const item = activeHands.get(data.pane_id);
-                        if (item) {
-                            item.buffer_tail = (item.buffer_tail || '') + (data.delta || data.text || '');
-                            updateCardUi(item);
-                        } else {
+                        const paneId = data.pane_id;
+                        if (!paneId) return;
+
+                        let item = activeHands.get(paneId);
+                        if (!item) {
                             getOrCreateHandCard({
-                                pane_id: data.pane_id,
+                                pane_id: paneId,
                                 command: data.command || 'Task',
-                                buffer_tail: data.delta || '',
+                                buffer_tail: data.delta || data.text || '',
                                 status: 'RUNNING'
                             });
+                            item = activeHands.get(paneId);
+                        } else {
+                            if (item.settleTimeout) {
+                                clearTimeout(item.settleTimeout);
+                                item.settleTimeout = null;
+                            }
+                            const delta = data.delta || data.text || '';
+                            item.buffer_tail = (item.buffer_tail || '') + delta;
+                            if (item.buffer_tail.length > 8192) {
+                                item.buffer_tail = item.buffer_tail.slice(-8192);
+                            }
+                            updateCardUi(item);
                         }
                     } catch (_) {}
                 });
@@ -1929,29 +1871,57 @@
                 eventSource.addEventListener('hand_settle', function(e) {
                     try {
                         const data = JSON.parse(e.data);
-                        const item = activeHands.get(data.pane_id);
+                        const paneId = data.pane_id;
+                        if (!paneId) return;
+
+                        const item = activeHands.get(paneId);
                         if (item) {
-                            item.status = data.status || (data.exit_code === 0 ? 'EXIT_0' : 'FAILED');
-                            item.exit_code = data.exit_code;
+                            const exitCode = (data.exit_code !== undefined) ? data.exit_code : 0;
+                            const status = data.status || (exitCode === 0 ? 'EXIT_0' : 'FAILED');
+                            item.status = status;
+                            item.exit_code = exitCode;
                             updateCardUi(item);
+
+                            // Graceful settlement unmount after 5 seconds to return to standby if all hands settle
+                            if (item.settleTimeout) clearTimeout(item.settleTimeout);
+                            item.settleTimeout = setTimeout(() => {
+                                unmountHandCard(paneId);
+                            }, 5000);
                         }
                     } catch (_) {}
                 });
 
                 eventSource.addEventListener('hands_status', function(e) {
                     try {
-                        const list = JSON.parse(e.data);
-                        if (Array.isArray(list) && list.length > 0) {
-                            const currentIds = new Set(list.map(h => h.pane_id));
-                            for (const [id, item] of activeHands.entries()) {
-                                if (!currentIds.has(id)) {
-                                    if (item.el && !item.isPrimary) item.el.remove();
-                                    activeHands.delete(id);
-                                }
-                            }
-                            list.forEach(h => getOrCreateHandCard(h));
-                            renderHandsState();
+                        const data = JSON.parse(e.data);
+                        let list = [];
+                        if (Array.isArray(data)) {
+                            list = data;
+                        } else if (data && typeof data === 'object') {
+                            list = Object.values(data);
                         }
+
+                        if (list.length === 0) {
+                            // All hands cleared / settled -> return to standby view
+                            for (const [id, item] of activeHands.entries()) {
+                                if (item.settleTimeout) clearTimeout(item.settleTimeout);
+                                if (item.el) item.el.remove();
+                            }
+                            activeHands.clear();
+                            renderHandsState();
+                            return;
+                        }
+
+                        const incomingIds = new Set(list.map(h => h.pane_id));
+                        for (const [id, item] of activeHands.entries()) {
+                            if (!incomingIds.has(id)) {
+                                if (item.settleTimeout) clearTimeout(item.settleTimeout);
+                                if (item.el) item.el.remove();
+                                activeHands.delete(id);
+                            }
+                        }
+                        list.forEach(h => getOrCreateHandCard(h));
+                        renderHandsState();
                     } catch (_) {}
                 });
 
@@ -2075,8 +2045,13 @@
                     if (card && card.classList.contains('terminal-expanded')) {
                         toggleTerminalExpand(card);
                     } else if (card) {
-                        activeHands.clear();
-                        renderHandsState();
+                        const paneId = card.getAttribute('data-pane-id');
+                        if (paneId) {
+                            unmountHandCard(paneId);
+                        } else {
+                            activeHands.clear();
+                            renderHandsState();
+                        }
                     }
                     return;
                 }

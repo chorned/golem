@@ -1,13 +1,13 @@
 """
 normalizer.py
-Backwards-compatibility shim for first_mate.transport.normalizer.
+Backwards-compatibility shim for golem.transport.normalizer.
 
 Legacy modules and tests importing directly from `normalizer` will receive
-identical functions and constants re-exported from `first_mate.transport.normalizer`.
+identical functions and constants re-exported from `golem.transport.normalizer`.
 """
 
-from first_mate.transport.normalizer import *  # noqa: F401, F403
-from first_mate.transport.normalizer import (
+from golem.transport.normalizer import *  # noqa: F401, F403
+from golem.transport.normalizer import (
     sanitize_for_slack,
     transpile_markdown_to_mrkdwn,
     transpile_markdown_to_slack,

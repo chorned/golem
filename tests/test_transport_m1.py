@@ -33,7 +33,7 @@ Test coverage:
    - chat_update non-fatal error handling (returns None)
    - High-level SlackTransport façade (chunked sending, milestone factory)
 5. Compatibility Shim:
-   - Root normalizer.py re-exports identical symbols to first_mate.transport.normalizer
+   - Root normalizer.py re-exports identical symbols to golem.transport.normalizer
 """
 
 import asyncio
@@ -44,7 +44,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from slack_sdk.errors import SlackApiError
 
 import normalizer
-from first_mate.transport import (
+from golem.transport import (
     sanitize_for_slack,
     transpile_markdown_to_mrkdwn,
     transpile_markdown_to_slack,
@@ -704,10 +704,10 @@ class TestSlackTransport(unittest.IsolatedAsyncioTestCase):
 
 
 class TestCompatibilityShim(unittest.TestCase):
-    """Verify that root normalizer.py re-exports match first_mate.transport.normalizer."""
+    """Verify that root normalizer.py re-exports match golem.transport.normalizer."""
 
     def test_shim_exports_identical_symbols(self):
-        from first_mate.transport import normalizer as canonical
+        from golem.transport import normalizer as canonical
 
         self.assertIs(normalizer.sanitize_for_slack, canonical.sanitize_for_slack)
         self.assertIs(normalizer.transpile_markdown_to_mrkdwn, canonical.transpile_markdown_to_mrkdwn)

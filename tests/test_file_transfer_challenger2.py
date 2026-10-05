@@ -24,7 +24,7 @@ PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_DIR not in sys.path:
     sys.path.insert(0, PROJECT_DIR)
 
-from first_mate.transport.file_transfer import (
+from golem.transport.file_transfer import (
     extract_and_strip_file_directives,
     resolve_local_file_path,
     resolve_file_path,
@@ -33,8 +33,8 @@ from first_mate.transport.file_transfer import (
     WINDOWS_DRIVE_PATTERN,
     SENSITIVE_FILENAME_PATTERNS,
 )
-from first_mate.gateway.ingress import IngressGateway
-from first_mate.gateway.router import SessionRouter
+from golem.gateway.ingress import IngressGateway
+from golem.gateway.router import SessionRouter
 
 
 class MockSubprocess:
@@ -113,7 +113,7 @@ class TestChallengerWindowsVsFleetPaths(unittest.IsolatedAsyncioTestCase):
             "ssh_target": "100.80.59.45",
         }
 
-        with patch("first_mate.transport.file_transfer.fetch_remote_file", new_callable=AsyncMock) as mock_fetch:
+        with patch("golem.transport.file_transfer.fetch_remote_file", new_callable=AsyncMock) as mock_fetch:
             mock_temp = os.path.join(self.temp_dir, "weights.pth")
             with open(mock_temp, "w") as f:
                 f.write("weights")
@@ -276,7 +276,7 @@ class TestChallengerScpFailureAndTempCleanup(unittest.IsolatedAsyncioTestCase):
             f.write(b"data")
         client_ok = MagicMock()
         client_ok.files_upload_v2 = AsyncMock(return_value={"ok": True})
-        with patch("first_mate.transport.file_transfer.fetch_remote_file", new_callable=AsyncMock) as mock_fetch:
+        with patch("golem.transport.file_transfer.fetch_remote_file", new_callable=AsyncMock) as mock_fetch:
             mock_fetch.return_value = temp_success
             await upload_directive_files(
                 client=client_ok,
@@ -294,7 +294,7 @@ class TestChallengerScpFailureAndTempCleanup(unittest.IsolatedAsyncioTestCase):
             f.write(b"data")
         client_fail = MagicMock()
         client_fail.files_upload_v2 = AsyncMock(side_effect=Exception("Slack 500 error"))
-        with patch("first_mate.transport.file_transfer.fetch_remote_file", new_callable=AsyncMock) as mock_fetch:
+        with patch("golem.transport.file_transfer.fetch_remote_file", new_callable=AsyncMock) as mock_fetch:
             mock_fetch.return_value = temp_fail
             await upload_directive_files(
                 client=client_fail,

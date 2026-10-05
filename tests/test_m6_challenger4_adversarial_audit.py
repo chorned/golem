@@ -26,11 +26,11 @@ PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_DIR not in sys.path:
     sys.path.insert(0, PROJECT_DIR)
 
-from first_mate.gateway.ingress import IngressGateway, strip_bot_mentions
-from first_mate.gateway.router import SessionRouter
-from first_mate.gateway.session import SessionHandle, SessionState
-from first_mate.agent.adapter import HeadlessAgentAdapter
-from first_mate.agent.protocol import (
+from golem.gateway.ingress import IngressGateway, strip_bot_mentions
+from golem.gateway.router import SessionRouter
+from golem.gateway.session import SessionHandle, SessionState
+from golem.agent.adapter import HeadlessAgentAdapter
+from golem.agent.protocol import (
     AgentEvent,
     TextDeltaEvent,
     StatusUpdateEvent,
@@ -38,12 +38,12 @@ from first_mate.agent.protocol import (
     ToolStartEvent,
     ToolEndEvent,
 )
-from first_mate.agent.prompts import build_calibrated_system_prompt
-from first_mate.execution.runner import RunnerExecutor, ExecutionHandle
-from first_mate.execution.buffer import RunnerBufferObserver
-from first_mate.execution.delegation import WorkerDelegator, sanitize_worker_output
-from first_mate.execution.harness import DualPaneHarness
-from first_mate.transport.normalizer import (
+from golem.agent.prompts import build_calibrated_system_prompt
+from golem.execution.runner import RunnerExecutor, ExecutionHandle
+from golem.execution.buffer import RunnerBufferObserver
+from golem.execution.delegation import WorkerDelegator, sanitize_worker_output
+from golem.execution.harness import DualPaneHarness
+from golem.transport.normalizer import (
     sanitize_for_slack,
     transpile_markdown_to_mrkdwn,
     strip_ansi,
@@ -53,7 +53,7 @@ from first_mate.transport.normalizer import (
     protect_code_blocks,
     restore_code_blocks,
 )
-from first_mate.transport.chunker import (
+from golem.transport.chunker import (
     split_message_boundary_aware,
     parse_code_blocks,
     find_enclosing_block,
@@ -334,7 +334,7 @@ class TestAdversarialTC04WorkerDelegation(unittest.IsolatedAsyncioTestCase):
         })
         raw_worker_terminal = (
             "<scratchpad>\n"
-            "Checking syntax and AST changes in first_mate/gateway/router.py\n"
+            "Checking syntax and AST changes in golem/gateway/router.py\n"
             "</scratchpad>\n"
             "[scratchpad] ran 159 tests, coverage 98%\n"
             "╭──────────────────────────────────────────────╮\n"

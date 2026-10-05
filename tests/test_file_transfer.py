@@ -28,7 +28,7 @@ PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_DIR not in sys.path:
     sys.path.insert(0, PROJECT_DIR)
 
-from first_mate.transport.file_transfer import (
+from golem.transport.file_transfer import (
     extract_and_strip_file_directives,
     resolve_local_file_path,
     resolve_file_path,
@@ -38,14 +38,14 @@ from first_mate.transport.file_transfer import (
     WINDOWS_DRIVE_PATTERN,
     SENSITIVE_FILENAME_PATTERNS,
 )
-from first_mate.transport import (
+from golem.transport import (
     extract_and_strip_file_directives as exported_extract,
     resolve_file_path as exported_resolve,
     fetch_remote_file as exported_fetch,
     upload_directive_files as exported_upload,
 )
-from first_mate.gateway.ingress import IngressGateway
-from first_mate.gateway.router import SessionRouter
+from golem.gateway.ingress import IngressGateway
+from golem.gateway.router import SessionRouter
 
 
 class MockSubprocess:
@@ -71,7 +71,7 @@ class MockSubprocess:
 
 
 class TestExportedSymbols(unittest.TestCase):
-    """Verify first_mate.transport exports all required file transfer functions."""
+    """Verify golem.transport exports all required file transfer functions."""
 
     def test_transport_exports(self):
         self.assertIs(exported_extract, extract_and_strip_file_directives)
@@ -285,7 +285,7 @@ class TestPathResolution(unittest.IsolatedAsyncioTestCase):
         }
 
         # Mock fetch_remote_file
-        with patch("first_mate.transport.file_transfer.fetch_remote_file", new_callable=AsyncMock) as mock_fetch:
+        with patch("golem.transport.file_transfer.fetch_remote_file", new_callable=AsyncMock) as mock_fetch:
             mock_temp = os.path.join(self.temp_dir, "fetched_remote.png")
             with open(mock_temp, "w") as f:
                 f.write("remote png")
@@ -313,7 +313,7 @@ class TestPathResolution(unittest.IsolatedAsyncioTestCase):
             "ssh_user": "carl",
         }
 
-        with patch("first_mate.transport.file_transfer.fetch_remote_file", new_callable=AsyncMock) as mock_fetch:
+        with patch("golem.transport.file_transfer.fetch_remote_file", new_callable=AsyncMock) as mock_fetch:
             mock_temp = os.path.join(self.temp_dir, "model.onnx")
             with open(mock_temp, "w") as f:
                 f.write("onnx weights")
@@ -502,7 +502,7 @@ class TestUploadDirectiveFiles(unittest.IsolatedAsyncioTestCase):
             "target_machine": "desktop-pc",
         }
 
-        with patch("first_mate.transport.file_transfer.fetch_remote_file", new_callable=AsyncMock) as mock_fetch:
+        with patch("golem.transport.file_transfer.fetch_remote_file", new_callable=AsyncMock) as mock_fetch:
             mock_fetch.return_value = temp_remote
 
             results = await upload_directive_files(
@@ -539,7 +539,7 @@ class TestUploadDirectiveFiles(unittest.IsolatedAsyncioTestCase):
 
         self.mock_client.files_upload_v2.side_effect = Exception("Slack API rate limit")
 
-        with patch("first_mate.transport.file_transfer.fetch_remote_file", new_callable=AsyncMock) as mock_fetch:
+        with patch("golem.transport.file_transfer.fetch_remote_file", new_callable=AsyncMock) as mock_fetch:
             mock_fetch.return_value = temp_remote
 
             results = await upload_directive_files(
@@ -637,7 +637,7 @@ class TestUploadDirectiveFiles(unittest.IsolatedAsyncioTestCase):
             "target_machine": "desktop-pc",
         }
 
-        with patch("first_mate.transport.file_transfer.fetch_remote_file", new_callable=AsyncMock) as mock_fetch:
+        with patch("golem.transport.file_transfer.fetch_remote_file", new_callable=AsyncMock) as mock_fetch:
             mock_fetch.return_value = temp_remote
             results = await upload_directive_files(
                 client=self.mock_client,
@@ -970,7 +970,7 @@ class TestAdditionalEdgeCases(unittest.IsolatedAsyncioTestCase):
 
     async def test_resolve_path_with_default_mesh(self):
         # fleet_mesh=None should use default FleetMesh() instance
-        with patch("first_mate.transport.file_transfer.fetch_remote_file", new_callable=AsyncMock) as mock_fetch:
+        with patch("golem.transport.file_transfer.fetch_remote_file", new_callable=AsyncMock) as mock_fetch:
             mock_temp = os.path.join(self.temp_dir, "default_mesh.txt")
             with open(mock_temp, "w") as f:
                 f.write("data")
@@ -1006,7 +1006,7 @@ class TestAdditionalEdgeCases(unittest.IsolatedAsyncioTestCase):
         with open(temp_file, "w") as f:
             f.write("data")
 
-        with patch("first_mate.transport.file_transfer.fetch_remote_file", new_callable=AsyncMock) as mock_fetch:
+        with patch("golem.transport.file_transfer.fetch_remote_file", new_callable=AsyncMock) as mock_fetch:
             mock_fetch.return_value = temp_file
             with patch("os.remove", side_effect=OSError("Disk error")):
                 results = await upload_directive_files(

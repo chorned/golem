@@ -30,27 +30,27 @@ PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__
 if PROJECT_DIR not in sys.path:
     sys.path.insert(0, PROJECT_DIR)
 
-from first_mate.gateway.ingress import IngressGateway, strip_bot_mentions
-from first_mate.gateway.router import SessionRouter
-from first_mate.gateway.session import SessionHandle, SessionState
-from first_mate.agent.adapter import HeadlessAgentAdapter
-from first_mate.agent.protocol import (
+from golem.gateway.ingress import IngressGateway, strip_bot_mentions
+from golem.gateway.router import SessionRouter
+from golem.gateway.session import SessionHandle, SessionState
+from golem.agent.adapter import HeadlessAgentAdapter
+from golem.agent.protocol import (
     AgentEvent,
     TextDeltaEvent,
     StatusUpdateEvent,
     FinishEvent,
     AwaitingInputEvent,
 )
-from first_mate.agent.prompts import CALIBRATION_PROMPT, build_calibrated_system_prompt
-from first_mate.execution.runner import RunnerExecutor, ExecutionHandle
-from first_mate.execution.buffer import (
+from golem.agent.prompts import CALIBRATION_PROMPT, build_calibrated_system_prompt
+from golem.execution.runner import RunnerExecutor, ExecutionHandle
+from golem.execution.buffer import (
     RunnerBufferObserver,
     OAUTH_CALLBACK_PATTERN,
     INTERACTIVE_PROMPT_PATTERNS,
 )
-from first_mate.execution.delegation import WorkerDelegator, sanitize_worker_output
-from first_mate.execution.harness import DualPaneHarness
-from first_mate.transport.normalizer import (
+from golem.execution.delegation import WorkerDelegator, sanitize_worker_output
+from golem.execution.harness import DualPaneHarness
+from golem.transport.normalizer import (
     sanitize_for_slack,
     transpile_markdown_to_mrkdwn,
     strip_ansi,
@@ -59,7 +59,7 @@ from first_mate.transport.normalizer import (
     strip_tui_debris,
     strip_prompt_echoes,
 )
-from first_mate.transport.chunker import split_message_boundary_aware
+from golem.transport.chunker import split_message_boundary_aware
 
 
 # ===========================================================================

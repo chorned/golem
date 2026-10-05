@@ -212,163 +212,107 @@ async def generate_mouth_response(
         except Exception:
             pass
 
-    # 2. Check if running in mock / unit-test environment
-    is_test_env = os.environ.get("FIRSTMATE_TEST_MODE") == "1"
-    is_mock = False
-    if session is not None:
-        adapter = getattr(session, "adapter", None)
-        if adapter is not None and type(adapter).__name__ not in ("HeadlessAgentAdapter", "AntigravityDriver"):
-            is_mock = True
-
-    # 3. Dynamic Mouth LLM call via Gemini Flash if available and not mocked
+    # 2. Dynamic Mouth LLM call via Gemini Flash
     key = api_key or get_gemini_api_key()
-    if key and not is_test_env and not is_mock:
-        try:
-            import aiohttp
-            pid = status_info.get("pid") or getattr(getattr(session, "active_execution", None), "pid", None) or "active"
-            command = status_info.get("command") or getattr(getattr(session, "active_execution", None), "command", "") or ""
-            tail = status_info.get("buffer_tail") or status_info.get("output_tail") or ""
-            last_prompt = getattr(session, "last_prompt", "") or ""
-            status_val = status_info.get("status") or ("running" if getattr(session, "is_executing", False) else "idle")
+    if not key:
+        return "⚠️ *Mouth Generation Error:* GEMINI_API_KEY is not configured. Cannot generate dynamic response."
 
-            sys_prompt = (
-                "You are First Mate, Carl's Chief of Staff and operational liaison in Slack.\n"
-                "You are communicating with Carl in a Slack thread while background work is active.\n"
-                "You possess full sensory awareness of The Eyes (active task observer) and The Nose (fleet health sentinel).\n"
-                "Respond naturally, directly, and conversationally like a trusted senior colleague.\n"
-                "Strictly adhere to Slack mrkdwn syntax: *bold*, `code`, <URL|Label>.\n"
-                "Never dump terminal escape codes, ANSI colors, or box drawing characters.\n"
-                "If Carl asks if he can ask something mid-stream or converse, reassure him warmly and answer his question.\n"
-                "If Carl asks about what The Eyes see or what The Nose smells mid-stream, answer factually using the current sensory state.\n"
-                "If Carl asks for status or progress, report current progress accurately.\n"
-                "Keep answers focused, high-signal, and proportionate to Carl's question."
-            )
+    try:
+        import aiohttp
+        pid = status_info.get("pid") or getattr(getattr(session, "active_execution", None), "pid", None) or "active"
+        command = status_info.get("command") or getattr(getattr(session, "active_execution", None), "command", "") or ""
+        tail = status_info.get("buffer_tail") or status_info.get("output_tail") or ""
+        last_prompt = getattr(session, "last_prompt", "") or ""
+        status_val = status_info.get("status") or ("running" if getattr(session, "is_executing", False) else "idle")
 
-            state_ctx_lines = [
-                f"Runner Status: {status_val}",
-                f"Active Command: {command}",
-                f"PID: {pid}",
-                f"Buffer Tail:\n{tail}",
-            ]
-            if eyes_status is not None:
-                e_st = eyes_status.get("state", "IDLE")
-                e_cmd = eyes_status.get("active_command") or eyes_status.get("command", "")
-                e_blk = eyes_status.get("blocker")
-                state_ctx_lines.append(f"The Eyes Status: state={e_st} | command={e_cmd} | blocker={e_blk}")
+        sys_prompt = (
+            "You are First Mate, Carl's Chief of Staff and operational liaison in Slack.\n"
+            "You are communicating with Carl in a Slack thread while background work is active.\n"
+            "Fleet Topology & Machine Roles:\n"
+            "• hermes: Local macOS controller, daily development anchor, and homelab runner (localhost).\n"
+            "• desktop-pc: High-VRAM Windows node for CUDA, model training, and heavy GPU compute (100.80.59.45) — this is Carl's PC / Windows machine.\n"
+            "• oci-machine: Remote cloud VPS for external daemons and scrapers (100.113.173.33).\n"
+            "• personal-laptop: Secondary macOS node (100.96.38.5) — Carl's personal MacBook.\n\n"
+            "You possess full sensory awareness of The Eyes (active task observer) and The Nose (fleet health sentinel).\n"
+            "Respond naturally, directly, and conversationally like a trusted senior colleague.\n"
+            "Strictly adhere to Slack mrkdwn syntax: *bold*, `code`, <URL|Label>.\n"
+            "Never dump terminal escape codes, ANSI colors, or box drawing characters.\n"
+            "If Carl asks if he can ask something mid-stream or converse, reassure him warmly and answer his question.\n"
+            "If Carl asks about what The Eyes see or what The Nose smells mid-stream, answer factually using the current sensory state.\n"
+            "If Carl asks about the fleet, machines, or which machine is the PC, answer factually using the fleet topology above.\n"
+            "If Carl asks for status or progress, report current progress accurately.\n"
+            "Keep answers focused, high-signal, and proportionate to Carl's question."
+        )
 
-            if nose_status is not None:
-                n_off = nose_status.get("smells_off", False)
-                n_min = nose_status.get("minutes_ago", 0.0)
-                n_verd = nose_status.get("verdict_summary", "Nominal")
-                n_disk = nose_status.get("disk", {})
-                n_free = n_disk.get("free_gb", "unknown")
-                n_dock = nose_status.get("docker", {})
-                n_cnt = n_dock.get("container_count", 0)
-                n_ts = nose_status.get("tailscale", {})
-                n_online = n_ts.get("online", False)
-                state_ctx_lines.append(
-                    f"The Nose Status: smells_off={n_off} (checked {n_min:.1f}m ago) | verdict={n_verd} | "
-                    f"disk_free={n_free}GB | docker_containers={n_cnt} | tailscale_online={n_online}"
-                )
+        state_ctx_lines = [
+            f"Runner Status: {status_val}",
+            f"Active Command: {command}",
+            f"PID: {pid}",
+            f"Buffer Tail:\n{tail}",
+        ]
+        if eyes_status is not None:
+            e_st = eyes_status.get("state", "IDLE")
+            e_cmd = eyes_status.get("active_command") or eyes_status.get("command", "")
+            e_blk = eyes_status.get("blocker")
+            state_ctx_lines.append(f"The Eyes Status: state={e_st} | command={e_cmd} | blocker={e_blk}")
 
-            state_ctx_lines.append(f"Initial Prompt / Task: {last_prompt}")
-            state_ctx = "\n".join(state_ctx_lines)
-
-            generation_config: Dict[str, Any] = {
-                "temperature": 0.3,
-            }
-            payload = {
-                "systemInstruction": {"parts": [{"text": sys_prompt}]},
-                "contents": [
-                    {
-                        "role": "user",
-                        "parts": [{
-                            "text": f"Current background state:\n{state_ctx}\n\nCarl's message: {prompt}"
-                        }]
-                    }
-                ],
-                "generationConfig": generation_config
-            }
-            model_name = model or get_mouth_model()
-            url = GEMINI_API_URL.format(model=model_name, key=key)
-            timeout = aiohttp.ClientTimeout(total=timeout_seconds)
-            async with aiohttp.ClientSession(timeout=timeout) as client_session:
-                async with client_session.post(url, json=payload, headers={"Content-Type": "application/json"}) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        candidates = data.get("candidates", [])
-                        if candidates:
-                            cand = candidates[0]
-                            finish_reason = cand.get("finishReason", "")
-                            if finish_reason == "MAX_TOKENS":
-                                logger.warning("Gemini Mouth response reached MAX_TOKENS limit")
-                            parts = cand.get("content", {}).get("parts", [])
-                            text_chunks = [p.get("text", "") for p in parts if "text" in p]
-                            resp_text = "".join(text_chunks).strip()
-                            if resp_text:
-                                return resp_text
-                    else:
-                        logger.warning(f"Gemini API returned status {resp.status}: {await resp.text()}")
-        except Exception as e:
-            logger.warning(f"Gemini Mouth response generation encountered error: {e}")
-
-    # 4. Calibrated Fallback Synthesis (preserves speed & compatibility for unit tests / offline)
-    p_lower = prompt.lower()
-    if any(k in p_lower for k in ("smell", "nose", "fleet health", "odor", "sniff")):
         if nose_status is not None:
             n_off = nose_status.get("smells_off", False)
             n_min = nose_status.get("minutes_ago", 0.0)
-            n_verd = nose_status.get("verdict_summary", "All systems nominal.")
+            n_verd = nose_status.get("verdict_summary", "Nominal")
             n_disk = nose_status.get("disk", {})
             n_free = n_disk.get("free_gb", "unknown")
             n_dock = nose_status.get("docker", {})
             n_cnt = n_dock.get("container_count", 0)
             n_ts = nose_status.get("tailscale", {})
             n_online = n_ts.get("online", False)
-            if n_off:
-                return (
-                    f"👃 *Fleet Health Anomaly:* Something smells off (checked {n_min:.1f}m ago).\n"
-                    f"• Verdict: {n_verd}\n"
-                    f"• Root disk: {n_free} GB free | Docker: {n_cnt} containers | Tailscale: {'online' if n_online else 'offline'}"
-                )
-            else:
-                return (
-                    f"👃 *Fleet Health:* Air is clean; all systems nominal (checked {n_min:.1f}m ago).\n"
-                    f"• Verdict: {n_verd}\n"
-                    f"• Root disk: {n_free} GB free | Docker: {n_cnt} containers running | Tailscale: {'online' if n_online else 'offline'}"
-                )
-        else:
-            return "👃 *Fleet Health:* All systems nominal; no anomalies detected by The Nose."
+            state_ctx_lines.append(
+                f"The Nose Status: smells_off={n_off} (checked {n_min:.1f}m ago) | verdict={n_verd} | "
+                f"disk_free={n_free}GB | docker_containers={n_cnt} | tailscale_online={n_online}"
+            )
 
-    if any(k in p_lower for k in ("see", "eyes", "looking at", "screen", "terminal buffer", "blocker")):
-        if eyes_status is not None:
-            e_st = eyes_status.get("state", "IDLE")
-            e_cmd = eyes_status.get("active_command") or eyes_status.get("command", "")
-            e_pid = eyes_status.get("pid")
-            e_blk = eyes_status.get("blocker")
-            e_tail = eyes_status.get("buffer_tail", "")
-            if e_blk and e_blk.get("url"):
-                return f"👀 *Runner Observer:* Waiting for authorization ({e_st}).\n<{e_blk['url']}|Click here to authenticate>"
-            elif e_cmd:
-                return (
-                    f"👀 *Runner Observer:* Status is *{e_st}* (PID {e_pid or 'active'}).\n"
-                    f"• Command: `{e_cmd}`\n"
-                    f"• Buffer snippet:\n> {e_tail or 'Active'}"
-                )
-            else:
-                return f"👀 *Runner Observer:* Runner is currently *{e_st}*. Buffer is clear."
-        else:
-            return f"👀 *Runner Observer:* Runner status is currently *{status_info.get('status', 'idle')}*."
+        state_ctx_lines.append(f"Initial Prompt / Task: {last_prompt}")
+        state_ctx = "\n".join(state_ctx_lines)
 
-    is_executing = getattr(session, "is_executing", False) or status_info.get("status") == "running"
-    if is_executing:
-        pid = status_info.get("pid") or getattr(getattr(session, "active_execution", None), "pid", None) or "active"
-        tail = status_info.get("buffer_tail") or status_info.get("output_tail") or ""
-        if is_conversational_checkin(prompt) and not is_status_inquiry(prompt):
-            return f"⚓ *Liaison Update:* Active execution is underway in Pane 2 (PID {pid}). Still working on your task."
-        elif is_status_inquiry(prompt):
-            return f"⚙️ *Runner In Progress (PID {pid}):*\n> {tail or 'Executing command in Pane 2...'}"
-        else:
-            return f"⚓ *Liaison Update:* Yes, absolutely! Active execution is underway in Pane 2 (PID {pid}). What's on your mind?"
-    else:
-        return "⚓ *Status Digest:* Runner pane is currently idle. No active background jobs."
+        generation_config: Dict[str, Any] = {
+            "temperature": 0.3,
+        }
+        payload = {
+            "systemInstruction": {"parts": [{"text": sys_prompt}]},
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [{
+                        "text": f"Current background state:\n{state_ctx}\n\nCarl's message: {prompt}"
+                    }]
+                }
+            ],
+            "generationConfig": generation_config
+        }
+        model_name = model or get_mouth_model()
+        url = GEMINI_API_URL.format(model=model_name, key=key)
+        timeout = aiohttp.ClientTimeout(total=timeout_seconds)
+        async with aiohttp.ClientSession(timeout=timeout) as client_session:
+            async with client_session.post(url, json=payload, headers={"Content-Type": "application/json"}) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    candidates = data.get("candidates", [])
+                    if candidates:
+                        cand = candidates[0]
+                        finish_reason = cand.get("finishReason", "")
+                        if finish_reason == "MAX_TOKENS":
+                            logger.warning("Gemini Mouth response reached MAX_TOKENS limit")
+                        parts = cand.get("content", {}).get("parts", [])
+                        text_chunks = [p.get("text", "") for p in parts if "text" in p]
+                        resp_text = "".join(text_chunks).strip()
+                        if resp_text:
+                            return resp_text
+                        return f"⚠️ *Mouth Generation Error:* Gemini API returned empty candidate text (finishReason={finish_reason})."
+                    return "⚠️ *Mouth Generation Error:* Gemini API returned no candidates."
+                else:
+                    err_body = await resp.text()
+                    logger.warning(f"Gemini API returned status {resp.status}: {err_body}")
+                    return f"⚠️ *Mouth Generation Error:* Gemini API error (HTTP {resp.status}): {err_body}"
+    except Exception as e:
+        logger.warning(f"Gemini Mouth response generation encountered error: {e}")
+        return f"⚠️ *Mouth Generation Error:* Failed to generate dynamic LLM response ({type(e).__name__}): {e}"

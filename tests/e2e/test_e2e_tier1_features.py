@@ -67,17 +67,17 @@ class TestTier1R1NamespaceAndLineage(unittest.TestCase):
         if not GOLEM_AVAILABLE:
             self.skipTest("Milestone M1 pending: dual-layer compatibility shim not yet active")
 
-        import first_mate
+        import golem
         import golem
 
         # Test object identity across modules if shim is active
         if hasattr(first_mate, "gateway") and hasattr(golem, "gateway"):
-            import first_mate.gateway
+            import golem.gateway
             import golem.gateway
             self.assertIs(
-                first_mate.gateway,
                 golem.gateway,
-                "first_mate.gateway must be identical object to golem.gateway"
+                golem.gateway,
+                "golem.gateway must be identical object to golem.gateway"
             )
 
     def test_f03_lineage_invariant_codification(self):
@@ -184,7 +184,7 @@ class TestTier1R2PluggableHarness(unittest.TestCase):
     def test_f08_pluggable_worker_signatures_support_subagent_fallback(self):
         """F08: Worker delegator functions accept worker parameter with legacy subagent fallback."""
         delegation_mod = None
-        for mod_name in ["golem.execution.delegation", "first_mate.execution.delegation"]:
+        for mod_name in ["golem.execution.delegation", "golem.execution.delegation"]:
             try:
                 delegation_mod = importlib.import_module(mod_name)
                 break
@@ -208,7 +208,7 @@ class TestTier1R2PluggableHarness(unittest.TestCase):
     def test_f09_on_demand_routing_to_opencode(self):
         """F09: Explicit worker='opencode' routes to isolated git worktree sandbox."""
         delegation_mod = None
-        for mod_name in ["golem.execution.delegation", "first_mate.execution.delegation"]:
+        for mod_name in ["golem.execution.delegation", "golem.execution.delegation"]:
             try:
                 delegation_mod = importlib.import_module(mod_name)
                 break
@@ -226,7 +226,7 @@ class TestTier1R2PluggableHarness(unittest.TestCase):
     def test_f10_on_demand_routing_to_hermes(self):
         """F10: Explicit worker='hermes' routes to homelab / Docker operational workspace."""
         delegation_mod = None
-        for mod_name in ["golem.execution.delegation", "first_mate.execution.delegation"]:
+        for mod_name in ["golem.execution.delegation", "golem.execution.delegation"]:
             try:
                 delegation_mod = importlib.import_module(mod_name)
                 break
@@ -255,7 +255,7 @@ class TestTier1R3ObservabilityWebUI(unittest.TestCase):
     """
 
     def _get_webui_module(self):
-        for mod_name in ["golem.webui.server", "golem.webui", "first_mate.webui.server"]:
+        for mod_name in ["golem.webui.server", "golem.webui", "golem.webui.server"]:
             try:
                 return importlib.import_module(mod_name)
             except ImportError:

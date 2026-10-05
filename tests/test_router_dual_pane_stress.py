@@ -15,9 +15,9 @@ import time
 import unittest
 from unittest.mock import AsyncMock
 
-from first_mate.gateway.router import SessionRouter
-from first_mate.gateway.session import SessionHandle, SessionState
-from first_mate.execution.harness import DualPaneHarness
+from golem.gateway.router import SessionRouter
+from golem.gateway.session import SessionHandle, SessionState
+from golem.execution.harness import DualPaneHarness
 from herdr_client import HerdrClient
 
 

@@ -48,20 +48,20 @@ if PROJECT_DIR not in sys.path:
     sys.path.insert(0, PROJECT_DIR)
 
 # ---------------------------------------------------------------------------
-# Imports from first_mate modules
+# Imports from golem modules
 # ---------------------------------------------------------------------------
-from first_mate.gateway.ingress import (
+from golem.gateway.ingress import (
     IngressGateway,
     strip_bot_mentions,
     add_reaction,
     remove_reaction,
     swap_reaction,
 )
-from first_mate.gateway.router import SessionRouter
-from first_mate.gateway.session import SessionHandle, SessionState
+from golem.gateway.router import SessionRouter
+from golem.gateway.session import SessionHandle, SessionState
 
-from first_mate.agent.adapter import HeadlessAgentAdapter
-from first_mate.agent.protocol import (
+from golem.agent.adapter import HeadlessAgentAdapter
+from golem.agent.protocol import (
     AgentEvent,
     TextDeltaEvent,
     StatusUpdateEvent,
@@ -71,11 +71,11 @@ from first_mate.agent.protocol import (
     FinishEvent,
 )
 
-from first_mate.execution.runner import RunnerExecutor, ExecutionHandle
-from first_mate.execution.buffer import RunnerBufferObserver
-from first_mate.execution.harness import DualPaneHarness
+from golem.execution.runner import RunnerExecutor, ExecutionHandle
+from golem.execution.buffer import RunnerBufferObserver
+from golem.execution.harness import DualPaneHarness
 
-from first_mate.transport.normalizer import (
+from golem.transport.normalizer import (
     sanitize_for_slack,
     transpile_markdown_to_mrkdwn,
     strip_ansi,
@@ -83,7 +83,7 @@ from first_mate.transport.normalizer import (
     strip_box_drawing,
     strip_prompt_echoes,
 )
-from first_mate.transport.chunker import split_message_boundary_aware
+from golem.transport.chunker import split_message_boundary_aware
 
 
 # ===========================================================================

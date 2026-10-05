@@ -26,16 +26,16 @@ import unittest
 from unittest.mock import patch
 from typing import List, Dict, Any, AsyncGenerator, Optional
 
-from first_mate.agent.adapter import HeadlessAgentAdapter
+from golem.agent.adapter import HeadlessAgentAdapter
 
-from first_mate.agent.protocol import (
+from golem.agent.protocol import (
     TextDeltaEvent,
     StatusUpdateEvent,
     FinishEvent,
     AgentEvent,
 )
-from first_mate.gateway.session import SessionHandle, SessionState
-from first_mate.gateway.router import SessionRouter
+from golem.gateway.session import SessionHandle, SessionState
+from golem.gateway.router import SessionRouter
 
 
 class StressMockAdapter:

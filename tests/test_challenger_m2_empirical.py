@@ -20,8 +20,8 @@ from pathlib import Path
 from unittest.mock import patch, MagicMock, AsyncMock
 from typing import List, Dict, Any, Set
 
-import first_mate.config as fm_config
-from first_mate.config import (
+import golem.config as fm_config
+from golem.config import (
     get_active_engine,
     get_engine_model,
     get_mouth_model,
@@ -30,12 +30,12 @@ from first_mate.config import (
     get_config_dict,
     reload_config,
 )
-from first_mate.agent.drivers.base import BaseAgentDriver
-from first_mate.agent.drivers.antigravity import AntigravityDriver
-from first_mate.agent.drivers.claude_code import ClaudeCodeDriver
-from first_mate.agent.drivers.opencode import OpenCodeDriver
-from first_mate.gateway.session import SessionHandle, SessionState
-from first_mate.gateway.router import SessionRouter
+from golem.agent.drivers.base import BaseAgentDriver
+from golem.agent.drivers.antigravity import AntigravityDriver
+from golem.agent.drivers.claude_code import ClaudeCodeDriver
+from golem.agent.drivers.opencode import OpenCodeDriver
+from golem.gateway.session import SessionHandle, SessionState
+from golem.gateway.router import SessionRouter
 
 
 class DummyTestDriver(BaseAgentDriver):
@@ -77,7 +77,7 @@ class TestChallengerZeroHardcodingAndFallback(unittest.TestCase):
 
     def test_missing_env_file_zero_hardcoded_model_fallback(self) -> None:
         """When os.environ is wiped AND .env is missing/empty, NO hardcoded model strings are returned."""
-        with patch("first_mate.config._get_file_env", return_value={}):
+        with patch("golem.config._get_file_env", return_value={}):
             with patch.dict(os.environ, {}, clear=True):
                 self.assertEqual(get_mouth_model(), "")
                 self.assertEqual(get_eyes_model(), "")
@@ -89,7 +89,7 @@ class TestChallengerZeroHardcodingAndFallback(unittest.TestCase):
                 self.assertEqual(get_active_engine(), "antigravity")
 
     def test_convenience_getter_function_audit(self) -> None:
-        """Verify whether functions claimed in worker handoff actually exist in first_mate.config."""
+        """Verify whether functions claimed in worker handoff actually exist in golem.config."""
         expected_getters = [
             "get_mouth_model",
             "get_eyes_model",

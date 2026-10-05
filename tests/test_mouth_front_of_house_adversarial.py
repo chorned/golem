@@ -24,15 +24,15 @@ PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_DIR not in sys.path:
     sys.path.insert(0, PROJECT_DIR)
 
-from first_mate.sensory.bus import ShoulderTapEventBus, ShoulderTapAlert, get_default_event_bus
-from first_mate.gateway.ingress import (
+from golem.sensory.bus import ShoulderTapEventBus, ShoulderTapAlert, get_default_event_bus
+from golem.gateway.ingress import (
     IngressGateway,
     BackstageExecutionAccumulator,
     call_gemini_api,
 )
-from first_mate.gateway.router import SessionRouter
-from first_mate.gateway.session import SessionHandle
-from first_mate.agent.protocol import (
+from golem.gateway.router import SessionRouter
+from golem.gateway.session import SessionHandle
+from golem.agent.protocol import (
     TextDeltaEvent,
     StatusUpdateEvent,
     ToolStartEvent,
@@ -40,7 +40,7 @@ from first_mate.agent.protocol import (
     FinishEvent,
     AgentEvent,
 )
-from first_mate.transport.file_transfer import (
+from golem.transport.file_transfer import (
     extract_and_strip_file_directives,
     upload_directive_files,
     is_sensitive_target,
@@ -144,7 +144,7 @@ class TestAdversarialTriage(unittest.IsolatedAsyncioTestCase):
             ]
         }
 
-        with patch("first_mate.gateway.ingress.call_gemini_api", new_callable=AsyncMock) as mock_gemini:
+        with patch("golem.gateway.ingress.call_gemini_api", new_callable=AsyncMock) as mock_gemini:
             mock_gemini.side_effect = [gemini_turn1, gemini_turn2]
             with patch.object(self.gateway, "_execute_backstage_task", new_callable=AsyncMock) as mock_exec:
                 mock_exec.return_value = {"status": "SUCCESS", "output": "150 passed in 2.1s"}
@@ -169,7 +169,7 @@ class TestAdversarialTriage(unittest.IsolatedAsyncioTestCase):
           - Delivers clean sanitized output.
           - Swaps reaction to white_check_mark.
         """
-        with patch("first_mate.gateway.ingress.call_gemini_api", new_callable=AsyncMock) as mock_gemini:
+        with patch("golem.gateway.ingress.call_gemini_api", new_callable=AsyncMock) as mock_gemini:
             mock_gemini.return_value = None  # Complete API failure
 
             with patch.object(self.gateway, "_execute_backstage_task", new_callable=AsyncMock) as mock_exec:
@@ -270,7 +270,7 @@ class TestAdversarialWorkerLeakElimination(unittest.IsolatedAsyncioTestCase):
             ]
         }
 
-        with patch("first_mate.gateway.ingress.call_gemini_api", new_callable=AsyncMock) as mock_gemini:
+        with patch("golem.gateway.ingress.call_gemini_api", new_callable=AsyncMock) as mock_gemini:
             mock_gemini.side_effect = [turn1_dispatch, turn2_briefing]
             with patch.object(self.gateway, "_stream_backstage_events", return_value=flood_worker_generator()):
                 event = {
@@ -338,7 +338,7 @@ class TestAdversarialWorkerLeakElimination(unittest.IsolatedAsyncioTestCase):
             ]
         }
 
-        with patch("first_mate.gateway.ingress.call_gemini_api", new_callable=AsyncMock) as mock_gemini:
+        with patch("golem.gateway.ingress.call_gemini_api", new_callable=AsyncMock) as mock_gemini:
             mock_gemini.side_effect = [turn1_dispatch, turn2_error_briefing]
             with patch.object(self.gateway, "_stream_backstage_events", return_value=crashing_worker_generator()):
                 event = {
@@ -426,7 +426,7 @@ class TestAdversarialYieldAndContinuity(unittest.IsolatedAsyncioTestCase):
             ]
         }
 
-        with patch("first_mate.gateway.ingress.call_gemini_api", new_callable=AsyncMock) as mock_gemini:
+        with patch("golem.gateway.ingress.call_gemini_api", new_callable=AsyncMock) as mock_gemini:
             mock_gemini.side_effect = [turn1_dispatch, turn2_briefing]
             with patch.object(self.gateway, "_stream_backstage_events", return_value=fast_worker_generator()):
                 event = {
@@ -776,7 +776,7 @@ class TestAdversarialSynthesisAndEdgeCases(unittest.IsolatedAsyncioTestCase):
             ]
         }
 
-        with patch("first_mate.gateway.ingress.call_gemini_api", new_callable=AsyncMock) as mock_gemini:
+        with patch("golem.gateway.ingress.call_gemini_api", new_callable=AsyncMock) as mock_gemini:
             # Turn 1 returns dispatch; Turn 2 (briefing synthesis) returns None
             mock_gemini.side_effect = [turn1_dispatch, None]
             with patch.object(self.gateway, "_execute_backstage_task", new_callable=AsyncMock) as mock_exec:
@@ -792,9 +792,10 @@ class TestAdversarialSynthesisAndEdgeCases(unittest.IsolatedAsyncioTestCase):
 
                 self.assertEqual(len(self.client.posted_messages), 1)
                 posted = self.client.posted_messages[0]["text"]
-                self.assertIn("Task Complete", posted)
+                self.assertIn("⚠️ *Executive Synthesis Failed*", posted)
+                self.assertIn("Binary built at target/bin", posted)
                 reactions = [r["name"] for r in self.client.reactions_added]
-                self.assertIn("white_check_mark", reactions)
+                self.assertIn("boom", reactions)
 
     async def test_awaiting_input_event_yields_warning_prompt(self) -> None:
         """
@@ -827,7 +828,7 @@ class TestAdversarialSynthesisAndEdgeCases(unittest.IsolatedAsyncioTestCase):
         acc.has_awaiting_input = True
         acc.awaiting_input_prompt = "Please enter your sudo password"
 
-        with patch("first_mate.gateway.ingress.call_gemini_api", new_callable=AsyncMock) as mock_gemini:
+        with patch("golem.gateway.ingress.call_gemini_api", new_callable=AsyncMock) as mock_gemini:
             mock_gemini.return_value = turn1_dispatch
             with patch.object(self.gateway, "_execute_backstage_task", new_callable=AsyncMock) as mock_exec:
                 mock_exec.return_value = acc

@@ -50,7 +50,7 @@ class TestTier4FullSessionLifecycle(unittest.IsolatedAsyncioTestCase):
     def _get_gateway_mods(self):
         ingress_mod = None
         router_mod = None
-        for base in ["golem.gateway", "first_mate.gateway"]:
+        for base in ["golem.gateway", "golem.gateway"]:
             try:
                 ingress_mod = importlib.import_module(f"{base}.ingress")
                 router_mod = importlib.import_module(f"{base}.router")
@@ -111,7 +111,7 @@ class TestTier4OnDemandWorkerDelegationScenario(unittest.TestCase):
     """
 
     def _get_delegation_mod(self):
-        for name in ["golem.execution.delegation", "first_mate.execution.delegation"]:
+        for name in ["golem.execution.delegation", "golem.execution.delegation"]:
             try:
                 return importlib.import_module(name)
             except ImportError:
@@ -141,7 +141,7 @@ class TestTier4WebUILiveObservabilityScenario(unittest.IsolatedAsyncioTestCase):
     """
 
     def _get_webui_mod(self):
-        for name in ["golem.webui.server", "golem.webui", "first_mate.webui.server"]:
+        for name in ["golem.webui.server", "golem.webui", "golem.webui.server"]:
             try:
                 return importlib.import_module(name)
             except ImportError:
@@ -186,7 +186,7 @@ class TestTier4LegacyInvariantAndBackwardCompatibilityScenario(unittest.TestCase
 
         # Check backward-compatible import of config and gateway
         try:
-            import first_mate.config as fm_cfg
+            import golem.config as fm_cfg
             self.assertIsNotNone(fm_cfg)
         except ImportError:
             self.skipTest("first_mate shim not importable")

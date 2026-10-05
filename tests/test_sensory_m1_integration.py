@@ -23,22 +23,22 @@ PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_DIR not in sys.path:
     sys.path.insert(0, PROJECT_DIR)
 
-from first_mate.sensory.bus import ShoulderTapEventBus, get_default_event_bus
-from first_mate.sensory.nose import (
+from golem.sensory.bus import ShoulderTapEventBus, get_default_event_bus
+from golem.sensory.nose import (
     NoseSentinel,
     FleetSnapshot,
     AnomalyVerdict,
     get_default_nose_sentinel,
     set_default_nose_sentinel,
 )
-from first_mate.gateway.session import SessionHandle, EyesStatusResult
-from first_mate.gateway.ingress import (
+from golem.gateway.session import SessionHandle, EyesStatusResult
+from golem.gateway.ingress import (
     IngressGateway,
     get_mouth_tools_declaration,
     CHECK_EYES_TOOL_DECLARATION,
     CHECK_NOSE_TOOL_DECLARATION,
 )
-from first_mate.agent.mouth import generate_mouth_response
+from golem.agent.mouth import generate_mouth_response
 
 
 class TestMilestone1SensoryArchitecture(unittest.IsolatedAsyncioTestCase):
@@ -290,13 +290,33 @@ class TestMilestone1SensoryArchitecture(unittest.IsolatedAsyncioTestCase):
         }
         status_info = {"status": "running", "pid": 5432, "command": "cargo build --release"}
 
-        with patch.dict(os.environ, {"FIRSTMATE_TEST_MODE": "1"}):
+        mock_gemini_response = {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [
+                            {"text": "👃 *Fleet Health:* Air is clean; all systems nominal. Root disk has 50.0 GB free."}
+                        ]
+                    }
+                }
+            ]
+        }
+        mock_resp_obj = AsyncMock()
+        mock_resp_obj.status = 200
+        mock_resp_obj.json = AsyncMock(return_value=mock_gemini_response)
+
+        mock_post_cm = AsyncMock()
+        mock_post_cm.__aenter__.return_value = mock_resp_obj
+        mock_post_cm.__aexit__.return_value = None
+
+        with patch("aiohttp.ClientSession.post", return_value=mock_post_cm):
             t0 = time.perf_counter()
             resp = await generate_mouth_response(
                 "What does The Nose smell right now?",
                 status_info,
                 eyes_status=eyes_status,
                 nose_status=nose_status,
+                api_key="mock_key",
             )
             elapsed = time.perf_counter() - t0
 

@@ -27,7 +27,7 @@ if PROJECT_DIR not in sys.path:
     sys.path.insert(0, PROJECT_DIR)
 
 import app
-from first_mate.gateway.ingress import (
+from golem.gateway.ingress import (
     IngressGateway,
     download_slack_file,
     sanitize_filename,
@@ -35,7 +35,7 @@ from first_mate.gateway.ingress import (
     DEFAULT_MAX_FILE_SIZE_BYTES,
     TRANSFERS_DIR_NAME,
 )
-from first_mate.gateway.router import SessionRouter
+from golem.gateway.router import SessionRouter
 
 
 class MockHeadlessAdapter:
@@ -142,7 +142,7 @@ class TestConcurrentDualDeliveryChallenge(unittest.IsolatedAsyncioTestCase):
         )
         session.send_user_message = mock_send
 
-        with patch("first_mate.gateway.ingress.download_slack_file", side_effect=simulated_slow_download):
+        with patch("golem.gateway.ingress.download_slack_file", side_effect=simulated_slow_download):
             # Concurrent arrival of both events
             await asyncio.gather(
                 self.gateway.handle_file_shared(file_shared_event, self.client),
@@ -223,7 +223,7 @@ class TestBulkUploadChallenge(unittest.IsolatedAsyncioTestCase):
         )
         session.send_user_message = mock_send
 
-        with patch("first_mate.gateway.ingress.download_slack_file", side_effect=mock_dl):
+        with patch("golem.gateway.ingress.download_slack_file", side_effect=mock_dl):
             await self.gateway.handle_message(event, self.client)
 
         self.assertEqual(len(sent_prompts), 1)
@@ -285,7 +285,7 @@ class TestBulkUploadChallenge(unittest.IsolatedAsyncioTestCase):
         )
         session.send_user_message = mock_send
 
-        with patch("first_mate.gateway.ingress.download_slack_file", side_effect=mock_dl):
+        with patch("golem.gateway.ingress.download_slack_file", side_effect=mock_dl):
             await self.gateway.handle_message(event, self.client)
 
         self.assertEqual(len(sent_prompts), 1)
@@ -358,7 +358,7 @@ class TestCommentlessAndMentionUploadChallenge(unittest.IsolatedAsyncioTestCase)
         )
         session.send_user_message = mock_send
 
-        with patch("first_mate.gateway.ingress.download_slack_file", return_value=b"data"):
+        with patch("golem.gateway.ingress.download_slack_file", return_value=b"data"):
             await self.gateway.handle_message(event, self.client)
 
         self.assertEqual(len(sent_prompts), 1)
@@ -400,7 +400,7 @@ class TestCommentlessAndMentionUploadChallenge(unittest.IsolatedAsyncioTestCase)
         )
         session.send_user_message = mock_send
 
-        with patch("first_mate.gateway.ingress.download_slack_file", return_value=b"data"):
+        with patch("golem.gateway.ingress.download_slack_file", return_value=b"data"):
             await self.gateway.handle_message(event, self.client)
 
         self.assertEqual(len(sent_prompts), 1)

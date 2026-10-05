@@ -16,14 +16,14 @@ import time
 import unittest
 from typing import List, AsyncGenerator, Any
 
-from first_mate.agent.protocol import (
+from golem.agent.protocol import (
     TextDeltaEvent,
     StatusUpdateEvent,
     FinishEvent,
     AgentEvent,
 )
-from first_mate.gateway.session import SessionHandle, SessionState
-from first_mate.gateway.router import SessionRouter
+from golem.gateway.session import SessionHandle, SessionState
+from golem.gateway.router import SessionRouter
 
 
 class ChallengerMockAdapter:
@@ -296,7 +296,7 @@ class TestGatewayM3ChallengerStress(unittest.IsolatedAsyncioTestCase):
         Tests exotic Slack mention patterns with display labels, pipes, whitespace,
         multiple mentions, and empty labels.
         """
-        from first_mate.gateway.ingress import strip_bot_mentions
+        from golem.gateway.ingress import strip_bot_mentions
 
         cases = [
             ("<@U_AGY_BOT|firstmate> status", "status"),

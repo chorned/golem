@@ -21,8 +21,19 @@ from typing import Dict, Any, Optional, List, Set, Callable, Awaitable, Union, L
 
 logger = logging.getLogger("Golem.Sensory.Bus")
 
-AlertSource = Literal["eyes", "nose", "runner", "system"]
-AlertType = Literal["blocker", "completion", "health_anomaly"]
+AlertSource = Union[Literal["eyes", "nose", "runner", "system", "mouth"], str]
+AlertType = Union[
+    Literal[
+        "blocker",
+        "completion",
+        "health_anomaly",
+        "eye_log",
+        "eye_telemetry",
+        "nose_alert",
+        "mouth_briefing",
+    ],
+    str,
+]
 
 
 @dataclass
@@ -63,6 +74,21 @@ class ShoulderTapAlert:
     def is_health_anomaly(self) -> bool:
         """True if this alert signals an operational fleet/bot health anomaly."""
         return self.alert_type == "health_anomaly"
+
+    @property
+    def is_eye_log(self) -> bool:
+        """True if this alert signals an eye log frame."""
+        return self.alert_type == "eye_log"
+
+    @property
+    def is_eye_telemetry(self) -> bool:
+        """True if this alert signals eye telemetry."""
+        return self.alert_type == "eye_telemetry"
+
+    @property
+    def is_nose_alert(self) -> bool:
+        """True if this alert signals a nose alert or health anomaly."""
+        return self.alert_type in ("nose_alert", "health_anomaly")
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert alert to serializable dictionary."""
@@ -130,21 +156,34 @@ class ShoulderTapEventBus:
         # 1. Enqueue to session queue if alert has session_id and queue exists
         if alert.session_id and alert.session_id in self._session_queues:
             queue = self._session_queues[alert.session_id]
-            try:
-                queue.put_nowait(alert)
-            except asyncio.QueueFull:
-                logger.warning(
-                    f"Session queue '{alert.session_id}' full (maxsize={self.queue_maxsize}); dropping oldest alert"
-                )
-                try:
-                    queue.get_nowait()
-                    queue.task_done()
-                except Exception:
-                    pass
+
+            def _enqueue_alert() -> None:
                 try:
                     queue.put_nowait(alert)
-                except Exception as e:
-                    logger.error(f"Failed to enqueue alert for session '{alert.session_id}': {e}")
+                except asyncio.QueueFull:
+                    logger.warning(
+                        f"Session queue '{alert.session_id}' full (maxsize={self.queue_maxsize}); dropping oldest alert"
+                    )
+                    try:
+                        queue.get_nowait()
+                        queue.task_done()
+                    except Exception:
+                        pass
+                    try:
+                        queue.put_nowait(alert)
+                    except Exception as e:
+                        logger.error(f"Failed to enqueue alert for session '{alert.session_id}': {e}")
+
+            q_loop = getattr(queue, "_loop", None)
+            try:
+                curr_loop = asyncio.get_running_loop()
+            except RuntimeError:
+                curr_loop = None
+
+            if q_loop is not None and curr_loop is not None and q_loop != curr_loop and q_loop.is_running():
+                q_loop.call_soon_threadsafe(_enqueue_alert)
+            else:
+                _enqueue_alert()
 
         # 2. Dispatch to global subscribers
         subscribers_snapshot = list(self._subscribers)

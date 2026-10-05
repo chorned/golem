@@ -587,8 +587,8 @@ class TestAgentLoop(unittest.IsolatedAsyncioTestCase):
         client.reactions_add = AsyncMock(return_value={"ok": True})
         client.reactions_remove = AsyncMock(return_value={"ok": True})
 
-        from first_mate.gateway.router import SessionRouter
-        from first_mate.gateway.ingress import IngressGateway
+        from golem.gateway.router import SessionRouter
+        from golem.gateway.ingress import IngressGateway
 
         router = SessionRouter(default_target_cwd="/Users/hermes/projects/first-mate")
         gateway = IngressGateway(router=router)
@@ -714,8 +714,8 @@ class TestAgentLoop(unittest.IsolatedAsyncioTestCase):
         client.reactions_add = AsyncMock(return_value={"ok": True})
         client.reactions_remove = AsyncMock(return_value={"ok": True})
 
-        from first_mate.gateway.router import SessionRouter
-        from first_mate.gateway.ingress import IngressGateway
+        from golem.gateway.router import SessionRouter
+        from golem.gateway.ingress import IngressGateway
 
         router = SessionRouter(default_target_cwd="/Users/hermes/projects/first-mate")
         gateway = IngressGateway(router=router)
@@ -835,8 +835,8 @@ class TestAgentLoop(unittest.IsolatedAsyncioTestCase):
         client.reactions_add = AsyncMock(return_value={"ok": True})
         client.reactions_remove = AsyncMock(return_value={"ok": True})
 
-        from first_mate.gateway.router import SessionRouter
-        from first_mate.gateway.ingress import IngressGateway
+        from golem.gateway.router import SessionRouter
+        from golem.gateway.ingress import IngressGateway
 
         router = SessionRouter(default_target_cwd="/Users/hermes/projects/first-mate")
         gateway = IngressGateway(router=router)
@@ -1036,8 +1036,8 @@ class TestAgentLoop(unittest.IsolatedAsyncioTestCase):
         client.reactions_add = AsyncMock(return_value={"ok": True})
         client.reactions_remove = AsyncMock(return_value={"ok": True})
 
-        from first_mate.gateway.router import SessionRouter
-        from first_mate.gateway.ingress import IngressGateway
+        from golem.gateway.router import SessionRouter
+        from golem.gateway.ingress import IngressGateway
 
         router = SessionRouter(default_target_cwd="/Users/hermes/projects/first-mate")
         gateway = IngressGateway(router=router)

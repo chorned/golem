@@ -11,7 +11,7 @@ import unittest
 from unittest.mock import patch, MagicMock, AsyncMock
 from typing import Dict, Any
 
-from first_mate.agent.mouth import (
+from golem.agent.mouth import (
     generate_mouth_response,
     get_mouth_model,
     MOUTH_MODEL_DEFAULT,
@@ -21,7 +21,7 @@ from first_mate.agent.mouth import (
     is_conversational_inquiry,
     is_out_of_band_message,
 )
-from first_mate.agent.protocol import TextDeltaEvent, FinishEvent
+from golem.agent.protocol import TextDeltaEvent, FinishEvent
 
 
 class TestMouthLLM(unittest.IsolatedAsyncioTestCase):
@@ -180,27 +180,50 @@ class TestMouthLLM(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Confirmation Required", resp)
         self.assertIn("Overwrite existing files? (y/n)", resp)
 
-    async def test_generate_mouth_response_fallback_midstream_inquiry(self) -> None:
-        """Verify offline/test fallback handles mid-stream question naturally."""
+    async def test_generate_mouth_response_no_api_key_fails_loudly(self) -> None:
+        """Verify absence of API key fails loudly with diagnostic error instead of canned string."""
         mock_session = MagicMock()
         mock_session.is_executing = True
-        mock_session.active_execution = MagicMock()
-        mock_session.active_execution.pid = 9988
 
         status_info: Dict[str, Any] = {
             "status": "running",
             "pid": 9988,
             "buffer_tail": "Scraping items...",
         }
-        resp = await generate_mouth_response(
-            prompt="Can I ask you anything mid stream like this?",
-            status_info=status_info,
-            session=mock_session,
-            api_key=None,  # No API key triggers calibrated fallback
-        )
-        self.assertIn("Liaison Update", resp)
-        self.assertIn("PID 9988", resp)
-        self.assertIn("What's on your mind?", resp)
+        with patch("golem.agent.mouth.get_gemini_api_key", return_value=""):
+            resp = await generate_mouth_response(
+                prompt="Can I ask you anything mid stream like this?",
+                status_info=status_info,
+                session=mock_session,
+                api_key=None,
+            )
+            self.assertIn("Mouth Generation Error", resp)
+            self.assertIn("GEMINI_API_KEY", resp)
+
+    async def test_generate_mouth_response_api_error_fails_loudly(self) -> None:
+        """Verify Gemini API error fails loudly with status code and details."""
+        mock_session = MagicMock()
+        mock_session.is_executing = True
+
+        status_info: Dict[str, Any] = {"status": "running", "pid": 9988}
+
+        mock_resp_obj = AsyncMock()
+        mock_resp_obj.status = 500
+        mock_resp_obj.text = AsyncMock(return_value="Internal Server Error")
+
+        mock_post_cm = AsyncMock()
+        mock_post_cm.__aenter__.return_value = mock_resp_obj
+        mock_post_cm.__aexit__.return_value = None
+
+        with patch("aiohttp.ClientSession.post", return_value=mock_post_cm):
+            resp = await generate_mouth_response(
+                prompt="Status update please",
+                status_info=status_info,
+                session=mock_session,
+                api_key="fake-key",
+            )
+            self.assertIn("Mouth Generation Error", resp)
+            self.assertIn("HTTP 500", resp)
 
     def test_mouth_model_resolution_priority(self) -> None:
         """Verify get_mouth_model prioritizes MOUTH_MODEL over GEMINI_MODEL."""

@@ -399,7 +399,7 @@ class TestOfflineAssetSelfContainmentAdversarial(unittest.TestCase):
         self.assertEqual(LINEAGE, expected_lineage)
 
         # 4. first_mate shim exports
-        import first_mate.webui as fm_webui
+        import golem.webui as fm_webui
         self.assertEqual(fm_webui.LINEAGE, expected_lineage)
 
 

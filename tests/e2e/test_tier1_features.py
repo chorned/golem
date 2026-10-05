@@ -29,13 +29,13 @@ if PROJECT_DIR not in sys.path:
 # Dynamic Transport Layer Resolution with Compatibility Fallbacks
 # ---------------------------------------------------------------------------
 try:
-    from first_mate.transport.normalizer import (
+    from golem.transport.normalizer import (
         sanitize_for_slack,
         transpile_markdown_to_mrkdwn,
         strip_ansi,
         strip_tui_debris,
     )
-    _norm_mod = sys.modules.get("first_mate.transport.normalizer")
+    _norm_mod = sys.modules.get("golem.transport.normalizer")
     strip_box_drawing = getattr(_norm_mod, "strip_box_drawing", None)
     strip_prompt_echoes = getattr(_norm_mod, "strip_prompt_echoes", None)
     strip_terminal_chrome = getattr(_norm_mod, "strip_terminal_chrome", None)
@@ -52,7 +52,7 @@ except ImportError:
     transpile_markdown_to_slack = getattr(normalizer, "transpile_markdown_to_slack", transpile_markdown_to_mrkdwn)
 
 try:
-    from first_mate.transport.chunker import split_message_boundary_aware
+    from golem.transport.chunker import split_message_boundary_aware
 except ImportError:
     try:
         from app import split_message_boundary_aware
@@ -60,7 +60,7 @@ except ImportError:
         split_message_boundary_aware = None
 
 try:
-    from first_mate.transport.milestone import MilestoneUpdater
+    from golem.transport.milestone import MilestoneUpdater
 except ImportError:
     MilestoneUpdater = None
 
@@ -390,7 +390,7 @@ class TestTier1Chunker(unittest.TestCase):
 # ===========================================================================
 # 3. Milestone Updater Tests (Feature 31)
 # ===========================================================================
-@unittest.skipIf(MilestoneUpdater is None, "MilestoneUpdater class pending implementation in first_mate.transport.milestone")
+@unittest.skipIf(MilestoneUpdater is None, "MilestoneUpdater class pending implementation in golem.transport.milestone")
 class TestTier1MilestoneUpdater(unittest.IsolatedAsyncioTestCase):
     """
     Tier 1 tests for MilestoneUpdater.

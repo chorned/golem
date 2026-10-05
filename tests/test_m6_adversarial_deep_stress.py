@@ -22,11 +22,11 @@ PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_DIR not in sys.path:
     sys.path.insert(0, PROJECT_DIR)
 
-from first_mate.agent.protocol import AgentEvent, TextDeltaEvent
+from golem.agent.protocol import AgentEvent, TextDeltaEvent
 import herdr_fleet
 import app
-from first_mate.transport.chunker import split_message_boundary_aware
-from first_mate.transport.normalizer import sanitize_for_slack
+from golem.transport.chunker import split_message_boundary_aware
+from golem.transport.normalizer import sanitize_for_slack
 
 
 class TestTextDeltaEventExtremeEdgeCases(unittest.TestCase):

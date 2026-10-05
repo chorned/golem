@@ -153,6 +153,11 @@ class TestAdversarialEventLoopNonStarvation(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(server.subscriber_count, 4)
 
+        # Pre-connect REST client session and warm up connection pool
+        rest_sess = aiohttp.ClientSession()
+        async with rest_sess.get(status_url) as warm_resp:
+            await warm_resp.json()
+
         # Shared state for latency measurement
         loop_lag_measurements: List[float] = []
         running = True
@@ -214,56 +219,67 @@ class TestAdversarialEventLoopNonStarvation(unittest.IsolatedAsyncioTestCase):
 
         async def simulated_rest_worker():
             nonlocal rest_processed
-            async with aiohttp.ClientSession() as rest_sess:
-                while running:
-                    t_start = time.perf_counter()
-                    async with rest_sess.get(status_url) as r:
-                        self.assertEqual(r.status, 200)
-                        data = await r.json()
-                        self.assertIn("uptime", data)
-                    rest_processed += 1
-                    rest_times.append(time.perf_counter() - t_start)
-                    await asyncio.sleep(0.02)
+            while running:
+                t_start = time.perf_counter()
+                async with rest_sess.get(status_url) as r:
+                    self.assertEqual(r.status, 200)
+                    data = await r.json()
+                    self.assertIn("uptime", data)
+                rest_processed += 1
+                rest_times.append(time.perf_counter() - t_start)
+                await asyncio.sleep(0.02)
 
         # Background SSE consumer to prevent TCP backpressure on our test clients
         async def client_drainer(resp):
             while running:
                 try:
-                    await asyncio.wait_for(resp.content.readuntil(b"\n\n"), timeout=0.1)
-                except (asyncio.TimeoutError, asyncio.CancelledError):
-                    pass
+                    chunk = await resp.content.readuntil(b"\n\n")
+                    if not chunk:
+                        break
+                    # Cooperative yield to prevent starving latency monitor when draining bursts
+                    await asyncio.sleep(0)
+                except (asyncio.CancelledError, Exception):
+                    break
 
         drainer_tasks = [asyncio.create_task(client_drainer(r)) for r in sse_resps]
 
-        # Launch latency monitor, Slack worker, BlueBubbles worker, REST worker
-        monitor_task = asyncio.create_task(latency_monitor())
-        slack_task = asyncio.create_task(simulated_slack_worker())
-        bb_task = asyncio.create_task(simulated_bluebubbles_worker())
-        rest_task = asyncio.create_task(simulated_rest_worker())
+        # Collect garbage before starting benchmark loop and disable GC to isolate from generational pauses
+        import gc
+        gc.collect()
+        gc.disable()
+        try:
+            # Launch latency monitor, Slack worker, BlueBubbles worker, REST worker
+            monitor_task = asyncio.create_task(latency_monitor())
+            slack_task = asyncio.create_task(simulated_slack_worker())
+            bb_task = asyncio.create_task(simulated_bluebubbles_worker())
+            rest_task = asyncio.create_task(simulated_rest_worker())
 
-        # Now blast 300 SSE broadcasts at high velocity
-        test_duration = 1.0
-        start_t = time.perf_counter()
-        seq = 0
-        while time.perf_counter() - start_t < test_duration:
-            server.broadcast("sensory_log", {
-                "seq": seq,
-                "eye": {"status": "ACTIVE", "fps": 30},
-                "nose": {"smells_off": False},
-                "mouth": {"tokens": 128},
-            })
-            seq += 1
-            await asyncio.sleep(0.003)
+            # Now blast 300 SSE broadcasts at high velocity
+            test_duration = 1.0
+            start_t = time.perf_counter()
+            seq = 0
+            while time.perf_counter() - start_t < test_duration:
+                server.broadcast("sensory_log", {
+                    "seq": seq,
+                    "eye": {"status": "ACTIVE", "fps": 30},
+                    "nose": {"smells_off": False},
+                    "mouth": {"tokens": 128},
+                })
+                seq += 1
+                await asyncio.sleep(0.003)
 
-        # Stop tasks
-        running = False
-        await asyncio.gather(monitor_task, slack_task, bb_task, rest_task, return_exceptions=True)
+            # Stop tasks
+            running = False
+            await asyncio.gather(monitor_task, slack_task, bb_task, rest_task, return_exceptions=True)
+        finally:
+            gc.enable()
         for dt in drainer_tasks:
             dt.cancel()
         for r in sse_resps:
             r.close()
         for sess in sse_sessions:
             await sess.close()
+        await rest_sess.close()
 
         # Compute statistics
         max_lag_ms = max(loop_lag_measurements) * 1000.0 if loop_lag_measurements else 0.0

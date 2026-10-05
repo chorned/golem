@@ -18,3 +18,20 @@
 
 ## Blast Radius & Boundaries
 - Non-functional repository configuration and docs. Zero impact on runtime daemon.
+
+## Milestone 4 Iteration 1 Addendum: Deliverable R4 (Runner Instrumentation & Eyes Observer Integration)
+- **Status:** `[VERIFIED: Iteration 1]`
+- **Task ID:** `R4-BUILD`
+- **Target Source Files:**
+  - `golem/sensory/eyes.py`
+  - `golem/execution/runner.py`
+- **Target Test Files:**
+  - `tests/test_runner_instrumentation_r4.py`
+- **Hand B Invariants:**
+  1. Verbatim structured lifecycle log markers (`Dispatched command to pane '{pane}' [PID: {pid}]`, `Command exceeded 3.0s yield window; background execution continues`, `Command settled with exit code {returncode}`) emitted to `Golem.Hands` and `Golem.Execution.Runner`.
+  2. Dynamic `EyesTaskObserver` attachment upon 3.0s yield for runner panes (Pane 2), strictly excluding Pane 1 (`liaison`, `fm-sess-liaison`, `w1:p1`) and admin panes.
+  3. Clean observer teardown and unregistration upon settlement (`settle_command`, `settle_pane`, and sensory bus completion alerts).
+  4. `EyesTaskObserver.__init__` compatibility: accepts `sensory_bus`, `bus`, `event_bus`, `webui_server`, defaults `buffer_observer` to `RunnerBufferObserver()`, provides `stop_monitoring_sync()`, suppresses `CancelledError`.
+  5. Preservation of yield ceiling <= 3.15s (TC-02).
+  6. 100% pass across target and regression test suites.
+

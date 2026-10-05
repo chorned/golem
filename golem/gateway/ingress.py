@@ -16,9 +16,10 @@ import time
 import uuid
 import inspect
 import asyncio
+import json
 import logging
 from collections import deque, OrderedDict
-from typing import Dict, Any, Optional, Deque, List, Union
+from typing import Dict, Any, Optional, Deque, List, Union, Tuple
 
 import aiohttp
 
@@ -32,7 +33,7 @@ from golem.gateway.session import (
     is_out_of_band_message,
 )
 from golem.agent.mouth import generate_mouth_response, get_gemini_api_key
-from golem.agent.protocol import FinishEvent
+from golem.agent.protocol import FinishEvent, TextDeltaEvent
 from golem.sensory.bus import (
     ShoulderTapEventBus,
     ShoulderTapAlert,
@@ -124,8 +125,8 @@ CHECK_NOSE_TOOL_DECLARATION: Dict[str, Any] = {
         "Returns telemetry including time since last check (minutes_ago, seconds_ago), "
         "health verdict (smells_off, verdict_summary), disk space and pressure, "
         "Docker container health, Tailscale mesh connectivity, and recent error counts. "
-        "Use this when Carl asks what you smell, how the fleet is doing, to check health/telemetry, "
-        "or if anything smells off."
+        "ONLY use this when Carl explicitly asks for a health check, what you smell, to sniff logs, "
+        "or asks if anything smells off. NEVER use this for questions about machine identities, roles, or fleet topology."
     ),
     "parameters": {
         "type": "OBJECT",
@@ -199,11 +200,26 @@ async def call_gemini_api(
                 if resp.status == 200:
                     return await resp.json()
                 else:
-                    logger.warning(f"Gemini API returned status {resp.status}: {await resp.text()}")
-                    return None
+                    err_text = await resp.text()
+                    logger.warning(f"Gemini API returned status {resp.status}: {err_text}")
+                    return {
+                        "_error": True,
+                        "status": resp.status,
+                        "code": resp.status,
+                        "error_type": f"HTTP_{resp.status}",
+                        "raw_error": err_text,
+                        "message": err_text,
+                    }
     except Exception as e:
         logger.warning(f"Gemini API call failed: {e}")
-        return None
+        return {
+            "_error": True,
+            "status": 500,
+            "code": 500,
+            "error_type": type(e).__name__,
+            "raw_error": str(e),
+            "message": str(e),
+        }
 
 
 class BackstageExecutionAccumulator:
@@ -532,6 +548,8 @@ async def swap_reaction(
 
 def strip_bot_mentions(text: str, bot_user_id: Optional[str] = None) -> str:
     """Strip bot user mentions (<@BOT_ID>, <@Uxxxx>, @AGY) from prompt."""
+    if not isinstance(text, str):
+        return ""
     clean = text
     if isinstance(bot_user_id, str) and bot_user_id:
         clean = re.sub(rf"<@{re.escape(bot_user_id)}(?:\|[^>]*)?>", "", clean).strip()
@@ -586,6 +604,7 @@ class IngressGateway:
         sensory_bus: Optional[ShoulderTapEventBus] = None,
         bus: Optional[ShoulderTapEventBus] = None,
         nose_sentinel: Optional[Any] = None,
+        webui_server: Optional[Any] = None,
     ) -> None:
         self.router = router
         self.bot_user_id = bot_user_id
@@ -598,6 +617,7 @@ class IngressGateway:
         self._file_locks: Dict[str, asyncio.Lock] = {}
         self._file_locks_guard = asyncio.Lock()
         self.nose_sentinel = nose_sentinel
+        self.webui_server = webui_server
 
         # Shoulder Tap Event Bus Integration
         self.bus = sensory_bus or bus
@@ -614,6 +634,23 @@ class IngressGateway:
         # Ensure router shares the same event bus if not explicitly configured
         if self.router is not None and getattr(self.router, "bus", None) is None:
             self.router.bus = self.bus
+
+    async def _broadcast_mouth_briefing(self, briefing: str, model: Optional[str] = None) -> None:
+        """Broadcast executive mouth briefing to connected WebUI clients."""
+        webui = getattr(self, "webui_server", None)
+        if webui is None:
+            return
+        effective_model = model or getattr(self, "mouth_model", None) or get_mouth_model()
+        payload = {
+            "briefing": briefing,
+            "model": effective_model,
+        }
+        try:
+            res = webui.broadcast("mouth_briefing", payload)
+            if inspect.isawaitable(res):
+                await res
+        except Exception as exc:
+            logger.debug(f"WebUI mouth_briefing broadcast warning: {exc}")
 
     def get_nose_sentinel(self) -> Optional[Any]:
         """Resolve active NoseSentinel singleton."""
@@ -1019,7 +1056,7 @@ class IngressGateway:
                 msg_ts = msg.get("ts")
                 if exclude_ts and msg_ts == exclude_ts:
                     continue
-                text = msg.get("text", "").strip()
+                text = (msg.get("text") or "").strip()
                 if not text:
                     continue
                 user_id = msg.get("user") or msg.get("bot_id") or ""
@@ -1067,7 +1104,9 @@ class IngressGateway:
                 self._seen_messages.append(ts)
                 self._seen_set.add(ts)
 
-        raw_text = event.get("text", "")
+        raw_text = event.get("text") or ""
+        if not isinstance(raw_text, str):
+            raw_text = str(raw_text)
         channel = event.get("channel", "")
         thread_ts = event.get("thread_ts") or ts
         is_imessage = bool(event.get("is_imessage", False))
@@ -1089,311 +1128,458 @@ class IngressGateway:
         if not is_imessage and ts:
             await add_reaction(client, channel, ts, "gear")
 
-        # 4. Command Interception
-        cmd_token = clean_text.split()[0].lower() if clean_text.split() else ""
+        try:
+            # 4. Command Interception
+            cmd_token = clean_text.split()[0].lower() if clean_text.split() else ""
 
-        if cmd_token in ("/wrapup", "!wrapup"):
-            await self.router.teardown(channel, thread_ts, reason="wrapup")
-            msg = "🧹 *Wrapup:* Housekeeping complete. Working directories clean."
-            if not is_imessage and ts:
-                await swap_reaction(client, channel, ts, "gear", "white_check_mark")
-            await self._post_response(client, channel, thread_ts, msg, is_imessage)
-            return
-
-        elif cmd_token in ("/archive", "!archive"):
-            await self.router.teardown(channel, thread_ts, reason="archive")
-            msg = "📦 *Archive:* Session archived and torn down."
-            if not is_imessage and ts:
-                await swap_reaction(client, channel, ts, "gear", "white_check_mark")
-            await self._post_response(client, channel, thread_ts, msg, is_imessage)
-            return
-
-        elif cmd_token in ("/bearings", "!bearings"):
-            msg = (
-                "🧭 *Fleet Bearings & Status Digest:*\n"
-                "• *hermes* (localhost (Primary Dev & Homelab)): 🟢 Online\n"
-                "• *desktop-pc* (Compute Grid (Windows CUDA)): 🟢 Online\n"
-                "• *personal-laptop* (Personal Laptop (Carl's Workstation)): 🟢 Online\n"
-                "• *oci-machine* (Cloud Operations (Production VPS)): 🟢 Online"
-            )
-            if not is_imessage and ts:
-                await swap_reaction(client, channel, ts, "gear", "white_check_mark")
-            await self._post_response(client, channel, thread_ts, msg, is_imessage)
-            return
-
-        elif cmd_token in ("/ahoy", "!ahoy"):
-            msg = "⚓ *Ahoy:* Session catch-up complete. All background Herdr agents settled."
-            if not is_imessage and ts:
-                await swap_reaction(client, channel, ts, "gear", "white_check_mark")
-            await self._post_response(client, channel, thread_ts, msg, is_imessage)
-            return
-
-        elif cmd_token in ("/learn", "!learn"):
-            user_notes = clean_text[len(cmd_token):].strip()
-            msg = f"🧠 *Operational Lesson Crystallized:* {user_notes or 'Lesson codified into operational memory.'}"
-            if not is_imessage and ts:
-                await swap_reaction(client, channel, ts, "gear", "white_check_mark")
-            await self._post_response(client, channel, thread_ts, msg, is_imessage)
-            return
-
-        # 5. Warm Session Routing
-        session, is_new_session = await self.router.get_or_create(
-            channel=channel,
-            thread_ts=thread_ts,
-            target_cwd=target_cwd,
-            is_imessage=is_imessage,
-        )
-
-        # Stage inbound files if present
-        staged_files_meta: List[Dict[str, Any]] = []
-        if inbound_files:
-            staged_files_meta = await self.stage_inbound_files(
-                inbound_files,
-                target_cwd=session.target_cwd,
-                client=client,
-            )
-
-        attachment_tags: List[str] = []
-        staged_names: List[str] = []
-        for sf in staged_files_meta:
-            name = sf.get("name") or "file"
-            status = sf.get("status")
-            path = sf.get("path")
-            if status in ("staged", "cached") and path:
-                attachment_tags.append(f"[Attached Slack File: {name} saved to {path}]")
-                staged_names.append(name)
-            elif status == "exceeded_size":
-                attachment_tags.append(f"[Attached Slack File: {name} exceeded size limit of 100MB; skipped]")
-            else:
-                attachment_tags.append(f"[Attached Slack File: {name} download failed]")
-
-        # Fallback prompt if user uploaded a file without accompanying text
-        if not clean_text and staged_names:
-            file_pronoun = "these files" if len(staged_names) > 1 else "this file"
-            names_str = ", ".join(staged_names)
-            clean_text = f"I've uploaded {names_str} to the workspace. Please inspect or process {file_pronoun}."
-        elif not clean_text and attachment_tags:
-            clean_text = "I've uploaded a file to the workspace. Please inspect or process this file."
-        elif not clean_text and not attachment_tags:
-            logger.debug(f"Dropping event ts={ts} with empty text and no staged file attachments.")
-            return
-
-        # Rehydrate thread history if resuming an existing thread from Slack
-        if is_new_session and not is_imessage and thread_ts and thread_ts != ts:
-            thread_context = await self._fetch_thread_context(client, channel, thread_ts, exclude_ts=ts)
-            if thread_context:
-                clean_text = f"{thread_context}\n\n{clean_text}"
-
-        # Prepend attachment tags to prompt sent to LLM
-        prompt_to_send = clean_text
-        if attachment_tags:
-            tags_block = "\n".join(attachment_tags)
-            prompt_to_send = f"{tags_block}\n\n{clean_text}" if clean_text else tags_block
-
-        # Out-of-band triage if session is actively executing in Pane 2 (or busy)
-        if not (session.is_busy or session.is_executing) and session.runner_pane and is_out_of_band_message(clean_text):
-            try:
-                await session.get_runner_status()
-            except Exception as e:
-                logger.debug(f"Error probing runner status in ingress: {e}")
-
-        if session.is_busy or session.is_executing:
-            if is_cancellation_message(clean_text):
-                await self._handle_out_of_band_cancellation(session, client, channel, thread_ts, ts, is_imessage)
-                return
-            elif is_out_of_band_message(clean_text, session=session):
-                await self._handle_out_of_band_status(session, client, channel, thread_ts, ts, is_imessage, clean_text)
+            if cmd_token in ("/wrapup", "!wrapup"):
+                await self.router.teardown(channel, thread_ts, reason="wrapup")
+                msg = "🧹 *Wrapup:* Housekeeping complete. Working directories clean."
+                if not is_imessage and ts:
+                    await swap_reaction(client, channel, ts, "gear", "white_check_mark")
+                await self._post_response(client, channel, thread_ts, msg, is_imessage)
                 return
 
-        # Check if running in mock / test environment or forced mouth
-        is_test_env = os.environ.get("FIRSTMATE_TEST_MODE") == "1" or os.environ.get("FIRST_MATE_TEST_MODE") == "1"
-        force_mouth = (getattr(session, "force_mouth", False) is True) or (os.environ.get("FIRSTMATE_FORCE_MOUTH") == "1")
-        is_mock = _is_mock_object(session) or _is_mock_object(client) or (getattr(session, "is_mock", False) is True)
-        if hasattr(session, "adapter") and session.adapter is not None:
-            adapter = session.adapter
-            adapter_name = type(adapter).__name__
-            if (
-                _is_mock_object(adapter)
-                or (getattr(adapter, "is_mock", False) is True)
-                or adapter_name not in ("HeadlessAgentAdapter", "AntigravityDriver")
-                or _is_mock_object(getattr(adapter, "proc", None))
-            ):
-                is_mock = True
+            elif cmd_token in ("/archive", "!archive"):
+                await self.router.teardown(channel, thread_ts, reason="archive")
+                msg = "📦 *Archive:* Session archived and torn down."
+                if not is_imessage and ts:
+                    await swap_reaction(client, channel, ts, "gear", "white_check_mark")
+                await self._post_response(client, channel, thread_ts, msg, is_imessage)
+                return
 
-        has_gemini_key = bool(get_gemini_api_key())
-        gemini_mocked = _is_mock_object(getattr(self, "_call_gemini_api", None)) or _is_mock_object(call_gemini_api)
-        use_mouth = force_mouth or (gemini_mocked and not is_test_env) or (not is_test_env and not is_mock and has_gemini_key)
+            elif cmd_token in ("/bearings", "!bearings"):
+                fleet = None
+                if hasattr(self, "fleet") and self.fleet is not None:
+                    fleet = self.fleet
+                elif hasattr(self, "get_nose_sentinel"):
+                    sentinel = self.get_nose_sentinel()
+                    if sentinel and getattr(sentinel, "fleet", None):
+                        fleet = sentinel.fleet
+                if fleet is None:
+                    try:
+                        from herdr_fleet import HerdrFleet
+                        fleet = HerdrFleet()
+                    except Exception:
+                        fleet = None
 
-        if use_mouth:
-            await self._handle_mouth_turn(
-                session=session,
-                prompt=prompt_to_send,
-                client=client,
+                labels = [
+                    ("hermes", "localhost (Primary Dev & Homelab)"),
+                    ("desktop-pc", "Compute Grid (Windows CUDA)"),
+                    ("personal-laptop", "Personal Laptop (Carl's Workstation)"),
+                    ("oci-machine", "Cloud Operations (Production VPS)")
+                ]
+                if fleet is not None:
+                    results = await asyncio.gather(
+                        *[fleet.probe_node(node) for node in ["hermes", "desktop-pc", "personal-laptop", "oci-machine"]],
+                        return_exceptions=True
+                    )
+                    bullets = []
+                    for i, res in enumerate(results):
+                        default_node, default_role = labels[i]
+                        if isinstance(res, dict):
+                            node = res.get("node", default_node)
+                            role = res.get("role", default_role)
+                            status = res.get("status", "unknown")
+                        elif isinstance(res, Exception):
+                            node = default_node
+                            role = default_role
+                            status = f"[Probe Failed: {res}]"
+                        else:
+                            node = default_node
+                            role = default_role
+                            status = "[Offline / Unreachable]"
+                        bullets.append(f"• *{node}* ({role}): {status}")
+                else:
+                    bullets = [f"• *{node}* ({role}): [Fleet Sentinel Unavailable]" for node, role in labels]
+
+                msg = "🧭 *Fleet Bearings & Status Digest:*\n" + "\n".join(bullets)
+                if not is_imessage and ts:
+                    await swap_reaction(client, channel, ts, "gear", "white_check_mark")
+                await self._post_response(client, channel, thread_ts, msg, is_imessage)
+                return
+
+            elif cmd_token in ("/ahoy", "!ahoy"):
+                active_hands = []
+                if getattr(self, "webui_server", None):
+                    active_hands = list(getattr(self.webui_server, "_active_hands", {}).values())
+                active_count = len(active_hands)
+                if active_count > 0:
+                    desc_list = [
+                        f"• Pane {h.get('pane_id', '?')} ({h.get('target_node', 'local')}): {h.get('task_description', 'Active')}"
+                        for h in active_hands
+                    ]
+                    msg = f"⚓ *Ahoy:* Session active with {active_count} executing hand(s):\n" + "\n".join(desc_list)
+                else:
+                    msg = "⚓ *Ahoy:* Session standby. 0 background execution tasks running."
+                if not is_imessage and ts:
+                    await swap_reaction(client, channel, ts, "gear", "white_check_mark")
+                await self._post_response(client, channel, thread_ts, msg, is_imessage)
+                return
+
+            elif cmd_token in ("/learn", "!learn"):
+                user_notes = clean_text[len(cmd_token):].strip()
+                msg = f"🧠 *Operational Lesson Crystallized:* {user_notes or 'Lesson codified into operational memory.'}"
+                if not is_imessage and ts:
+                    await swap_reaction(client, channel, ts, "gear", "white_check_mark")
+                await self._post_response(client, channel, thread_ts, msg, is_imessage)
+                return
+
+            elif cmd_token in ("/health", "!health", "/nose", "!nose"):
+                tool_result = await self._execute_check_nose(trigger_fresh_sniff=True)
+                n_err = tool_result.get("error")
+                n_off = tool_result.get("smells_off", False) or bool(n_err)
+                n_summary = tool_result.get("verdict_summary", "All systems nominal.")
+                n_min = float(tool_result.get("minutes_ago") or 0.0)
+                n_disk = tool_result.get("disk", {})
+                n_free = n_disk.get("free_gb", "unknown")
+                n_dock = tool_result.get("docker", {})
+                n_cnt = n_dock.get("container_count", 0)
+                n_ts = tool_result.get("tailscale", {})
+                n_online = n_ts.get("online", False)
+                if n_err:
+                    msg = (
+                        f"⚠️ *Fleet Health Error:* Failed to query health sentinel.\n"
+                        f"• Error: {n_err}\n"
+                        f"• Verdict: {n_summary}\n"
+                        f"• Root disk: {n_free} GB free | Docker: {n_cnt} containers running | Tailscale: {'online' if n_online else 'offline'}"
+                    )
+                    target_reaction = "warning"
+                elif n_off:
+                    msg = (
+                        f"👃 *Fleet Health Anomaly:* Something smells off (checked {n_min:.1f}m ago).\n"
+                        f"• Verdict: {n_summary}\n"
+                        f"• Disk: {n_free} GB free | Docker: {n_cnt} containers | Tailscale: {'online' if n_online else 'offline'}"
+                    )
+                    target_reaction = "warning"
+                else:
+                    msg = (
+                        f"👃 *Fleet Health:* Air is clean; all systems nominal (checked {n_min:.1f}m ago).\n"
+                        f"• Verdict: {n_summary}\n"
+                        f"• Root disk: {n_free} GB free | Docker: {n_cnt} containers running | Tailscale: {'online' if n_online else 'offline'}"
+                    )
+                    target_reaction = "white_check_mark"
+                if not is_imessage and ts:
+                    await swap_reaction(client, channel, ts, "gear", target_reaction)
+                await self._post_response(client, channel, thread_ts, msg, is_imessage)
+                return
+
+            # 5. Warm Session Routing
+            session, is_new_session = await self.router.get_or_create(
                 channel=channel,
                 thread_ts=thread_ts,
-                ts=ts,
+                target_cwd=target_cwd,
                 is_imessage=is_imessage,
             )
-            return
 
-        collected_text_deltas: List[str] = []
-        flushed_chunks: List[str] = []
-        final_response_text = ""
-        turn_status = "SUCCESS"
-        has_awaiting_input = False
-        awaiting_input_prompt = ""
-        error_message = ""
+            if cmd_token in ("/status", "!status", "/eyes", "!eyes"):
+                tool_result = await self._execute_check_eyes(session=session)
+                e_state = tool_result.get("state", "IDLE")
+                e_cmd = tool_result.get("active_command") or tool_result.get("command", "")
+                e_pid = tool_result.get("pid")
+                e_tail = tool_result.get("buffer_tail", "")
+                e_blocker = tool_result.get("blocker")
+                e_err = tool_result.get("error")
 
-        debounce_timeout = float(os.getenv("FIRSTMATE_DEBOUNCE_TIMEOUT", "1.0"))
-        stream_gen = session.send_user_message(prompt_to_send)
-        event_queue: asyncio.Queue[Any] = asyncio.Queue()
-        sentinel = object()
+                if e_state == "ERROR" or e_err:
+                    err_text = e_err or e_tail or "Runner query failed"
+                    msg = (
+                        f"👀 *Runner Observer Error:* Failed to query runner status ({e_state}).\n"
+                        f"• Error details:\n> {err_text}"
+                    )
+                    target_reaction = "warning"
+                elif e_blocker and e_blocker.get("url"):
+                    msg = (
+                        f"👀 *Runner Observer:* Waiting for authorization ({e_state}).\n"
+                        f"<{e_blocker['url']}|Click here to authenticate>"
+                    )
+                    target_reaction = "warning"
+                elif e_blocker:
+                    msg = (
+                        f"👀 *Runner Observer:* Blocker detected ({e_blocker.get('type', 'interactive')}).\n"
+                        f"> {e_blocker.get('prompt', 'Awaiting input')}"
+                    )
+                    target_reaction = "warning"
+                elif e_cmd:
+                    msg = (
+                        f"👀 *Runner Observer:* Status is *{e_state}* (PID {e_pid or 'active'}).\n"
+                        f"• Command: `{e_cmd}`\n"
+                        f"• Buffer snippet:\n> {e_tail or 'Active'}"
+                    )
+                    target_reaction = "white_check_mark"
+                else:
+                    msg = f"👀 *Runner Observer:* Runner is currently *{e_state}*. Buffer is clear."
+                    target_reaction = "white_check_mark"
 
-        async def _producer_task() -> None:
-            try:
-                async for item in stream_gen:
-                    await event_queue.put(item)
-            except asyncio.CancelledError:
-                pass
-            except Exception as exc:
-                await event_queue.put(exc)
-            finally:
-                await event_queue.put(sentinel)
+                if not is_imessage and ts:
+                    await swap_reaction(client, channel, ts, "gear", target_reaction)
+                await self._post_response(client, channel, thread_ts, msg, is_imessage)
+                return
 
-        prod_task = asyncio.create_task(_producer_task())
-        try:
-            while True:
-                try:
-                    if collected_text_deltas:
-                        event_item = await asyncio.wait_for(event_queue.get(), timeout=debounce_timeout)
-                    else:
-                        event_item = await event_queue.get()
-                except asyncio.TimeoutError:
-                    # Inactivity on text stream (debounce window reached): flush collected deltas directly to Slack
-                    interim_text = "".join(collected_text_deltas).strip()
-                    if interim_text:
-                        clean_interim, _ = extract_and_strip_file_directives(interim_text)
-                        if clean_interim:
-                            await self._post_response(client, channel, thread_ts, clean_interim, is_imessage)
-                        flushed_chunks.append(interim_text)
-                        collected_text_deltas.clear()
-                    continue
-
-                if event_item is sentinel:
-                    break
-
-                if isinstance(event_item, Exception):
-                    raise event_item
-
-                ev_type = getattr(event_item, "event_type", None) or (
-                    event_item.get("event_type") if isinstance(event_item, dict) else None
+            # Stage inbound files if present
+            staged_files_meta: List[Dict[str, Any]] = []
+            if inbound_files:
+                staged_files_meta = await self.stage_inbound_files(
+                    inbound_files,
+                    target_cwd=session.target_cwd,
+                    client=client,
                 )
-                if ev_type == "text_delta":
-                    delta = (
-                        getattr(event_item, "text_delta", "")
-                        or getattr(event_item, "text", "")
-                        or (event_item.get("text_delta", "") if isinstance(event_item, dict) else "")
-                    )
-                    if delta:
-                        collected_text_deltas.append(delta)
-                elif ev_type in ("tool_start", "tool_end"):
-                    # Eagerly flush conversational text produced before/around tool execution
-                    interim_text = "".join(collected_text_deltas).strip()
-                    if interim_text:
-                        clean_interim, _ = extract_and_strip_file_directives(interim_text)
-                        if clean_interim:
-                            await self._post_response(client, channel, thread_ts, clean_interim, is_imessage)
-                        flushed_chunks.append(interim_text)
-                        collected_text_deltas.clear()
-                elif ev_type == "awaiting_input":
-                    has_awaiting_input = True
-                    interim_text = "".join(collected_text_deltas).strip()
-                    if interim_text:
-                        clean_interim, _ = extract_and_strip_file_directives(interim_text)
-                        if clean_interim:
-                            await self._post_response(client, channel, thread_ts, clean_interim, is_imessage)
-                        flushed_chunks.append(interim_text)
-                        collected_text_deltas.clear()
-                    awaiting_input_prompt = getattr(event_item, "prompt", "") or (
-                        event_item.get("prompt", "") if isinstance(event_item, dict) else ""
-                    )
-                    break
-                elif ev_type == "finish":
-                    final_response_text = getattr(event_item, "response", "") or (
-                        event_item.get("response", "") if isinstance(event_item, dict) else ""
-                    )
-                    turn_status = getattr(event_item, "status", "SUCCESS") or (
-                        event_item.get("status", "SUCCESS") if isinstance(event_item, dict) else "SUCCESS"
-                    )
-                    if turn_status == "ERROR":
-                        error_message = getattr(event_item, "error", "") or (
-                            event_item.get("error", "") if isinstance(event_item, dict) else "Unknown error"
-                        )
-                    break
-        except Exception as e:
-            turn_status = "ERROR"
-            error_message = str(e)
-            logger.error(f"Error executing turn in session '{session.session_id}': {e}")
-        finally:
-            if not prod_task.done():
-                prod_task.cancel()
+
+            attachment_tags: List[str] = []
+            staged_names: List[str] = []
+            for sf in staged_files_meta:
+                name = sf.get("name") or "file"
+                status = sf.get("status")
+                path = sf.get("path")
+                if status in ("staged", "cached") and path:
+                    attachment_tags.append(f"[Attached Slack File: {name} saved to {path}]")
+                    staged_names.append(name)
+                elif status == "exceeded_size":
+                    attachment_tags.append(f"[Attached Slack File: {name} exceeded size limit of 100MB; skipped]")
+                else:
+                    attachment_tags.append(f"[Attached Slack File: {name} download failed]")
+
+            # Fallback prompt if user uploaded a file without accompanying text
+            if not clean_text and staged_names:
+                file_pronoun = "these files" if len(staged_names) > 1 else "this file"
+                names_str = ", ".join(staged_names)
+                clean_text = f"I've uploaded {names_str} to the workspace. Please inspect or process {file_pronoun}."
+            elif not clean_text and attachment_tags:
+                clean_text = "I've uploaded a file to the workspace. Please inspect or process this file."
+            elif not clean_text and not attachment_tags:
+                logger.debug(f"Dropping event ts={ts} with empty text and no staged file attachments.")
+                if not is_imessage and ts:
+                    await remove_reaction(client, channel, ts, "gear")
+                return
+
+            # Rehydrate thread history if message is a reply in an active Slack thread
+            thread_context = ""
+            is_in_thread = bool(thread_ts and thread_ts != ts)
+            if not is_imessage and is_in_thread:
+                thread_context = await self._fetch_thread_context(client, channel, thread_ts, exclude_ts=ts)
+
+            # Prepend thread context and attachment tags to prompt sent to LLM without mutating clean_text
+            prompt_to_send = clean_text
+            if thread_context:
+                prompt_to_send = f"{thread_context}\n\n{prompt_to_send}"
+            if attachment_tags:
+                tags_block = "\n".join(attachment_tags)
+                prompt_to_send = f"{tags_block}\n\n{prompt_to_send}" if prompt_to_send else tags_block
+
+            # Out-of-band triage if session is actively executing in Pane 2 (or busy)
+            if not (session.is_busy or session.is_executing) and session.runner_pane and is_out_of_band_message(clean_text):
                 try:
-                    await prod_task
-                except (asyncio.CancelledError, Exception):
-                    pass
-            if hasattr(stream_gen, "aclose") and not getattr(stream_gen, "ag_closed", False):
-                try:
-                    await stream_gen.aclose()
-                except Exception:
-                    pass
+                    await session.get_runner_status()
+                except Exception as e:
+                    logger.debug(f"Error probing runner status in ingress: {e}")
 
-        # 6. Egress Delivery & Reaction Swapping
-        if has_awaiting_input:
-            if not is_imessage and ts:
-                await swap_reaction(client, channel, ts, "gear", "warning")
-            prompt_msg = awaiting_input_prompt or "⚠️ *Confirmation Required:* Please provide input to continue."
-            await self._post_response(client, channel, thread_ts, prompt_msg, is_imessage)
+            if session.is_busy or session.is_executing:
+                if is_cancellation_message(clean_text):
+                    await self._handle_out_of_band_cancellation(session, client, channel, thread_ts, ts, is_imessage)
+                    return
+                elif is_out_of_band_message(clean_text, session=session):
+                    await self._handle_out_of_band_status(session, client, channel, thread_ts, ts, is_imessage, clean_text)
+                    return
 
-        elif turn_status == "ERROR":
-            if not is_imessage and ts:
-                await swap_reaction(client, channel, ts, "gear", "x")
-            err_msg = f"❌ *Error:* {error_message or 'Operation failed.'}"
-            await self._post_response(client, channel, thread_ts, err_msg, is_imessage)
+            # Check if running in mock / test environment or forced mouth
+            is_test_env = os.environ.get("FIRSTMATE_TEST_MODE") == "1" or os.environ.get("FIRST_MATE_TEST_MODE") == "1"
+            force_mouth = (getattr(session, "force_mouth", False) is True) or (os.environ.get("FIRSTMATE_FORCE_MOUTH") == "1")
+            is_mock = _is_mock_object(session) or _is_mock_object(client) or (getattr(session, "is_mock", False) is True)
+            if hasattr(session, "adapter") and session.adapter is not None:
+                adapter = session.adapter
+                adapter_name = type(adapter).__name__
+                if (
+                    _is_mock_object(adapter)
+                    or (getattr(adapter, "is_mock", False) is True)
+                    or adapter_name not in ("HeadlessAgentAdapter", "AntigravityDriver")
+                    or _is_mock_object(getattr(adapter, "proc", None))
+                ):
+                    is_mock = True
 
-        else:
-            if flushed_chunks:
-                stripped_final = strip_flushed_chunks(final_response_text, flushed_chunks)
-                delta_remaining = "".join(collected_text_deltas).strip()
-                raw_output = stripped_final or delta_remaining
-            else:
-                raw_output = final_response_text or "".join(collected_text_deltas)
+            has_gemini_key = bool(get_gemini_api_key())
+            gemini_mocked = _is_mock_object(getattr(self, "_call_gemini_api", None)) or _is_mock_object(call_gemini_api)
+            use_mouth = force_mouth or (gemini_mocked and not is_test_env) or (not is_test_env and not is_mock and has_gemini_key)
 
-            clean_output, file_targets = extract_and_strip_file_directives(raw_output)
-            if not file_targets and final_response_text:
-                _, ft = extract_and_strip_file_directives(final_response_text)
-                if ft:
-                    file_targets = ft
-
-            if clean_output:
-                await self._post_response(client, channel, thread_ts, clean_output, is_imessage)
-
-            if file_targets and not is_imessage:
-                fleet_mesh = (
-                    getattr(self.router.harness, "mesh", None)
-                    if hasattr(self.router, "harness") and self.router.harness
-                    else getattr(self.router, "fleet_mesh", None)
-                )
-                await upload_directive_files(
+            if use_mouth:
+                await self._handle_mouth_turn(
+                    session=session,
+                    prompt=prompt_to_send,
                     client=client,
                     channel=channel,
                     thread_ts=thread_ts,
-                    targets=file_targets,
-                    active_cwd=session.target_cwd,
-                    fleet_mesh=fleet_mesh,
+                    ts=ts,
+                    is_imessage=is_imessage,
                 )
+                return
 
+            collected_text_deltas: List[str] = []
+            flushed_chunks: List[str] = []
+            final_response_text = ""
+            turn_status = "SUCCESS"
+            has_awaiting_input = False
+            awaiting_input_prompt = ""
+            error_message = ""
+
+            debounce_timeout = float(os.getenv("FIRSTMATE_DEBOUNCE_TIMEOUT", "1.0"))
+            stream_gen = session.send_user_message(prompt_to_send)
+            event_queue: asyncio.Queue[Any] = asyncio.Queue()
+            sentinel = object()
+
+            async def _producer_task() -> None:
+                try:
+                    async for item in stream_gen:
+                        await event_queue.put(item)
+                except asyncio.CancelledError:
+                    pass
+                except Exception as exc:
+                    await event_queue.put(exc)
+                finally:
+                    await event_queue.put(sentinel)
+
+            prod_task = asyncio.create_task(_producer_task())
+            try:
+                while True:
+                    try:
+                        if collected_text_deltas:
+                            event_item = await asyncio.wait_for(event_queue.get(), timeout=debounce_timeout)
+                        else:
+                            event_item = await event_queue.get()
+                    except asyncio.TimeoutError:
+                        # Inactivity on text stream (debounce window reached): flush collected deltas directly to Slack
+                        interim_text = "".join(collected_text_deltas).strip()
+                        if interim_text:
+                            clean_interim, _ = extract_and_strip_file_directives(interim_text)
+                            if clean_interim:
+                                await self._post_response(client, channel, thread_ts, clean_interim, is_imessage)
+                            flushed_chunks.append(interim_text)
+                            collected_text_deltas.clear()
+                        continue
+
+                    if event_item is sentinel:
+                        break
+
+                    if isinstance(event_item, Exception):
+                        raise event_item
+
+                    ev_type = getattr(event_item, "event_type", None) or (
+                        event_item.get("event_type") if isinstance(event_item, dict) else None
+                    )
+                    if ev_type == "text_delta":
+                        delta = (
+                            getattr(event_item, "text_delta", "")
+                            or getattr(event_item, "text", "")
+                            or (event_item.get("text_delta", "") if isinstance(event_item, dict) else "")
+                        )
+                        if delta:
+                            collected_text_deltas.append(delta)
+                    elif ev_type in ("tool_start", "tool_end"):
+                        # Eagerly flush conversational text produced before/around tool execution
+                        interim_text = "".join(collected_text_deltas).strip()
+                        if interim_text:
+                            clean_interim, _ = extract_and_strip_file_directives(interim_text)
+                            if clean_interim:
+                                await self._post_response(client, channel, thread_ts, clean_interim, is_imessage)
+                            flushed_chunks.append(interim_text)
+                            collected_text_deltas.clear()
+                    elif ev_type == "awaiting_input":
+                        has_awaiting_input = True
+                        interim_text = "".join(collected_text_deltas).strip()
+                        if interim_text:
+                            clean_interim, _ = extract_and_strip_file_directives(interim_text)
+                            if clean_interim:
+                                await self._post_response(client, channel, thread_ts, clean_interim, is_imessage)
+                            flushed_chunks.append(interim_text)
+                            collected_text_deltas.clear()
+                        awaiting_input_prompt = getattr(event_item, "prompt", "") or (
+                            event_item.get("prompt", "") if isinstance(event_item, dict) else ""
+                        )
+                        break
+                    elif ev_type == "finish":
+                        final_response_text = getattr(event_item, "response", "") or (
+                            event_item.get("response", "") if isinstance(event_item, dict) else ""
+                        )
+                        turn_status = getattr(event_item, "status", "SUCCESS") or (
+                            event_item.get("status", "SUCCESS") if isinstance(event_item, dict) else "SUCCESS"
+                        )
+                        if turn_status == "ERROR":
+                            error_message = getattr(event_item, "error", "") or (
+                                event_item.get("error", "") if isinstance(event_item, dict) else "Unknown error"
+                            )
+                        break
+            except Exception as e:
+                turn_status = "ERROR"
+                error_message = str(e)
+                logger.error(f"Error executing turn in session '{session.session_id}': {e}")
+            finally:
+                if not prod_task.done():
+                    prod_task.cancel()
+                    try:
+                        await prod_task
+                    except (asyncio.CancelledError, Exception):
+                        pass
+                if hasattr(stream_gen, "aclose") and not getattr(stream_gen, "ag_closed", False):
+                    try:
+                        await stream_gen.aclose()
+                    except Exception:
+                        pass
+
+            # 6. Egress Delivery & Reaction Swapping
+            if has_awaiting_input:
+                if not is_imessage and ts:
+                    await swap_reaction(client, channel, ts, "gear", "warning")
+                prompt_msg = awaiting_input_prompt or "⚠️ *Confirmation Required:* Please provide input to continue."
+                await self._post_response(client, channel, thread_ts, prompt_msg, is_imessage)
+
+            elif turn_status == "ERROR":
+                if not is_imessage and ts:
+                    await swap_reaction(client, channel, ts, "gear", "x")
+                err_msg = f"❌ *Error:* {error_message or 'Operation failed.'}"
+                await self._post_response(client, channel, thread_ts, err_msg, is_imessage)
+
+            else:
+                if flushed_chunks:
+                    stripped_final = strip_flushed_chunks(final_response_text, flushed_chunks)
+                    delta_remaining = "".join(collected_text_deltas).strip()
+                    raw_output = stripped_final or delta_remaining
+                else:
+                    raw_output = final_response_text or "".join(collected_text_deltas)
+
+                clean_output, file_targets = extract_and_strip_file_directives(raw_output)
+                if not file_targets and final_response_text:
+                    _, ft = extract_and_strip_file_directives(final_response_text)
+                    if ft:
+                        file_targets = ft
+
+                if clean_output:
+                    await self._post_response(client, channel, thread_ts, clean_output, is_imessage)
+
+                if file_targets and not is_imessage:
+                    fleet_mesh = (
+                        getattr(self.router.harness, "mesh", None)
+                        if hasattr(self.router, "harness") and self.router.harness
+                        else getattr(self.router, "fleet_mesh", None)
+                    )
+                    await upload_directive_files(
+                        client=client,
+                        channel=channel,
+                        thread_ts=thread_ts,
+                        targets=file_targets,
+                        active_cwd=session.target_cwd,
+                        fleet_mesh=fleet_mesh,
+                    )
+
+                if not is_imessage and ts:
+                    await swap_reaction(client, channel, ts, "gear", "white_check_mark")
+        except Exception as e:
+            logger.error(f"Unhandled exception in handle_message for ts={ts}: {e}", exc_info=True)
             if not is_imessage and ts:
-                await swap_reaction(client, channel, ts, "gear", "white_check_mark")
+                await swap_reaction(client, channel, ts, "gear", "boom")
+            err_msg = f"💥 *System Error:* An unexpected error occurred while processing message:\n```{type(e).__name__}: {e}```"
+            try:
+                await self._post_response(client, channel, thread_ts, err_msg, is_imessage)
+            except Exception:
+                pass
+            raise
 
     async def _post_response(
         self,
@@ -1446,8 +1632,17 @@ class IngressGateway:
         is_imessage: bool,
         prompt_text: str = "",
     ) -> None:
-        """Handle out-of-band status query or check-in without acquiring session lock."""
-        status_info = await session.get_runner_status()
+        status_info = None
+        if hasattr(session, "get_runner_status"):
+            try:
+                status_info = await session.get_runner_status()
+            except Exception as e:
+                logger.warning(f"Error querying runner status in _handle_out_of_band_status: {e}")
+                status_info = {
+                    "status": "error",
+                    "error": str(e),
+                    "buffer_tail": f"Error querying runner buffer: {e}",
+                }
 
         eyes_status = None
         if hasattr(session, "get_eyes_status"):
@@ -1483,7 +1678,9 @@ class IngressGateway:
                 blocker = b_list[0]
 
         if not is_imessage and ts:
-            if blocker and blocker.get("type") in ("oauth", "prompt"):
+            if "Mouth Generation Error" in msg or "Error:" in msg:
+                await swap_reaction(client, channel, ts, "gear", "x")
+            elif blocker and blocker.get("type") in ("oauth", "prompt"):
                 await swap_reaction(client, channel, ts, "gear", "warning")
             else:
                 await swap_reaction(client, channel, ts, "gear", "white_check_mark")
@@ -1545,6 +1742,42 @@ class IngressGateway:
         session_queue: Optional[asyncio.Queue] = None
         if hasattr(self, "bus") and self.bus is not None and hasattr(self.bus, "get_session_queue"):
             session_queue = self.bus.get_session_queue(session.session_id)
+
+        # WebUI Backstage Hand Registration & hand_spawn broadcast
+        webui = getattr(self, "webui_server", None)
+        pane = getattr(session, "runner_pane", None) or getattr(session, "session_id", None) or "runner"
+        pid = getattr(getattr(session, "active_execution", None), "pid", None) or os.getpid()
+        hand_registered = False
+
+        if webui is not None:
+            try:
+                res = webui.register_active_hand(
+                    pane_id=pane,
+                    node=effective_node,
+                    command=task_desc,
+                    pid=pid,
+                    worker=effective_worker,
+                )
+                if inspect.isawaitable(res):
+                    await res
+                hand_registered = True
+            except Exception as exc:
+                logger.debug(f"WebUI register_active_hand warning: {exc}")
+
+            try:
+                spawn_payload = {
+                    "pane_id": pane,
+                    "node": effective_node,
+                    "command": task_desc,
+                    "pid": pid,
+                    "status": "RUNNING",
+                    "buffer_tail": getattr(webui, "_active_hands", {}).get(pane, {}).get("buffer_tail", ""),
+                }
+                res = webui.broadcast("hand_spawn", spawn_payload)
+                if inspect.isawaitable(res):
+                    await res
+            except Exception as exc:
+                logger.debug(f"WebUI hand_spawn broadcast warning: {exc}")
 
         async def _worker_consumer() -> None:
             try:
@@ -1628,6 +1861,33 @@ class IngressGateway:
 
                 accumulator.record_event(event_item)
 
+                # Stream incremental buffer deltas on each TextDeltaEvent
+                delta_text = None
+                if isinstance(event_item, TextDeltaEvent):
+                    delta_text = event_item.text_delta or getattr(event_item, "text", "")
+                elif getattr(event_item, "event_type", None) == "text_delta":
+                    delta_text = getattr(event_item, "text_delta", None) or getattr(event_item, "text", "")
+                elif isinstance(event_item, dict) and event_item.get("event_type") == "text_delta":
+                    delta_text = event_item.get("text_delta") or event_item.get("text", "")
+
+                if delta_text and webui is not None:
+                    try:
+                        res = webui.update_hand_buffer(pane_id=pane, delta=delta_text)
+                        if inspect.isawaitable(res):
+                            await res
+                    except Exception as exc:
+                        logger.debug(f"WebUI update_hand_buffer warning: {exc}")
+
+                    try:
+                        res = webui.broadcast("hand_buffer", {
+                            "pane_id": pane,
+                            "delta": delta_text,
+                        })
+                        if inspect.isawaitable(res):
+                            await res
+                    except Exception as exc:
+                        logger.debug(f"WebUI hand_buffer broadcast warning: {exc}")
+
                 if accumulator.has_awaiting_input:
                     break
 
@@ -1649,6 +1909,30 @@ class IngressGateway:
                     await stream_gen.aclose()
                 except Exception:
                     pass
+
+            # Settle and unregister hand agent cleanly
+            if hand_registered and webui is not None:
+                try:
+                    turn_status = getattr(accumulator, "turn_status", "SUCCESS")
+                    exit_code = 0 if turn_status == "SUCCESS" else 1
+                    status_str = "EXIT_0" if exit_code == 0 else "FAILED"
+                    settle_payload = {
+                        "pane_id": pane,
+                        "exit_code": exit_code,
+                        "status": status_str,
+                    }
+                    res = webui.broadcast("hand_settle", settle_payload)
+                    if inspect.isawaitable(res):
+                        await res
+                except Exception as exc:
+                    logger.debug(f"WebUI hand_settle broadcast warning: {exc}")
+
+                try:
+                    res = webui.unregister_active_hand(pane_id=pane)
+                    if inspect.isawaitable(res):
+                        await res
+                except Exception as exc:
+                    logger.debug(f"WebUI unregister_active_hand warning: {exc}")
 
         return accumulator
 
@@ -1675,16 +1959,22 @@ class IngressGateway:
             }
 
         status_info = None
+        runner_error = None
         if hasattr(session, "get_runner_status"):
             try:
                 status_info = await session.get_runner_status()
             except Exception as e:
                 logger.warning(f"Error querying runner status in _execute_check_eyes: {e}")
-                status_info = {
-                    "status": "idle",
-                    "buffer_tail": f"Error querying runner buffer: {e}",
+                runner_error = str(e)
+                return {
+                    "state": "ERROR",
+                    "error": runner_error,
+                    "active_command": "",
+                    "command": "",
+                    "pid": None,
                     "blocker": None,
                     "blockers": [],
+                    "buffer_tail": f"Error querying runner buffer: {runner_error}",
                 }
 
         eyes_status = None
@@ -1757,13 +2047,13 @@ class IngressGateway:
                     "seconds_ago": 0.0,
                     "minutes_ago": 0.0,
                     "last_check_timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                    "smells_off": False,
-                    "verdict_summary": f"Error querying NoseSentinel: {e}",
+                    "smells_off": True,
+                    "verdict_summary": f"⚠️ Sentinel Error: {e}",
                     "disk": {"free_gb": 0.0, "percent_used": 0.0, "pressure": False},
                     "docker": {"running": False, "container_count": 0, "containers": []},
                     "tailscale": {"online": False, "backend_state": "Unknown", "peers": {}},
-                    "recent_error_count": 0,
-                    "error_count": 0,
+                    "recent_error_count": 1,
+                    "error_count": 1,
                 }
 
         # Sentinel unavailable fallback
@@ -1807,6 +2097,11 @@ class IngressGateway:
             "You are Golem (formerly First Mate), Carl's Chief of Staff and operational liaison in Slack.\n"
             "You operate under the Golem / FirstMate pattern: One Captain, One Liaison.\n"
             "Carl communicates ONLY with you. All worker engines and sensory organs operate backstage.\n\n"
+            "Fleet Topology & Machine Roles:\n"
+            "• hermes: Local macOS controller, daily development anchor, and homelab runner (localhost).\n"
+            "• desktop-pc: High-VRAM Windows node for CUDA, model training, and heavy GPU compute (100.80.59.45) — this is Carl's PC / Windows machine.\n"
+            "• oci-machine: Remote cloud VPS for external daemons and scrapers (100.113.173.33).\n"
+            "• personal-laptop: Secondary macOS node (100.96.38.5) — Carl's personal MacBook.\n\n"
             "Sensory Architecture Awareness:\n"
             "• The Mouth (You): Front-of-house liaison, conversational partner, and executive synthesizer.\n"
             "• The Hands: Backstage worker running code, builds, and commands in Pane 2 via `dispatch_task`.\n"
@@ -1815,13 +2110,16 @@ class IngressGateway:
             "• The Nose: 24/7 background sentinel sniffing daemon error logs, Tailscale, disk, and Docker health.\n"
             "• Shoulder Tap Event Bus: Sensory observers tap you on the shoulder with alerts to wake you.\n\n"
             "Guidelines:\n"
-            "1. CONVERSATIONAL INQUIRIES & BANTER: Answer greetings, high-level questions, and check-ins "
-            "directly in natural Chief of Staff prose. DO NOT call dispatch_task.\n"
-            "2. SENSORY INSPECTION TOOLS:\n"
-            "   - When Carl asks what The Eyes see, about runner state, active command progress, blockers, or buffer tails: "
+            "1. CONVERSATIONAL INQUIRIES & BANTER: Answer greetings, high-level questions, general conversation, "
+            "and questions about the fleet, machines, topology, or project state directly in natural Chief of Staff prose. "
+            "DO NOT call dispatch_task, check_eyes, or check_nose. "
+            "Strictly forbid unprompted sensory tool calls during conversational chatter or queries about machine roles or identities.\n"
+            "2. SENSORY INSPECTION TOOLS: ONLY call sensory inspection tools when Carl explicitly asks for observation:\n"
+            "   - When Carl specifically asks what The Eyes see, about runner state, active command progress, blockers, or buffer tails: "
             "call `check_eyes`.\n"
-            "   - When Carl asks what The Nose smells, about fleet health, disk pressure, container health, Tailscale status, or error logs: "
+            "   - When Carl specifically asks what The Nose smells, about fleet health, disk pressure, container health, Tailscale status, or error logs: "
             "call `check_nose`.\n"
+            "   - Never call check_eyes or check_nose unprompted unless Carl explicitly requests sensory observation.\n"
             "   - Always synthesize sensory tool JSON output into an authentic, concise executive briefing using Slack mrkdwn.\n"
             "3. OPERATIONAL TASKS: When Carl asks to run tests, execute code, edit files, check logs, inspect Git, "
             "build, or deploy, call `dispatch_task`.\n"
@@ -1876,9 +2174,18 @@ class IngressGateway:
         if not fn_call:
             reply_text = "".join(text_parts).strip()
             if not reply_text:
-                reply_text = "⚓ *Understood.* All systems operating nominally."
+                err_briefing = (
+                    f"⚠️ *Mouth Response Error:* Model '{model}' returned empty candidate text without tool calls.\n"
+                    f"• Candidate payload: `{json.dumps(candidate)[:300]}`"
+                )
+                await self._post_response(client, channel, thread_ts, err_briefing, is_imessage)
+                await self._broadcast_mouth_briefing(err_briefing, model)
+                if not is_imessage and ts:
+                    await swap_reaction(client, channel, ts, "gear", "warning")
+                return
             clean_reply, _ = extract_and_strip_file_directives(reply_text)
             await self._post_response(client, channel, thread_ts, clean_reply, is_imessage)
+            await self._broadcast_mouth_briefing(clean_reply, model)
             if not is_imessage and ts:
                 await swap_reaction(client, channel, ts, "gear", "white_check_mark")
             return
@@ -1962,12 +2269,106 @@ class IngressGateway:
                 return
 
         # Step 2: Synthesize Executive Briefing via functionResponse
+        briefing_text, error_info = await self._execute_step2_synthesis(
+            sys_prompt=sys_prompt,
+            prompt=prompt,
+            candidate=candidate,
+            fn_call=fn_call,
+            fn_name=fn_name,
+            tool_result=tool_result,
+            model=model,
+            api_key=api_key,
+            tools=tools,
+        )
+
+        if not briefing_text:
+            # Fail loudly on Step 2 synthesis or runtime failure
+            code = (error_info or {}).get("status") or (error_info or {}).get("code") or 500
+            error_type = (error_info or {}).get("error_type") or "SynthesisError"
+            raw_error = (error_info or {}).get("raw_error") or (error_info or {}).get("message") or "Synthesis failed with empty candidate text"
+            tool_json = json.dumps(tool_result, indent=2, default=str)
+            fail_briefing = (
+                f"⚠️ *Executive Synthesis Failed* (HTTP {code} / {error_type}):\n"
+                f"```{raw_error}```\n"
+                f"*Tool Output:*\n"
+                f"```{tool_json}```\n"
+                f"_Raw sensory data returned above without executive synthesis._"
+            )
+            try:
+                await self._post_response(client, channel, thread_ts, fail_briefing, is_imessage)
+            finally:
+                if not is_imessage and ts:
+                    await swap_reaction(client, channel, ts, "gear", "boom")
+            return
+
+        clean_briefing, file_targets = extract_and_strip_file_directives(briefing_text)
+
+        # Reaction target determination
+        if fn_name == "check_eyes" and tool_result.get("state") == "BLOCKER":
+            target_reaction = "warning"
+        elif fn_name == "check_nose" and tool_result.get("smells_off"):
+            target_reaction = "warning"
+        elif turn_status == "ERROR":
+            target_reaction = "x"
+        else:
+            target_reaction = "white_check_mark"
+
+        await self._post_response(client, channel, thread_ts, clean_briefing, is_imessage)
+        await self._broadcast_mouth_briefing(clean_briefing, model)
+
+        # Handle file directives
+        if file_targets and not is_imessage:
+            fleet_mesh = (
+                getattr(self.router.harness, "mesh", None)
+                if hasattr(self.router, "harness") and self.router.harness
+                else getattr(self.router, "fleet_mesh", None)
+            )
+            await upload_directive_files(
+                client=client,
+                channel=channel,
+                thread_ts=thread_ts,
+                targets=file_targets,
+                active_cwd=session.target_cwd if hasattr(session, "target_cwd") else os.getcwd(),
+                fleet_mesh=fleet_mesh,
+            )
+
+        if not is_imessage and ts:
+            await swap_reaction(client, channel, ts, "gear", target_reaction)
+
+    async def _execute_step2_synthesis(
+        self,
+        sys_prompt: str,
+        prompt: str,
+        candidate: Dict[str, Any],
+        fn_call: Dict[str, Any],
+        fn_name: str,
+        tool_result: Dict[str, Any],
+        model: str,
+        api_key: str,
+        tools: Optional[List[Dict[str, Any]]] = None,
+    ) -> Tuple[str, Optional[Dict[str, Any]]]:
+        """
+        Synthesize Executive Briefing via functionResponse in Step 2.
+        Includes complete 'tools': tools schema declaration to eliminate HTTP 400 schema error.
+        Returns (briefing_text, error_info).
+        """
         model_parts = candidate.get("content", {}).get("parts")
         if not model_parts:
             model_parts = [{"functionCall": fn_call}]
 
+        synthesis_sys_prompt = (
+            sys_prompt + "\n\n"
+            "CRITICAL INSTRUCTION FOR SYNTHESIS:\n"
+            "1. Always directly address and answer Carl's original prompt/question in your briefing.\n"
+            "2. If Carl asked a conversational or factual question (e.g. asking which machine is which), "
+            "answer his question directly using your knowledge and provide the tool result in proper context.\n"
+            "3. Never ignore Carl's question in favor of dumping raw sensory metrics alone."
+        )
+
+        tools_decl = tools if tools is not None else get_mouth_tools_declaration()
+
         briefing_payload = {
-            "systemInstruction": {"parts": [{"text": sys_prompt}]},
+            "systemInstruction": {"parts": [{"text": synthesis_sys_prompt}]},
             "contents": [
                 {
                     "role": "user",
@@ -1992,104 +2393,49 @@ class IngressGateway:
                     ],
                 },
             ],
+            "tools": tools_decl,
             "generationConfig": {
                 "temperature": 0.2,
             },
         }
 
-        briefing_resp = await self._call_gemini_api(payload=briefing_payload, model=model, api_key=api_key)
-        briefing_text = ""
-        if briefing_resp and briefing_resp.get("candidates"):
-            b_cand = briefing_resp["candidates"][0]
-            b_parts = b_cand.get("content", {}).get("parts", [])
-            briefing_text = "".join(p.get("text", "") for p in b_parts if "text" in p).strip()
+        try:
+            briefing_resp = await self._call_gemini_api(payload=briefing_payload, model=model, api_key=api_key)
+        except Exception as e:
+            return "", {
+                "status": 500,
+                "code": 500,
+                "error_type": type(e).__name__,
+                "raw_error": str(e),
+                "message": str(e),
+            }
 
-        # Fallback if synthesis failed
-        if not briefing_text:
-            if fn_name == "check_eyes":
-                e_state = tool_result.get("state", "IDLE")
-                e_cmd = tool_result.get("active_command") or tool_result.get("command", "")
-                e_pid = tool_result.get("pid")
-                e_tail = tool_result.get("buffer_tail", "")
-                e_blocker = tool_result.get("blocker")
-                if e_blocker and e_blocker.get("url"):
-                    briefing_text = (
-                        f"👀 *Runner Observer:* Waiting for authorization ({e_state}).\n"
-                        f"<{e_blocker['url']}|Click here to authenticate>"
-                    )
-                elif e_cmd:
-                    briefing_text = (
-                        f"👀 *Runner Observer:* Status is *{e_state}* (PID {e_pid or 'active'}).\n"
-                        f"• Command: `{e_cmd}`\n"
-                        f"• Buffer snippet:\n> {e_tail or 'Active'}"
-                    )
-                else:
-                    briefing_text = f"👀 *Runner Observer:* Runner is currently *{e_state}*. No active command."
-            elif fn_name == "check_nose":
-                n_off = tool_result.get("smells_off", False)
-                n_summary = tool_result.get("verdict_summary", "All systems nominal.")
-                n_min = tool_result.get("minutes_ago", 0.0)
-                n_disk = tool_result.get("disk", {})
-                n_free = n_disk.get("free_gb", "unknown")
-                n_dock = tool_result.get("docker", {})
-                n_cnt = n_dock.get("container_count", 0)
-                n_ts = tool_result.get("tailscale", {})
-                n_online = n_ts.get("online", False)
-                if n_off:
-                    briefing_text = (
-                        f"👃 *Fleet Health Anomaly:* Something smells off (checked {n_min:.1f}m ago).\n"
-                        f"• Verdict: {n_summary}\n"
-                        f"• Disk: {n_free} GB free | Docker: {n_cnt} containers | Tailscale: {'online' if n_online else 'offline'}"
-                    )
-                else:
-                    briefing_text = (
-                        f"👃 *Fleet Health:* Air is clean; all systems nominal (checked {n_min:.1f}m ago).\n"
-                        f"• Verdict: {n_summary}\n"
-                        f"• Root disk: {n_free} GB free | Docker: {n_cnt} containers running | Tailscale: {'online' if n_online else 'offline'}"
-                    )
-            elif turn_status == "ERROR":
-                err_detail = error_msg or 'Backstage execution failed.'
-                if len(full_output) > 3000:
-                    output_snippet = f"... [Output truncated] ...\n{full_output[-3000:]}"
-                else:
-                    output_snippet = full_output
-                briefing_text = f"❌ *Task Failed:* {err_detail}\n> `{output_snippet}`"
-            else:
-                if len(full_output) > 3500:
-                    output_snippet = f"{full_output[:1500]}\n\n... [Output truncated; showing tail] ...\n\n{full_output[-2000:]}"
-                else:
-                    output_snippet = full_output
-                briefing_text = f"✅ *Task Complete:*\n{output_snippet}"
+        if not briefing_resp:
+            return "", {
+                "status": 500,
+                "code": 500,
+                "error_type": "NoResponse",
+                "raw_error": "Gemini API returned empty response",
+                "message": "No response",
+            }
 
-        clean_briefing, file_targets = extract_and_strip_file_directives(briefing_text)
-        await self._post_response(client, channel, thread_ts, clean_briefing, is_imessage)
+        if briefing_resp.get("_error"):
+            return "", briefing_resp
 
-        # Handle file directives
-        if file_targets and not is_imessage:
-            fleet_mesh = (
-                getattr(self.router.harness, "mesh", None)
-                if hasattr(self.router, "harness") and self.router.harness
-                else getattr(self.router, "fleet_mesh", None)
-            )
-            await upload_directive_files(
-                client=client,
-                channel=channel,
-                thread_ts=thread_ts,
-                targets=file_targets,
-                active_cwd=session.target_cwd if hasattr(session, "target_cwd") else os.getcwd(),
-                fleet_mesh=fleet_mesh,
-            )
+        candidates = briefing_resp.get("candidates", [])
+        if not candidates:
+            return "", {
+                "status": 200,
+                "code": 200,
+                "error_type": "ZeroCandidates",
+                "raw_error": "Gemini API returned zero candidates",
+                "message": "Zero candidates",
+            }
 
-        # Reaction update
-        if not is_imessage and ts:
-            if fn_name == "check_eyes" and tool_result.get("state") == "BLOCKER":
-                await swap_reaction(client, channel, ts, "gear", "warning")
-            elif fn_name == "check_nose" and tool_result.get("smells_off"):
-                await swap_reaction(client, channel, ts, "gear", "warning")
-            elif turn_status == "ERROR":
-                await swap_reaction(client, channel, ts, "gear", "x")
-            else:
-                await swap_reaction(client, channel, ts, "gear", "white_check_mark")
+        b_cand = candidates[0]
+        b_parts = b_cand.get("content", {}).get("parts", [])
+        briefing_text = "".join(p.get("text", "") for p in b_parts if "text" in p).strip()
+        return briefing_text, None
 
     async def _call_gemini_api(
         self,
@@ -2126,18 +2472,17 @@ class IngressGateway:
             else accumulator.get("output", "")
         )
         clean_output, _ = extract_and_strip_file_directives(output)
+        status = (
+            accumulator.turn_status
+            if isinstance(accumulator, BackstageExecutionAccumulator)
+            else accumulator.get("status", "SUCCESS")
+        )
+        target_reaction = "x" if status == "ERROR" else "white_check_mark"
         if clean_output:
             await self._post_response(client, channel, thread_ts, clean_output, is_imessage)
+            await self._broadcast_mouth_briefing(clean_output, None)
         if not is_imessage and ts:
-            status = (
-                accumulator.turn_status
-                if isinstance(accumulator, BackstageExecutionAccumulator)
-                else accumulator.get("status", "SUCCESS")
-            )
-            if status == "ERROR":
-                await swap_reaction(client, channel, ts, "gear", "x")
-            else:
-                await swap_reaction(client, channel, ts, "gear", "white_check_mark")
+            await swap_reaction(client, channel, ts, "gear", target_reaction)
 
 
 async def process_slack_message(

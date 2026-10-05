@@ -24,7 +24,7 @@ from typing import Dict, Any, Optional, Set, List, Tuple
 
 from dotenv import load_dotenv
 from golem.config import is_webui_enabled, get_webui_host, get_webui_port
-from golem.webui import start_webui_server, stop_webui_server, webui_broadcast
+from golem.webui import start_webui_server, stop_webui_server, webui_broadcast, get_active_webui_server
 from slack_bolt.async_app import AsyncApp
 from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
 from slack_sdk.web.async_client import AsyncWebClient
@@ -1149,7 +1149,11 @@ async def handle_learn_request(
 
 
 async def handle_ahoy_request(channel: str, thread_ts: Optional[str] = None, msg_ts: Optional[str] = None, client: Any = None):
-    msg = "⚓ *Ahoy:* Session catch-up complete. All background Herdr agents settled."
+    active_count = len([s for s in sessions.values() if getattr(s, "status", "") == "running" or getattr(s, "is_busy", False)])
+    if active_count > 0:
+        msg = f"⚓ *Ahoy:* Session active with {active_count} executing tasks."
+    else:
+        msg = "⚓ *Ahoy:* Session standby. 0 background execution tasks running."
     await client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=sanitize_for_slack(msg))
 
 
@@ -1764,6 +1768,7 @@ async def main(args: Optional[argparse.Namespace] = None):
             webui_host = getattr(args, "host", None) or os.environ.get("GOLEM_WEBUI_HOST") or default_daemon_host
             webui_port = getattr(args, "port", None) or get_webui_port()
             await start_webui_server(host=webui_host, port=webui_port)
+            ingress_gateway.webui_server = get_active_webui_server()
             logger.info(f"Golem Observability WebUI active on http://{webui_host}:{webui_port}")
         except Exception as e:
             logger.error(f"Failed to start Observability WebUI server: {e}")
@@ -1785,6 +1790,7 @@ async def main(args: Optional[argparse.Namespace] = None):
         logger.info("Performing graceful shutdown: disconnecting transports and closing client sessions...")
         try:
             await stop_webui_server()
+            ingress_gateway.webui_server = None
         except Exception as e:
             logger.debug(f"Error stopping WebUI server: {e}")
 
