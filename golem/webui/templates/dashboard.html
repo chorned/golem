@@ -1506,7 +1506,7 @@
             let isPaused = false;
             let eventSource = null;
             const activeHands = new Map();
-            const killedPanes = new Set();
+            try { localStorage.removeItem('golem_killed_panes'); } catch (_) {}
             let last_verdict_summary = null;
             let last_smells_off = null;
 
@@ -1973,14 +1973,8 @@
                     btn.disabled = true;
                     btn.textContent = '...';
                     btn.title = 'Terminating Herdr pane permanently...';
-                    btn.classList.remove('btn-confirm-kill');
-                    btn.classList.add('btn-killing');
-
-                    killedPanes.add(paneId);
                     const card = btn.closest('article');
                     if (card) {
-                        const herdrPane = card.getAttribute('data-herdr-pane-id');
-                        if (herdrPane) killedPanes.add(herdrPane);
                         card.style.opacity = '0.5';
                         card.style.filter = 'grayscale(0.5)';
                         card.style.pointerEvents = 'none';
@@ -1990,14 +1984,30 @@
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ pane_id: paneId })
-                    }).then(res => {
-                        if (!res.ok) {
-                            console.warn(`Kill pane ${paneId} returned HTTP ${res.status}`);
+                    }).then(async res => {
+                        if (res.ok) {
+                            unmountHandCard(paneId);
+                        } else {
+                            const errData = await res.json().catch(() => ({}));
+                            const errMsg = errData.error || `HTTP ${res.status}`;
+                            console.warn(`Kill pane ${paneId} failed: ${errMsg}`);
+                            resetKillButton(btn);
+                            btn.title = `Kill failed (${errMsg}). Daemon restart required.`;
+                            if (card) {
+                                card.style.opacity = '';
+                                card.style.filter = '';
+                                card.style.pointerEvents = '';
+                            }
                         }
                     }).catch(err => {
-                        console.error(`Kill pane ${paneId} failed:`, err);
-                    }).finally(() => {
-                        unmountHandCard(paneId);
+                        console.error(`Kill pane ${paneId} network error:`, err);
+                        resetKillButton(btn);
+                        btn.title = `Kill failed (network error).`;
+                        if (card) {
+                            card.style.opacity = '';
+                            card.style.filter = '';
+                            card.style.pointerEvents = '';
+                        }
                     });
                     return;
                 }
@@ -2222,9 +2232,6 @@
             function getOrCreateHandCard(h) {
                 if (!h) return null;
                 const paneId = h.pane_id || 'runner';
-                if (killedPanes.has(paneId) || (h.herdr_pane_id && killedPanes.has(h.herdr_pane_id))) {
-                    return null;
-                }
                 if (activeHands.has(paneId)) {
                     const item = activeHands.get(paneId);
                     if (item.settleTimeout) {
@@ -2563,7 +2570,7 @@
                 eventSource.addEventListener('hand_spawn', function(e) {
                     try {
                         const data = JSON.parse(e.data);
-                        if (data && (killedPanes.has(data.pane_id) || killedPanes.has(data.herdr_pane_id))) return;
+                        if (!data) return;
                         getOrCreateHandCard(data);
                     } catch (_) {}
                 });
@@ -2572,7 +2579,7 @@
                     try {
                         const data = JSON.parse(e.data);
                         const paneId = data.pane_id;
-                        if (!paneId || killedPanes.has(paneId)) return;
+                        if (!paneId) return;
 
                         let item = activeHands.get(paneId);
                         if (!item) {
@@ -2602,7 +2609,7 @@
                 eventSource.addEventListener('pane_frame', function(e) {
                     try {
                         const data = JSON.parse(e.data);
-                        if (!data.pane_id || killedPanes.has(data.pane_id)) return;
+                        if (!data || !data.pane_id) return;
                         paneFrames.set(data.pane_id, data);
                         const item = activeHands.get(data.pane_id);
                         if (item) applyPaneFrame(item, data);
@@ -2615,11 +2622,11 @@
                         const item = data.pane_id && activeHands.get(data.pane_id);
                         if (!item) return;
                         if (data.state === 'unavailable') {
-                            setPaneTag(item, '\u25CB PANE OFFLINE', true);
+                            setPaneTag(item, '○ PANE OFFLINE', true);
                             const tag = item.el && item.el.querySelector('.pane-tag');
                             if (tag) tag.title = data.error || 'Herdr pane unavailable';
                         } else if (data.state === 'live' && item.paneRev) {
-                            setPaneTag(item, `\u25CF LIVE PANE r${item.paneRev}`, false);
+                            setPaneTag(item, `● LIVE PANE r${item.paneRev}`, false);
                         }
                     } catch (_) {}
                 });
@@ -2657,9 +2664,7 @@
                             list = Object.values(data);
                         }
 
-                        // Filter out panes explicitly killed by user
-                        const filteredList = list.filter(h => !killedPanes.has(h.pane_id) && !killedPanes.has(h.herdr_pane_id));
-                        if (filteredList.length === 0) {
+                        if (list.length === 0) {
                             // All hands cleared / settled -> return to standby view
                             for (const [id, item] of activeHands.entries()) {
                                 if (item.settleTimeout) clearTimeout(item.settleTimeout);
@@ -2670,7 +2675,7 @@
                             return;
                         }
 
-                        const incomingIds = new Set(filteredList.map(h => h.pane_id));
+                        const incomingIds = new Set(list.map(h => h.pane_id));
                         for (const [id, item] of activeHands.entries()) {
                             if (!incomingIds.has(id)) {
                                 if (item.settleTimeout) clearTimeout(item.settleTimeout);
@@ -2678,7 +2683,7 @@
                                 activeHands.delete(id);
                             }
                         }
-                        filteredList.forEach(h => getOrCreateHandCard(h));
+                        list.forEach(h => getOrCreateHandCard(h));
                         renderHandsState();
                     } catch (_) {}
                 });
