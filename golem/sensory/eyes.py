@@ -69,6 +69,7 @@ class EyesTaskObserver:
         api_key: Optional[str] = None,
         timeout_seconds: float = 15.0,
         webui_server: Optional[Any] = None,
+        task: str = "",
         **kwargs: Any,
     ) -> None:
         self.event_bus = sensory_bus or event_bus or bus or get_default_event_bus()
@@ -93,6 +94,9 @@ class EyesTaskObserver:
         self.api_key = api_key
         self.timeout_seconds = timeout_seconds
         self.webui_server = webui_server
+        self.task = task or kwargs.get("task_desc", "") or ""
+        self._last_line_count: int = 0
+        self._attached_announced: bool = False
 
         # Buffer hashing & deduplication state
         self._last_buffer_hash: Optional[str] = None
@@ -113,6 +117,41 @@ class EyesTaskObserver:
     def is_monitoring(self) -> bool:
         """Alias for is_running."""
         return self.is_running
+
+    def _publish_eye_event(self, alert_type: str, summary: str, data: Dict[str, Any]) -> None:
+        """Publish a typed Eye observation event on the Shoulder Tap bus (never raises)."""
+        try:
+            payload = dict(data)
+            payload.setdefault("session_id", self.session_id)
+            self.event_bus.publish(
+                ShoulderTapAlert(
+                    alert_type=alert_type,
+                    source="eyes",
+                    session_id=None,
+                    channel=self.channel,
+                    thread_ts=self.thread_ts,
+                    summary=summary,
+                    data=payload,
+                )
+            )
+        except Exception as e:
+            logger.debug(f"EyesTaskObserver: failed to publish {alert_type}: {e}")
+
+    def announce_attached(self) -> None:
+        """Publish `eye_attached` once per observer lifetime."""
+        if self._attached_announced:
+            return
+        self._attached_announced = True
+        self._publish_eye_event(
+            "eye_attached",
+            f"Attached to {self.pane}",
+            {"pane_id": self.pane, "task": self.task},
+        )
+
+    @staticmethod
+    def _eye_blocker_kind(blocker_type: Optional[str]) -> str:
+        """Map classifier blocker types onto the WebUI vocabulary: oauth_url | prompt."""
+        return "oauth_url" if (blocker_type or "").lower() in ("oauth", "oauth_url") else "prompt"
 
     def normalize_buffer_text(self, raw_buffer: str) -> str:
         """
@@ -372,6 +411,20 @@ class EyesTaskObserver:
         lines = [l for l in clean_buffer.splitlines() if l.strip()]
         buffer_tail = "\n".join(lines[-10:]) if lines else ""
 
+        # Structured inspection event: only reached when the buffer actually changed.
+        delta_lines = len(lines) - self._last_line_count
+        self._last_line_count = len(lines)
+        self._publish_eye_event(
+            "eye_inspection",
+            f"Scanning stdout buffer (delta: {delta_lines:+d} lines)",
+            {
+                "pane_id": target_pane,
+                "summary": f"Scanning stdout buffer (delta: {delta_lines:+d} lines)",
+                "delta_lines": delta_lines,
+                "state": state,
+            },
+        )
+
         # Handle BLOCKER
         if state == "BLOCKER":
             blocker_sig = f"{blocker_type}:{blocker_url or blocker_prompt}"
@@ -381,6 +434,17 @@ class EyesTaskObserver:
 
             self._last_blocker_signature = blocker_sig
             self._last_emitted_state = "BLOCKER"
+
+            kind = self._eye_blocker_kind(blocker_type)
+            self._publish_eye_event(
+                "eye_blocker",
+                summary or f"{kind} blocker detected",
+                {
+                    "pane_id": target_pane,
+                    "blocker_type": kind,
+                    "detail": blocker_url or blocker_prompt or "",
+                },
+            )
 
             alert = ShoulderTapAlert(
                 alert_type="blocker",

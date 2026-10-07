@@ -249,6 +249,7 @@ class SessionRouter:
             liaison_pane: Optional[str] = None
             runner_pane: Optional[str] = None
             workspace_id: Optional[str] = None
+            runner_pane_id: Optional[str] = None
             if self.harness is not None:
                 res = self.harness.provision_dual_pane(session_id=key, cwd=cwd)
                 if inspect.isawaitable(res):
@@ -256,6 +257,13 @@ class SessionRouter:
                 else:
                     liaison_pane, runner_pane = res
                 workspace_id = key
+                try:
+                    ws_rec = self.harness.get_workspace(key)
+                    cand = ws_rec.get("runner_pane_id") if isinstance(ws_rec, dict) else None
+                    if isinstance(cand, str) and cand:
+                        runner_pane_id = cand
+                except Exception:
+                    pass
 
             session = SessionHandle(
                 session_id=key,
@@ -269,6 +277,7 @@ class SessionRouter:
                 workspace_id=workspace_id,
                 liaison_pane=liaison_pane,
                 runner_pane=runner_pane,
+                runner_pane_id=runner_pane_id,
                 router=self,
                 bus=self.bus,
             )

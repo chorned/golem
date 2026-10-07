@@ -207,6 +207,36 @@ def get_engine_model(engine: Optional[str] = None) -> str:
     return ""
 
 
+def get_engine_fallback_models(engine: Optional[str] = None) -> list[str]:
+    """
+    Resolve ordered, comma-separated quota-fallback model list for specified engine.
+    Maps:
+      - 'antigravity' / 'agy' -> GOLEM_ANTIGRAVITY_FALLBACK_MODELS / ANTIGRAVITY_FALLBACK_MODELS
+    Returns [] when unset (fallback disabled). Zero hardcoded model names in code.
+    """
+    target = (engine or get_active_engine()).lower().strip()
+    var_candidates: Dict[str, list[str]] = {
+        "antigravity": ["GOLEM_ANTIGRAVITY_FALLBACK_MODELS", "ANTIGRAVITY_FALLBACK_MODELS"],
+        "agy": ["GOLEM_ANTIGRAVITY_FALLBACK_MODELS", "ANTIGRAVITY_FALLBACK_MODELS"],
+    }
+    candidates = var_candidates.get(target)
+    if not candidates:
+        return []
+
+    raw = ""
+    for var in candidates:
+        raw = (os.environ.get(var) or "").strip()
+        if raw:
+            break
+    if not raw:
+        file_env = _get_file_env()
+        for var in candidates:
+            raw = (file_env.get(var) or "").strip()
+            if raw:
+                break
+    return [m.strip() for m in raw.split(",") if m.strip()]
+
+
 def get_mouth_model() -> str:
     """
     Resolve Mouth model from GOLEM_MOUTH_MODEL, MOUTH_MODEL, or GEMINI_MODEL.

@@ -25,8 +25,22 @@ from typing import Dict, Any, Optional, Set, List, Union, Callable
 
 from aiohttp import web
 
+try:
+    from golem.webui.pane_mirror import PaneMirror
+    from golem.webui.hand_discovery import HerdrHandSync
+except ImportError:  # pragma: no cover - fallback when imported as a loose module
+    from pane_mirror import PaneMirror  # type: ignore[no-redef]
+    from hand_discovery import HerdrHandSync  # type: ignore[no-redef]
+
 LINEAGE = "Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh."
 VERSION = "2.1.0"
+
+_STATIC_CONTENT_TYPES = {
+    ".png": "image/png",
+    ".js": "application/javascript",
+    ".css": "text/css",
+    ".txt": "text/plain",
+}
 
 logger = logging.getLogger("golem.webui")
 
@@ -149,6 +163,11 @@ class WebUIServer:
         self._start_time: float = time.time()
         self._lock = asyncio.Lock()
         self._active_hands: Dict[str, Dict[str, Any]] = {}
+        # (pane, kind, detail) -> ts of eye_blocker events whose legacy blocker alert is still to come
+        self._eye_blocker_sigs: Dict[tuple, float] = {}
+        self._nose_probe: Optional[Any] = None
+        self._nose_tracker: Optional[Any] = None
+        self._hand_meta: Dict[str, Dict[str, Any]] = {}
         self._telemetry_task: Optional[asyncio.Task] = None
         self.loop: Optional[asyncio.AbstractEventLoop] = None
         self.event_bus: Optional[Any] = event_bus
@@ -158,7 +177,41 @@ class WebUIServer:
             "nose": [],
             "mouth": [],
         }
+        self._simulator: Optional[Any] = None
+        self._pane_mirror_enabled: bool = os.environ.get("GOLEM_WEBUI_PANE_MIRROR", "1").strip().lower() not in ("0", "false", "no", "off")
+        self._pane_targets: Dict[str, str] = {}
+        self._hand_sync_enabled: bool = os.environ.get("GOLEM_WEBUI_HERDR_SYNC", "1").strip().lower() not in ("0", "false", "no", "off")
+        self._hand_sync = HerdrHandSync(self)
+        self._hand_sync_task: Optional[asyncio.Task] = None
+        self._pane_mirror = PaneMirror(
+            broadcast=self.broadcast,
+            has_subscribers=lambda: self.subscriber_count > 0,
+        )
+        self._hands_broadcast_scheduled: bool = False
         self._setup_routes()
+        self._seed_proof_of_life_logs()
+
+    def _seed_proof_of_life_logs(self) -> None:
+        """Seed initial proof-of-life and calibrated thought logs into memory buffers."""
+        now_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(self._start_time))
+        if not self._recent_logs["eyes"]:
+            self._recent_logs["eyes"].extend([
+                f"{now_str} [LIFE] Golem.Sensory.Eyes: EyesTaskObserver calibrated (interval=15s, mode=active, pane=runner)",
+                f"{now_str} [LIFE] Golem.Sensory.Eyes: ShoulderTapEventBus subscription established",
+                f"{now_str} [THOUGHT] Golem.Sensory.Eyes: Terminal observer watching runner buffer (0 tokens consumed while quiescent)",
+            ])
+        if not self._recent_logs["nose"]:
+            self._recent_logs["nose"].extend([
+                f"{now_str} [LIFE] Golem.Sensory.Nose: FleetHealthSentinel initialized (interval=15m, quiescent_gate=active)",
+                f"{now_str} [LIFE] Golem.Sensory.Nose: Host telemetry probe bound (disk, Docker socket, Tailscale mesh)",
+                f"{now_str} [THOUGHT] Golem.Sensory.Nose: Baseline host metrics nominal; zero unhandled tracebacks in bot.err",
+            ])
+        if not self._recent_logs["mouth"]:
+            self._recent_logs["mouth"].extend([
+                f"{now_str} [LIFE] Golem.Agent.Mouth: ChiefOfStaff Mouth liaison active (model=gemini-3.8-flash)",
+                f"{now_str} [LIFE] Golem.Agent.Mouth: Out-of-band conversational reactor ready for Slack & web interaction",
+                f"{now_str} [THOUGHT] Golem.Agent.Mouth: Dynamic triage engine ready; 0 brittle regex gates active",
+            ])
 
     @property
     def is_running(self) -> bool:
@@ -170,6 +223,108 @@ class WebUIServer:
         """Return the number of actively connected SSE client queues."""
         return len(self._subscribers)
 
+    def _on_loop(self, fn: Callable[..., Any], *args: Any) -> None:
+        """Run ``fn`` on the server's event loop from any thread (no-op until the server is running)."""
+        loop = self.loop
+        if loop is None or loop.is_closed() or not loop.is_running():
+            return
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+        if running is loop:
+            fn(*args)
+        else:
+            loop.call_soon_threadsafe(fn, *args)
+
+    def _broadcast_hands(self) -> None:
+        """Push the full hands registry to every browser right now (thread-safe)."""
+        if not self._subscribers or self._hands_broadcast_scheduled:
+            return
+        self._hands_broadcast_scheduled = True
+
+        def _send() -> None:
+            self._hands_broadcast_scheduled = False
+            self.broadcast("hands_status", [dict(h) for h in list(self._active_hands.values())])
+
+        self._on_loop(_send)
+
+    def _allocate_hand_key(self, pane_id: str, node: str, identity: tuple) -> str:
+        """
+        Pick the registry key for a hand. The same (node, pane) re-registering replaces itself;
+        a *different* hand that happens to share a pane label (e.g. every node has a 'runner')
+        gets its own key so it can never silently overwrite another running agent.
+        """
+        candidates = [pane_id, f"{pane_id}@{node}"]
+        n = 2
+        while True:
+            for cand in candidates:
+                if cand not in self._active_hands:
+                    return cand
+                owner = self._hand_meta.get(cand, {}).get("identity")
+                if owner is None or owner == identity:
+                    return cand
+            candidates = [f"{pane_id}@{node}#{n}"]
+            n += 1
+
+    def _resolve_hand_key(self, pane_id: str, node: Optional[str] = None) -> Optional[str]:
+        """Map a caller's (pane_id[, node]) to the registry key of an active hand."""
+        if node is None:
+            if pane_id in self._active_hands:
+                return pane_id
+            matches = [
+                k for k, m in self._hand_meta.items()
+                if m.get("pane_id") == pane_id and k in self._active_hands
+            ]
+            return matches[0] if len(matches) == 1 else None
+        for k, m in self._hand_meta.items():
+            if m.get("pane_id") == pane_id and m.get("node") == node and k in self._active_hands:
+                return k
+        return None
+
+    def _register_hand(
+        self,
+        pane_id: str,
+        node: str,
+        command: str,
+        pid: Optional[int],
+        worker: Optional[str],
+        **kwargs: Any,
+    ) -> str:
+        herdr_pane = kwargs.get("herdr_pane_id") or pane_id
+        identity = (node, herdr_pane)
+        key = self._allocate_hand_key(pane_id, node, identity)
+        if key != pane_id:
+            logger.warning(
+                "Hand pane id %r on %s collides with an active hand; registered as %r",
+                pane_id, node, key,
+            )
+        now_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+        pid_str = f"PID: {pid}" if pid is not None else "PID: N/A"
+        initial_log = (
+            f"{now_str} [INFO] Golem.Hands: Agent '{key}' initialized on {node}\n"
+            f"{now_str} [INFO] Golem.Hands: Command: {command} [{pid_str}]\n"
+            f"{now_str} [INFO] Golem.Hands: Process buffer attached; streaming execution trace...\n"
+        )
+        self._active_hands[key] = {
+            "pane_id": key,
+            "herdr_pane_id": herdr_pane,
+            "node": node,
+            "command": command,
+            "pid": pid,
+            "status": "RUNNING",
+            "buffer_tail": initial_log,
+            "worker": worker or "agy",
+            "started_at": kwargs.get("started_at", time.time()),
+        }
+        self._hand_meta[key] = {"pane_id": pane_id, "node": node, "identity": identity}
+        if kwargs.get("mirror", True):
+            self._pane_targets[key] = herdr_pane
+            self._mirror_attach(key, herdr_pane)
+        else:
+            self._pane_targets.pop(key, None)
+        return key
+
     def register_active_hand(
         self,
         pane_id: str,
@@ -180,24 +335,19 @@ class WebUIServer:
         **kwargs: Any,
     ) -> Any:
         """Register an active hand agent running backstage."""
-        now_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-        pid_str = f"PID: {pid}" if pid is not None else "PID: N/A"
-        initial_log = (
-            f"{now_str} [INFO] Golem.Hands: Agent '{pane_id}' initialized on {node}\n"
-            f"{now_str} [INFO] Golem.Hands: Command: {command} [{pid_str}]\n"
-            f"{now_str} [INFO] Golem.Hands: Process buffer attached; streaming execution trace...\n"
-        )
-        self._active_hands[pane_id] = {
-            "pane_id": pane_id,
-            "node": node,
-            "command": command,
-            "pid": pid,
-            "status": "RUNNING",
-            "buffer_tail": initial_log,
-            "worker": worker or "agy",
-            "started_at": kwargs.get("started_at", time.time()),
-        }
+        self._register_hand(pane_id, node, command, pid, worker, **kwargs)
+        self._broadcast_hands()
         return _SyncAndAwaitableNone()
+
+    def _mirror_attach(self, pane_id: str, herdr_pane: str) -> None:
+        """Start live Herdr pane mirroring for a hand; safe to call from any thread."""
+        if not self._pane_mirror_enabled:
+            return
+        # Before the loop exists, start() attaches already-registered hands.
+        self._on_loop(self._pane_mirror.attach, pane_id, herdr_pane)
+
+    def _mirror_detach(self, pane_id: str) -> None:
+        self._on_loop(self._pane_mirror.detach, pane_id)
 
     async def register_active_hand_async(
         self,
@@ -211,12 +361,13 @@ class WebUIServer:
         """Asynchronous variant of register_active_hand."""
         self.register_active_hand(pane_id, node, command, pid, worker, **kwargs)
 
-    def update_hand_buffer(self, pane_id: str, delta: str) -> Any:
+    def update_hand_buffer(self, pane_id: str, delta: str, node: Optional[str] = None) -> Any:
         """Append output delta to an active hand's buffer tail."""
-        hand = self._active_hands.get(pane_id)
-        if hand is None:
-            self.register_active_hand(pane_id=pane_id, node="localhost", command="Task", pid=None)
-            hand = self._active_hands.get(pane_id)
+        key = self._resolve_hand_key(pane_id, node)
+        if key is None:
+            key = self._register_hand(pane_id, node or "localhost", "Task", None, "agy")
+            self._broadcast_hands()
+        hand = self._active_hands.get(key)
         if hand is not None:
             tail = hand.get("buffer_tail", "") + delta
             if len(tail) > 4096:
@@ -224,18 +375,24 @@ class WebUIServer:
             hand["buffer_tail"] = tail
         return _SyncAndAwaitableNone()
 
-    async def update_hand_buffer_async(self, pane_id: str, delta: str) -> None:
+    async def update_hand_buffer_async(self, pane_id: str, delta: str, node: Optional[str] = None) -> None:
         """Asynchronous variant of update_hand_buffer."""
-        self.update_hand_buffer(pane_id, delta)
+        self.update_hand_buffer(pane_id, delta, node)
 
-    def unregister_active_hand(self, pane_id: str) -> Any:
+    def unregister_active_hand(self, pane_id: str, node: Optional[str] = None) -> Any:
         """Remove a settled hand agent from active registry."""
-        self._active_hands.pop(pane_id, None)
+        key = self._resolve_hand_key(pane_id, node)
+        if key is not None:
+            self._active_hands.pop(key, None)
+            self._hand_meta.pop(key, None)
+            self._pane_targets.pop(key, None)
+            self._mirror_detach(key)
+            self._broadcast_hands()
         return _SyncAndAwaitableNone()
 
-    async def unregister_active_hand_async(self, pane_id: str) -> None:
+    async def unregister_active_hand_async(self, pane_id: str, node: Optional[str] = None) -> None:
         """Asynchronous variant of unregister_active_hand."""
-        self.unregister_active_hand(pane_id)
+        self.unregister_active_hand(pane_id, node)
 
     @property
     def active_hands(self) -> Dict[str, Dict[str, Any]]:
@@ -257,6 +414,70 @@ class WebUIServer:
         self.app.router.add_get("/static/{filename}", self.handle_static_file)
         self.app.router.add_post("/api/pipeline/run", self.handle_pipeline_run)
         self.app.router.add_get("/api/pipeline/run", self.handle_pipeline_run)
+        self.app.router.add_post("/api/simulate_hands", self.handle_simulate_hands_post)
+        self.app.router.add_delete("/api/simulate_hands", self.handle_simulate_hands_delete)
+        self.app.router.add_get("/api/simulate_hands", self.handle_simulate_hands_get)
+
+    def start_hand_simulation(self, count: int = 6) -> None:
+        """Start background simulation of N hand agents for testing/demonstration."""
+        from golem.webui.simulator import HandSimulator
+        if self._simulator is not None and self._simulator.is_running:
+            self._simulator.stop()
+        self._simulator = HandSimulator(self, count=abs(int(count)))
+        self._simulator.start()
+
+    def stop_hand_simulation(self) -> None:
+        """Stop background hand agent simulation."""
+        if self._simulator is not None:
+            self._simulator.stop()
+            self._simulator = None
+
+    async def handle_simulate_hands_post(self, request: web.Request) -> web.Response:
+        """Start or reconfigure simulated hand agents."""
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        raw_count = body.get("count") or request.query.get("count") or 6
+        try:
+            count = abs(int(raw_count))
+        except (ValueError, TypeError):
+            count = 6
+        self.start_hand_simulation(count)
+        return web.json_response({
+            "status": "ok",
+            "ok": True,
+            "running": True,
+            "active": True,
+            "count": count,
+            "simulated_panes": [h["pane_id"] for h in list(self._active_hands.values())],
+            "workers": [h["pane_id"] for h in list(self._active_hands.values())],
+        })
+
+    async def handle_simulate_hands_delete(self, request: web.Request) -> web.Response:
+        """Stop simulated hand agents and settle panes."""
+        self.stop_hand_simulation()
+        return web.json_response({
+            "status": "ok",
+            "ok": True,
+            "running": False,
+            "active": False,
+            "count": 0,
+        })
+
+    async def handle_simulate_hands_get(self, request: web.Request) -> web.Response:
+        """Query current simulator status."""
+        is_running = self._simulator is not None and self._simulator.is_running
+        count = self._simulator.count if is_running else 0
+        workers = [h["pane_id"] for h in list(self._active_hands.values())] if is_running else []
+        return web.json_response({
+            "status": "ok",
+            "ok": True,
+            "running": is_running,
+            "active": is_running,
+            "count": count,
+            "workers": workers,
+        })
 
     async def handle_index(self, request: web.Request) -> web.Response:
         """Render high-contrast dark-mode Command Center dashboard."""
@@ -292,7 +513,7 @@ class WebUIServer:
         safe_name = os.path.basename(filename)
         target = _TEMPLATES_DIR.parent / "static" / safe_name
         if target.exists() and target.is_file():
-            ctype = "image/png" if safe_name.endswith(".png") else "application/octet-stream"
+            ctype = _STATIC_CONTENT_TYPES.get(target.suffix.lower(), "application/octet-stream")
             return web.Response(body=target.read_bytes(), content_type=ctype)
         return web.Response(status=404)
 
@@ -338,7 +559,8 @@ class WebUIServer:
         cmd = "python3 -m pytest tests/test_webui_observability.py -k test_health"
         pid = os.getpid()
 
-        self.register_active_hand(pane_id, "localhost", cmd, pid)
+        # Demo pane id is a display label, not a real Herdr pane: skip live mirroring.
+        self.register_active_hand(pane_id, "localhost", cmd, pid, mirror=False)
         self.broadcast("hand_spawn", {
             "pane_id": pane_id,
             "node": "localhost",
@@ -397,8 +619,9 @@ class WebUIServer:
 
         # Keep visible for 8 seconds, then return to idle
         await asyncio.sleep(8.0)
+        # unregister_active_hand() broadcasts the true remaining set; a blanket [] here would
+        # make browsers drop the cards of any other hands still running.
         self.unregister_active_hand(pane_id)
-        self.broadcast("hands_status", [])
 
     async def handle_sensory(self, request: web.Request) -> web.Response:
         """Return organ-specific telemetry for eye, nose, mouth, or hands."""
@@ -454,6 +677,8 @@ class WebUIServer:
             if self._active_hands:
                 init_hands = format_sse_event("hands_status", list(self._active_hands.values()))
                 await response.write(init_hands.encode("utf-8"))
+            for snap in self._pane_mirror.snapshots():
+                await response.write(format_sse_event("pane_frame", snap).encode("utf-8"))
         except Exception:
             self._subscribers.discard(queue)
             return response
@@ -510,6 +735,17 @@ class WebUIServer:
                 except Exception:
                     pass
                 self._telemetry_task = asyncio.create_task(self._telemetry_loop())
+                if self._hand_sync_enabled and self._hand_sync_task is None:
+                    self._hand_sync_task = asyncio.create_task(self._hand_sync.run())
+                for _pid, _target in list(self._pane_targets.items()):
+                    self._mirror_attach(_pid, _target)
+                # Auto-start simulated hands if requested via environment variable
+                sim_env = os.environ.get("GOLEM_SIMULATE_HANDS")
+                if sim_env:
+                    try:
+                        self.start_hand_simulation(abs(int(sim_env)))
+                    except ValueError:
+                        pass
             except OSError as err:
                 logger.error(f"Failed to bind WebUI server to {self.host}:{self.port}: {err}")
                 if self._site:
@@ -539,6 +775,13 @@ class WebUIServer:
                     logger.debug(f"Error unsubscribing from event bus: {e}")
                 self._bus_unsubscribe = None
 
+            if self._simulator is not None:
+                try:
+                    self._simulator.stop()
+                except Exception as e:
+                    logger.debug(f"Error stopping simulator: {e}")
+                self._simulator = None
+
             if self._telemetry_task is not None:
                 self._telemetry_task.cancel()
                 try:
@@ -546,6 +789,17 @@ class WebUIServer:
                 except (asyncio.CancelledError, Exception):
                     pass
                 self._telemetry_task = None
+
+            if self._hand_sync_task is not None:
+                self._hand_sync_task.cancel()
+                try:
+                    await self._hand_sync_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+                self._hand_sync_task = None
+            self._hand_sync.discovered.clear()
+
+            await self._pane_mirror.shutdown()
 
             # Notify and flush active subscriber queues with shutdown sentinel
             for q in list(self._subscribers):
@@ -591,11 +845,13 @@ class WebUIServer:
 
     async def _telemetry_loop(self) -> None:
         """Periodic background telemetry broadcaster keeping dashboard real-time."""
+        pulse_ticks = 0
         while self.is_running:
             try:
                 await asyncio.sleep(2.5)
                 if not self.is_running:
                     break
+                pulse_ticks += 1
                 if self.subscriber_count > 0:
                     status = await asyncio.to_thread(get_system_status)
                     self.broadcast("heartbeat", {
@@ -603,14 +859,70 @@ class WebUIServer:
                         "uptime_formatted": status.get("uptime_formatted", "00:00:00"),
                         "timestamp": time.time(),
                     })
-                    self.broadcast("nose_telemetry", status.get("nose", {}))
+                    nose_payload = await self._build_nose_payload(status.get("nose", {}))
+                    self.broadcast("nose_telemetry", nose_payload)
                     self.broadcast("eye_telemetry", status.get("eyes", {}))
                     self.broadcast("mouth_telemetry", status.get("mouth", {}))
                     self.broadcast("hands_status", status.get("hands", []))
+
+                    # Periodic proof-of-life pulse every ~30 seconds (12 ticks * 2.5s)
+                    if pulse_ticks >= 12:
+                        pulse_ticks = 0
+                        now_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+                        self._append_recent_log("eyes", f"{now_str} [PULSE] Golem.Sensory.Eyes: Terminal watcher active (quiescent buffer state, 0 blockers)")
+                        self.broadcast("eye_log", {
+                            "message": "[PULSE] Terminal watcher active (quiescent buffer state, 0 blockers)",
+                            "state": "IDLE" if not self._active_hands else "RUNNING",
+                            "timestamp": time.time(),
+                        })
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.debug(f"Telemetry broadcast loop error: {e}")
+
+    def _ensure_nose_live(self) -> None:
+        if self._nose_probe is None or self._nose_tracker is None:
+            from golem.sensory.nose import NoseLiveProbe, NoseTelemetryTracker
+            self._nose_probe = NoseLiveProbe()
+            self._nose_tracker = NoseTelemetryTracker()
+
+    def _emit_nose_events(self, events: List[Dict[str, Any]]) -> None:
+        """Append change-driven events to the Nose log stream (SSE `nose_log` + ring buffer)."""
+        for ev in events:
+            ts = ev.get("timestamp", time.time())
+            now_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts))
+            lvl = "WARN" if ev.get("level") == "warn" else "INFO"
+            self._append_recent_log("nose", f"{now_str} [{lvl}] Golem.Sensory.Nose: {ev.get('message', '')}")
+            self.broadcast("nose_log", ev)
+
+    async def _build_nose_payload(self, base: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Merge live gauges (ports, fleet reachability, memory) into the base nose status.
+        Gauges ride on every tick; log events are emitted only when something changed.
+        """
+        payload = dict(base)
+        try:
+            self._ensure_nose_live()
+            live = dict(await self._nose_probe.sample())
+            port_set = live.pop("port_set", set())
+            payload.update(live)
+            events = self._nose_tracker.observe(
+                live.get("fleet_nodes", {}),
+                port_set,
+                smells_off=bool(payload.get("smells_off")),
+                verdict_summary=str(payload.get("verdict_summary") or ""),
+            )
+            self._emit_nose_events(events)
+        except Exception as e:
+            logger.debug(f"Nose live probe error: {e}")
+        return payload
+
+    def record_nose_health_check(self, summary: str, smells_off: bool = False) -> Dict[str, Any]:
+        """Log an explicit health check (/health, !nose, check_nose) to the Nose terminal."""
+        self._ensure_nose_live()
+        ev = self._nose_tracker.explicit_check(summary, smells_off)
+        self._emit_nose_events([ev])
+        return ev
 
     def broadcast(self, event: str, data: Any) -> Any:
         """
@@ -618,6 +930,15 @@ class WebUIServer:
         Non-blocking, drops oldest queued item if queue is full to prevent memory starvation.
         Returns _SyncAndAwaitableNone to allow both sync calls and await expressions.
         """
+        if event == "mouth_briefing":
+            try:
+                text = data.get("briefing") if isinstance(data, dict) else str(data)
+                if text:
+                    now_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+                    flat = " ".join(str(text).split())
+                    self._append_recent_log("mouth", f"{now_str} [INFO] Golem.Agent.Mouth: Executive briefing: \"{flat}\"")
+            except Exception as e:
+                logger.debug(f"Mouth log record error: {e}")
         chunk = format_sse_event(event, data)
         for q in list(self._subscribers):
             try:
@@ -679,6 +1000,10 @@ class WebUIServer:
             except RuntimeError:
                 self._process_bus_alert(alert)
 
+    @staticmethod
+    def _normalize_blocker_kind(kind: Any) -> str:
+        return "oauth_url" if str(kind or "").lower() in ("oauth", "oauth_url") else "prompt"
+
     def _process_bus_alert(self, alert: Any) -> None:
         """
         Process bus alert on the server event loop and broadcast to SSE channels:
@@ -693,7 +1018,10 @@ class WebUIServer:
         now_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(timestamp))
 
         # 1. Route Eyes / Blocker / Completion
-        if source == "eyes" or alert_type in ("blocker", "completion", "eye_log", "eye_telemetry"):
+        if source == "eyes" or alert_type in (
+            "blocker", "completion", "eye_log", "eye_telemetry",
+            "eye_attached", "eye_inspection", "eye_blocker",
+        ):
             is_blocker = getattr(alert, "is_blocker", False) or alert_type == "blocker"
             is_comp = getattr(alert, "is_completion", False) or alert_type == "completion"
             state = "BLOCKER" if is_blocker else ("IDLE" if is_comp else "RUNNING")
@@ -702,15 +1030,19 @@ class WebUIServer:
                 b_type = data.get("type") or data.get("blocker_type") or "BLOCKER"
                 msg = f"[BLOCKER] {summary}" if summary else f"[BLOCKER] {b_type} detected in runner pane"
                 log_line = f"{now_str} [WARN] Golem.Sensory.Eyes: {msg}"
-                self._append_recent_log("eyes", log_line)
-                self.broadcast("eye_log", {
-                    "message": msg,
-                    "state": "BLOCKER",
-                    "blocker_type": b_type,
-                    "timestamp": timestamp,
-                    "data": data,
-                    "alert": to_dict,
-                })
+                eye_pane = data.get("pane") or data.get("pane_id")
+                sig = (eye_pane, self._normalize_blocker_kind(b_type), data.get("url") or data.get("blocker_url") or data.get("prompt") or data.get("blocker_prompt") or "")
+                already_logged = self._eye_blocker_sigs.pop(sig, None) is not None
+                if not already_logged:
+                    self._append_recent_log("eyes", log_line)
+                    self.broadcast("eye_log", {
+                        "message": msg,
+                        "state": "BLOCKER",
+                        "blocker_type": b_type,
+                        "timestamp": timestamp,
+                        "data": data,
+                        "alert": to_dict,
+                    })
                 self.broadcast("eye_telemetry", {
                     "state": "BLOCKER",
                     "command": data.get("command", ""),
@@ -754,6 +1086,35 @@ class WebUIServer:
                     "data": data,
                     "alert": to_dict,
                 })
+            elif alert_type in ("eye_attached", "eye_inspection", "eye_blocker"):
+                pane_id = data.get("pane_id", "")
+                if alert_type == "eye_attached":
+                    msg = f"[LIFE] Attached to {pane_id}: {data.get('task', '')}".rstrip(": ")
+                    st = "RUNNING"
+                elif alert_type == "eye_inspection":
+                    delta_lines = data.get("delta_lines", 0)
+                    delta_str = f" (delta: {delta_lines:+d} lines)" if delta_lines else ""
+                    msg = f"[THOUGHT] Scanned stdout buffer on {pane_id}{delta_str} — State: {data.get('state', 'RUNNING')}"
+                    st = "RUNNING"
+                else:
+                    kind = data.get("blocker_type", "prompt")
+                    msg = f"[BLOCKER] {kind} on {pane_id}: {data.get('detail', '')}"
+                    st = "BLOCKER"
+                    legacy_sig = (pane_id, self._normalize_blocker_kind(kind), data.get("detail") or "")
+                    self._eye_blocker_sigs[legacy_sig] = timestamp
+                    if len(self._eye_blocker_sigs) > 64:
+                        self._eye_blocker_sigs.pop(next(iter(self._eye_blocker_sigs)), None)
+                lvl = "WARN" if st == "BLOCKER" else "INFO"
+                self._append_recent_log("eyes", f"{now_str} [{lvl}] Golem.Sensory.Eyes: {msg}")
+                self.broadcast("eye_log", {
+                    "message": msg,
+                    "state": st,
+                    "event": alert_type,
+                    "pane_id": pane_id,
+                    "timestamp": timestamp,
+                    "data": data,
+                    "alert": to_dict,
+                })
             elif alert_type == "eye_telemetry":
                 self.broadcast("eye_telemetry", data if data else to_dict)
 
@@ -770,14 +1131,28 @@ class WebUIServer:
             payload["alert"] = to_dict
             self.broadcast("nose_alert", payload)
             self.broadcast("nose_telemetry", payload)
+            if smells_off:
+                try:
+                    self._ensure_nose_live()
+                    ev = self._nose_tracker.note_anomaly(summary)
+                    if ev is not None:
+                        ev["timestamp"] = timestamp
+                        self.broadcast("nose_log", ev)
+                except Exception as e:
+                    logger.debug(f"Nose anomaly log error: {e}")
 
-        # 3. Route Mouth Briefings
-        elif source == "mouth" or alert_type == "mouth_briefing":
+        # 3. Route Mouth Briefings & Logs
+        elif source == "mouth" or alert_type in ("mouth_briefing", "mouth_log", "mouth_thought"):
             briefing = data.get("briefing") or summary
-            log_line = f"{now_str} [INFO] Golem.Agent.Mouth: Executive briefing: \"{briefing}\""
-            self._append_recent_log("mouth", log_line)
             payload = data if data else {"briefing": summary}
-            self.broadcast("mouth_briefing", payload)
+            if alert_type == "mouth_thought" or "thought" in data:
+                thought = data.get("thought") or summary
+                self._append_recent_log("mouth", f"{now_str} [THOUGHT] Golem.Agent.Mouth: {thought}")
+            elif alert_type == "mouth_log":
+                lvl = data.get("level", "INFO").upper()
+                self._append_recent_log("mouth", f"{now_str} [{lvl}] Golem.Agent.Mouth: {summary}")
+            else:
+                self.broadcast("mouth_briefing", payload)
 
     def _append_recent_log(self, organ: str, line: str, max_entries: int = 50) -> None:
         """Store log line in memory ring buffer."""
@@ -990,29 +1365,7 @@ def extract_recent_agent_logs() -> Dict[str, List[str]]:
                 except Exception:
                     pass
 
-    # Provide realistic operational fallbacks if log files have sparse lines for any organ
-    now_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-    if not logs["eyes"]:
-        logs["eyes"] = [
-            f"{now_str} [INFO] Golem.Sensory.Eyes: EyesTaskObserver calibrated (interval=15.0s, mode=sha256)",
-            f"{now_str} [INFO] Golem.Sensory.Eyes: Monitoring execution pane 'runner' [status=IDLE]",
-            f"{now_str} [INFO] Golem.Sensory.Eyes: Buffer delta unchanged (0 tokens, quiescent gate active)",
-            f"{now_str} [INFO] Golem.Sensory.Eyes: Shoulder tap bus listening on 'runner'",
-        ]
-    if not logs["nose"]:
-        logs["nose"] = [
-            f"{now_str} [INFO] Golem.Sensory.Nose: NoseSentinel startup calibrated: offset=267519, inode=145671983, mode='eof'",
-            f"{now_str} [INFO] Golem.Sensory.Nose: NoseSentinel started (interval=15.0m / 900.0s, bot_err='bot.err')",
-            f"{now_str} [INFO] AGY: The Nose 24/7 Fleet Health Sentinel active.",
-            f"{now_str} [INFO] Golem.Sensory.Nose: Quiescent scan clean: 0 anomalies, 0 errors, fleet healthy.",
-        ]
-    if not logs["mouth"]:
-        logs["mouth"] = [
-            f"{now_str} [INFO] Golem.Gateway.Router: Initialized new warm session 'D0C2J1HKNN7' in cwd '/Users/hermes/projects/first-mate'",
-            f"{now_str} [INFO] Golem.Gateway.Session: Closing expired session (reason: inactivity_timeout)",
-            f"{now_str} [INFO] Golem.Agent.Mouth: Liaison standing by for Carl's instructions (model='gemini-3.8-flash')",
-            f"{now_str} [INFO] Golem.Agent.Mouth: Sub-second response engine ready; out-of-band inquiries armed",
-        ]
+    # No synthetic fallbacks: an organ with no real log lines simply returns an empty stream.
 
     result = {
         "eyes": logs["eyes"][-16:],

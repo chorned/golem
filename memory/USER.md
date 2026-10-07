@@ -8,3 +8,6 @@
 ## Tooling & Models
 - **FrugaLLM Dogfooding:** Primary local model proxy runs at `0.0.0.0:61721` with password `horned66`. Direct Tier 2 sub-agent work through FrugaLLM endpoints.
 - **Tone & Brevity:** Briefings prioritize executive synthesis (verdicts, diff stats, PR links) over mechanical scratchpads.
+
+## Media & Podcast Generation Standards
+- **NotebookLM Audio Overviews:** Always enforce the "Long" format setting (~40–60 min) by default for all podcast episodes. Never generate short or default-length episodes unless explicitly requested by Carl.

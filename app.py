@@ -1716,6 +1716,15 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         default=None,
         help="Custom WebUI port number (e.g. 8765)",
     )
+    parser.add_argument(
+        "--hands", "--mock-hands",
+        dest="hands",
+        type=int,
+        nargs="?",
+        const=6,
+        default=None,
+        help="Simulate N hand agents for testing/demonstration (e.g. --hands, --hands 6, or --hands -6)",
+    )
     parsed, _ = parser.parse_known_args(argv if argv is not None else sys.argv[1:])
     return parsed
 
@@ -1761,7 +1770,7 @@ async def main(args: Optional[argparse.Namespace] = None):
     await start_bluebubbles_transport()
 
     # Start Observability WebUI if requested via CLI flag or environment variable
-    webui_active = getattr(args, "webui", False) or is_webui_enabled()
+    webui_active = getattr(args, "webui", False) or is_webui_enabled() or (getattr(args, "hands", None) is not None)
     if webui_active:
         try:
             default_daemon_host = "0.0.0.0" if (os.environ.get("DAEMON_LABEL") or os.environ.get("GOLEM_DAEMON_LABEL")) else get_webui_host()
@@ -1770,6 +1779,22 @@ async def main(args: Optional[argparse.Namespace] = None):
             await start_webui_server(host=webui_host, port=webui_port)
             ingress_gateway.webui_server = get_active_webui_server()
             logger.info(f"Golem Observability WebUI active on http://{webui_host}:{webui_port}")
+
+            # Auto-start simulated hands if requested via CLI flag or environment variable
+            sim_hands = getattr(args, "hands", None)
+            if sim_hands is not None:
+                hands_count = abs(int(sim_hands))
+            elif os.environ.get("GOLEM_SIMULATE_HANDS"):
+                try:
+                    hands_count = abs(int(os.environ["GOLEM_SIMULATE_HANDS"]))
+                except ValueError:
+                    hands_count = None
+            else:
+                hands_count = None
+
+            if hands_count is not None and ingress_gateway.webui_server:
+                ingress_gateway.webui_server.start_hand_simulation(hands_count)
+                logger.info(f"Hand agent simulator active ({hands_count} simulated hands).")
         except Exception as e:
             logger.error(f"Failed to start Observability WebUI server: {e}")
 

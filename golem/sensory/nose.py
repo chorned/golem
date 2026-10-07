@@ -1493,3 +1493,312 @@ class NoseSentinel:
     # Aliases
     get_telemetry = get_telemetry_digest
     get_status = get_telemetry_digest
+
+
+# ==============================================================================
+# Live Probing Layer (WebUI real-time cadence)
+# ==============================================================================
+
+# Ports that signal an in-flight OAuth callback or an exposed debugger.
+FLAGGED_PORTS: Dict[int, str] = {
+    53682: "OAuth callback listener",
+    9229: "Node.js inspector",
+    5678: "debugpy",
+    9222: "Chrome DevTools",
+}
+
+# Ephemeral range listeners are churn, not signal; only the watchlist is tracked there.
+EPHEMERAL_PORT_FLOOR = 49152
+
+DEFAULT_FLEET_TARGETS: Dict[str, Tuple[str, int]] = {
+    "desktop-pc": ("100.80.59.45", 22),
+    "oci-machine": ("100.113.173.33", 22),
+}
+
+
+def parse_fleet_targets(raw: Optional[str]) -> Dict[str, Tuple[str, int]]:
+    """
+    Parse GOLEM_NOSE_FLEET_TARGETS, e.g. "desktop-pc=100.80.59.45:22,oci-machine=100.113.173.33:22".
+    Falls back to the documented fleet defaults when unset or unparseable.
+    """
+    if not raw:
+        return dict(DEFAULT_FLEET_TARGETS)
+    targets: Dict[str, Tuple[str, int]] = {}
+    for item in raw.split(","):
+        name, sep, addr = item.strip().partition("=")
+        host, _, port = addr.strip().rpartition(":")
+        if not (sep and name.strip() and host):
+            continue
+        try:
+            targets[name.strip()] = (host, int(port))
+        except ValueError:
+            continue
+    return targets or dict(DEFAULT_FLEET_TARGETS)
+
+
+def _parse_proc_net_tcp(text: str) -> Set[int]:
+    """Extract LISTEN-state local ports from /proc/net/tcp{,6} content."""
+    ports: Set[int] = set()
+    for line in text.splitlines()[1:]:
+        cols = line.split()
+        if len(cols) < 4 or cols[3] != "0A":
+            continue
+        try:
+            ports.add(int(cols[1].rsplit(":", 1)[1], 16))
+        except (IndexError, ValueError):
+            continue
+    return ports
+
+
+def _parse_lsof_listen(text: str) -> Set[int]:
+    """Extract listening ports from `lsof -nP -iTCP -sTCP:LISTEN -Fn` output."""
+    ports: Set[int] = set()
+    for line in text.splitlines():
+        if not line.startswith("n"):
+            continue
+        tail = line.rsplit(":", 1)[-1].strip()
+        if tail.isdigit():
+            ports.add(int(tail))
+    return ports
+
+
+class LivePortSniffer:
+    """Cross-platform local TCP listener enumeration (procfs on Linux, lsof elsewhere)."""
+
+    def scan(self) -> Set[int]:
+        """Blocking scan; call via asyncio.to_thread. Returns an empty set on total failure."""
+        found: Set[int] = set()
+        proc_ok = False
+        for path in ("/proc/net/tcp", "/proc/net/tcp6"):
+            try:
+                with open(path, "r", encoding="utf-8", errors="replace") as fh:
+                    found |= _parse_proc_net_tcp(fh.read())
+                proc_ok = True
+            except OSError:
+                continue
+        if proc_ok:
+            return found
+
+        lsof = shutil.which("lsof")
+        if lsof:
+            try:
+                import subprocess
+                out = subprocess.run(
+                    [lsof, "-nP", "-iTCP", "-sTCP:LISTEN", "-Fn"],
+                    capture_output=True, text=True, timeout=2.0, check=False,
+                ).stdout
+                found |= _parse_lsof_listen(out)
+            except Exception as e:
+                logger.debug(f"LivePortSniffer lsof failed: {e}")
+        return found
+
+
+def read_memory_gauge() -> Dict[str, Any]:
+    """Host memory gauge: {total_gb, used_gb, percent_used}; values None when unavailable."""
+    gauge: Dict[str, Any] = {"total_gb": None, "used_gb": None, "percent_used": None}
+    try:
+        import psutil  # type: ignore
+        vm = psutil.virtual_memory()
+        gauge.update(
+            total_gb=round(vm.total / 1024 ** 3, 1),
+            used_gb=round((vm.total - vm.available) / 1024 ** 3, 1),
+            percent_used=round(float(vm.percent), 1),
+        )
+        return gauge
+    except Exception:
+        pass
+    try:
+        info: Dict[str, int] = {}
+        with open("/proc/meminfo", "r", encoding="utf-8") as fh:
+            for line in fh:
+                k, _, v = line.partition(":")
+                info[k] = int(v.strip().split()[0])
+        total_kb, avail_kb = info["MemTotal"], info["MemAvailable"]
+        gauge.update(
+            total_gb=round(total_kb / 1024 ** 2, 1),
+            used_gb=round((total_kb - avail_kb) / 1024 ** 2, 1),
+            percent_used=round((total_kb - avail_kb) / total_kb * 100.0, 1),
+        )
+    except Exception:
+        pass
+    return gauge
+
+
+class FleetReachabilityProbe:
+    """Concurrent TCP reachability checks for fleet nodes with a TTL cache."""
+
+    def __init__(
+        self,
+        targets: Optional[Dict[str, Tuple[str, int]]] = None,
+        timeout: float = 1.0,
+        ttl: float = 10.0,
+    ) -> None:
+        self.targets = targets if targets is not None else parse_fleet_targets(
+            os.environ.get("GOLEM_NOSE_FLEET_TARGETS")
+        )
+        self.timeout = timeout
+        self.ttl = ttl
+        self._cache: Dict[str, Dict[str, Any]] = {}
+        self._cache_at: float = 0.0
+
+    async def _probe_one(self, name: str, host: str, port: int) -> Tuple[str, Dict[str, Any]]:
+        started = time.monotonic()
+        try:
+            _, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=self.timeout)
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except Exception:
+                pass
+            latency = round((time.monotonic() - started) * 1000.0, 1)
+            return name, {"online": True, "status": "Online", "latency_ms": latency, "target": f"{host}:{port}"}
+        except asyncio.TimeoutError:
+            status = f"Timeout after {self.timeout:g}s"
+        except Exception as e:
+            status = f"Unreachable ({type(e).__name__})"
+        return name, {"online": False, "status": status, "latency_ms": None, "target": f"{host}:{port}"}
+
+    async def probe(self, force: bool = False) -> Dict[str, Dict[str, Any]]:
+        now = time.monotonic()
+        if not force and self._cache and (now - self._cache_at) < self.ttl:
+            return {k: dict(v) for k, v in self._cache.items()}
+        results = await asyncio.gather(*(self._probe_one(n, h, p) for n, (h, p) in self.targets.items()))
+        self._cache = {name: info for name, info in results}
+        self._cache_at = time.monotonic()
+        return {k: dict(v) for k, v in self._cache.items()}
+
+
+class NoseTelemetryTracker:
+    """
+    Separates continuous gauges from log-worthy events.
+
+    `observe()` is called every tick but returns events ONLY for:
+      1. a node changing state (including its first observation),
+      2. a listening port opening or closing,
+      3. a newly flagged anomaly (smells_off with a not-yet-reported summary).
+    `explicit_check()` records an operator-requested health check (/health, !nose).
+    Identical consecutive ticks therefore yield an empty event list.
+    """
+
+    def __init__(self) -> None:
+        self._nodes: Dict[str, bool] = {}
+        self._ports: Optional[Set[int]] = None
+        self._anomaly_sig: Optional[str] = None
+
+    @staticmethod
+    def _event(kind: str, level: str, message: str, **extra: Any) -> Dict[str, Any]:
+        ev = {"kind": kind, "level": level, "message": message, "timestamp": time.time()}
+        ev.update(extra)
+        return ev
+
+    @staticmethod
+    def _trackable(port: int) -> bool:
+        return port < EPHEMERAL_PORT_FLOOR or port in FLAGGED_PORTS
+
+    def observe(
+        self,
+        nodes: Dict[str, Dict[str, Any]],
+        ports: Set[int],
+        smells_off: bool = False,
+        verdict_summary: str = "",
+    ) -> List[Dict[str, Any]]:
+        events: List[Dict[str, Any]] = []
+
+        for name in sorted(nodes):
+            info = nodes[name]
+            online = bool(info.get("online"))
+            was = self._nodes.get(name)
+            if was is online:
+                continue
+            self._nodes[name] = online
+            if was is None:
+                detail = f"{info.get('status', '')} {info.get('target', '')}".strip()
+                events.append(self._event(
+                    "node_state", "info" if online else "warn",
+                    f"Fleet ping: {name} {'reachable' if online else 'unreachable'} ({detail})",
+                    node=name, online=online,
+                ))
+            else:
+                events.append(self._event(
+                    "node_state", "info" if online else "warn",
+                    f"{name} went {'online' if online else 'offline'}: {info.get('status', '')}".rstrip(": "),
+                    node=name, online=online,
+                ))
+
+        tracked = {p for p in ports if self._trackable(p)}
+        if self._ports is None:
+            # Baseline: only surface flagged ports that are already listening.
+            for p in sorted(tracked & set(FLAGGED_PORTS)):
+                events.append(self._event(
+                    "port_opened", "warn", f"Port {p} listening — {FLAGGED_PORTS[p]} (flagged)",
+                    port=p, flagged=True,
+                ))
+        else:
+            for p in sorted(tracked - self._ports):
+                flagged = p in FLAGGED_PORTS
+                events.append(self._event(
+                    "port_opened", "warn" if flagged else "info",
+                    f"Port {p} now listening" + (f" — {FLAGGED_PORTS[p]} (flagged)" if flagged else ""),
+                    port=p, flagged=flagged,
+                ))
+            for p in sorted(self._ports - tracked):
+                events.append(self._event(
+                    "port_closed", "info",
+                    f"Port {p} closed" + (f" — {FLAGGED_PORTS[p]}" if p in FLAGGED_PORTS else ""),
+                    port=p, flagged=p in FLAGGED_PORTS,
+                ))
+        self._ports = tracked
+
+        if smells_off:
+            sig = verdict_summary or "anomaly"
+            if sig != self._anomaly_sig:
+                self._anomaly_sig = sig
+                events.append(self._event("anomaly", "warn", f"Anomaly: {sig}", smells_off=True))
+        else:
+            self._anomaly_sig = None
+
+        return events
+
+    def note_anomaly(self, summary: str) -> Optional[Dict[str, Any]]:
+        """Record an anomaly delivered out-of-band (e.g. bus alert); returns None if already reported."""
+        sig = summary or "anomaly"
+        if sig == self._anomaly_sig:
+            return None
+        self._anomaly_sig = sig
+        return self._event("anomaly", "warn", f"Anomaly: {sig}", smells_off=True)
+
+    def explicit_check(self, summary: str, smells_off: bool = False) -> Dict[str, Any]:
+        """Always returns an event; explicit checks are never deduplicated."""
+        return self._event(
+            "health_check", "warn" if smells_off else "info",
+            f"Health check: {summary}" if summary else "Health check executed",
+            smells_off=bool(smells_off),
+        )
+
+
+class NoseLiveProbe:
+    """Per-tick live sampler: local listening ports, fleet reachability, memory."""
+
+    def __init__(
+        self,
+        fleet_probe: Optional[FleetReachabilityProbe] = None,
+        port_sniffer: Optional[LivePortSniffer] = None,
+    ) -> None:
+        self.fleet_probe = fleet_probe or FleetReachabilityProbe()
+        self.port_sniffer = port_sniffer or LivePortSniffer()
+
+    async def sample(self) -> Dict[str, Any]:
+        ports, nodes, memory = await asyncio.gather(
+            asyncio.to_thread(self.port_sniffer.scan),
+            self.fleet_probe.probe(),
+            asyncio.to_thread(read_memory_gauge),
+        )
+        shown = sorted(p for p in ports if p < EPHEMERAL_PORT_FLOOR or p in FLAGGED_PORTS)
+        return {
+            "ports": shown,
+            "port_set": set(ports),
+            "flagged_ports": [{"port": p, "label": FLAGGED_PORTS[p]} for p in shown if p in FLAGGED_PORTS],
+            "fleet_nodes": nodes,
+            "memory": memory,
+        }
+

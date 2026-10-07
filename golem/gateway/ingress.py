@@ -233,6 +233,7 @@ class BackstageExecutionAccumulator:
         self.text_deltas: List[str] = []
         self.tool_calls: List[Dict[str, Any]] = []
         self.status_updates: List[str] = []
+        self.model_fallback_notes: List[str] = []
         self.final_response: str = ""
         self.turn_status: str = "SUCCESS"
         self.error_message: str = ""
@@ -279,6 +280,11 @@ class BackstageExecutionAccumulator:
             )
             if status:
                 self.status_updates.append(status)
+            if status == "model_fallback":
+                detail = getattr(event_item, "detail", "") or (
+                    event_item.get("detail", "") if isinstance(event_item, dict) else ""
+                )
+                self.model_fallback_notes.append(detail or "Switched to fallback model after quota exhaustion.")
 
         elif ev_type == "awaiting_input":
             self.has_awaiting_input = True
@@ -310,7 +316,7 @@ class BackstageExecutionAccumulator:
         """Produce structured payload for Gemini functionResponse."""
         output = self.get_full_output()
         duration_s = round((self.end_time or time.time()) - self.start_time, 2)
-        return {
+        summary = {
             "status": self.turn_status,
             "duration_seconds": duration_s,
             "output_tail": output[-8000:] if output else "",
@@ -322,6 +328,9 @@ class BackstageExecutionAccumulator:
             "awaiting_input_prompt": self.awaiting_input_prompt,
             "error": self.error_message,
         }
+        if self.model_fallback_notes:
+            summary["model_fallback"] = list(self.model_fallback_notes)
+        return summary
 
 
 async def download_slack_file(
@@ -1691,6 +1700,43 @@ class IngressGateway:
         """Stream events from backstage session."""
         return session.send_user_message(task_desc)
 
+    def _attach_eyes_observer(
+        self,
+        session: SessionHandle,
+        pane: str,
+        task_desc: str,
+        webui: Optional[Any] = None,
+        channel: Optional[str] = None,
+        thread_ts: Optional[str] = None,
+    ) -> Optional[Any]:
+        """
+        Attach an EyesTaskObserver to the concrete runner pane of a yielded (>3.0s) task.
+        Publishes `eye_attached` immediately; the observer then streams `eye_inspection`
+        and `eye_blocker` events over the ShoulderTapEventBus. Returns None on failure.
+        """
+        try:
+            from golem.sensory.eyes import EyesTaskObserver
+
+            bus = getattr(self, "bus", None)
+            poll = float(os.environ.get("GOLEM_EYES_POLL_INTERVAL", "5.0"))
+            observer = EyesTaskObserver(
+                sensory_bus=bus,
+                buffer_observer=getattr(session, "buffer_observer", None),
+                session_id=getattr(session, "session_id", None),
+                pane=pane,
+                channel=channel,
+                thread_ts=thread_ts,
+                webui_server=webui,
+                poll_interval=poll,
+                task=task_desc,
+            )
+            observer.start_monitoring()
+            observer.announce_attached()
+            return observer
+        except Exception as exc:
+            logger.debug(f"EyesTaskObserver attach warning: {exc}")
+            return None
+
     async def _execute_backstage_task(
         self,
         task_desc: str,
@@ -1745,7 +1791,11 @@ class IngressGateway:
 
         # WebUI Backstage Hand Registration & hand_spawn broadcast
         webui = getattr(self, "webui_server", None)
-        pane = getattr(session, "runner_pane", None) or getattr(session, "session_id", None) or "runner"
+        _rp_id = getattr(session, "runner_pane_id", None)
+        _rp_label = getattr(session, "runner_pane", None)
+        runner_pane_id = _rp_id if isinstance(_rp_id, str) and _rp_id else None
+        pane = runner_pane_id or _rp_label or getattr(session, "session_id", None) or "runner"
+        eyes_observer: Optional[Any] = None
         pid = getattr(getattr(session, "active_execution", None), "pid", None) or os.getpid()
         hand_registered = False
 
@@ -1757,6 +1807,7 @@ class IngressGateway:
                     command=task_desc,
                     pid=pid,
                     worker=effective_worker,
+                    herdr_pane_id=runner_pane_id or pane,
                 )
                 if inspect.isawaitable(res):
                     await res
@@ -1811,6 +1862,14 @@ class IngressGateway:
                         )
                         if client and channel:
                             await self._post_response(client, channel, thread_ts, ack_msg, is_imessage)
+                        eyes_observer = self._attach_eyes_observer(
+                            session=session,
+                            pane=pane,
+                            task_desc=task_desc,
+                            webui=webui,
+                            channel=channel,
+                            thread_ts=thread_ts,
+                        )
                         continue
                 else:
                     # 2. Post-yield execution: listen to both worker events and Shoulder Tap session queue
@@ -1909,6 +1968,11 @@ class IngressGateway:
                     await stream_gen.aclose()
                 except Exception:
                     pass
+            if eyes_observer is not None:
+                try:
+                    await eyes_observer.stop_monitoring()
+                except Exception as exc:
+                    logger.debug(f"EyesTaskObserver stop warning: {exc}")
 
             # Settle and unregister hand agent cleanly
             if hand_registered and webui is not None:
@@ -2017,6 +2081,24 @@ class IngressGateway:
         }
 
     async def _execute_check_nose(
+        self,
+        trigger_fresh_sniff: bool = False,
+    ) -> Dict[str, Any]:
+        """Run the Nose health query and log it as an explicit health check on the WebUI Nose terminal."""
+        result = await self._execute_check_nose_core(trigger_fresh_sniff=trigger_fresh_sniff)
+        webui = getattr(self, "webui_server", None)
+        recorder = getattr(webui, "record_nose_health_check", None) if webui is not None else None
+        if callable(recorder):
+            try:
+                summary = str(result.get("error") or result.get("verdict_summary") or "")
+                res = recorder(summary, bool(result.get("smells_off") or result.get("error")))
+                if inspect.isawaitable(res):
+                    await res
+            except Exception as exc:
+                logger.debug(f"WebUI record_nose_health_check warning: {exc}")
+        return result
+
+    async def _execute_check_nose_core(
         self,
         trigger_fresh_sniff: bool = False,
     ) -> Dict[str, Any]:

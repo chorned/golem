@@ -86,6 +86,7 @@ class SessionHandle:
         router: Optional[Any] = None,
         bus: Optional[Any] = None,
         driver: Optional[Any] = None,
+        runner_pane_id: Optional[str] = None,
     ) -> None:
         self.session_id: str = session_id
         self.channel: str = channel
@@ -98,6 +99,8 @@ class SessionHandle:
         self.workspace_id: Optional[str] = workspace_id
         self.liaison_pane: Optional[str] = liaison_pane
         self.runner_pane: Optional[str] = runner_pane
+        # Concrete Herdr pane id (e.g. "w1:p2"); falls back to the label when unresolved.
+        self.runner_pane_id: Optional[str] = runner_pane_id or runner_pane
         self.router: Optional[Any] = router
         self.bus: Optional[Any] = bus
 
@@ -180,7 +183,7 @@ class SessionHandle:
              "command": ...
           }
         """
-        pane = self.runner_pane or "runner"
+        pane = self.runner_pane_id or self.runner_pane or "runner"
         buffer_text = ""
         try:
             if hasattr(self.buffer_observer, "read_buffer"):
@@ -356,7 +359,7 @@ class SessionHandle:
         Sends interrupt / cancellation to Pane 2 out-of-band and resets active_execution.
         Returns True on successful cancellation dispatch.
         """
-        pane = self.runner_pane or "runner"
+        pane = self.runner_pane_id or self.runner_pane or "runner"
         logger.info(f"Cancelling execution in session '{self.session_id}' (pane={pane})")
 
         # 1. Kill active PID if known and local

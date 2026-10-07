@@ -26,3 +26,8 @@
 ## Protected Paths & Blast-Radius Boundaries
 - **Strictly Protected Paths:** Workers are prohibited from mutating `*.plist`, `.git`, `.env`, and launchd daemon configs. Violations trigger immediate task rejection and worktree purge.
 - **Tier 3 Merge Gates:** Merging to main, git pushes to remote, and container restarts are strictly gated behind explicit confirmation (`do it` or `approve`). Emoji reaction approvals are disabled for Tier 3 mutations.
+
+## Podcast & NotebookLM Audio Generation Standards
+- **Enforce "Long" Format Setting by Default:** All Audio Overviews generated via Google NotebookLM must enforce the 3rd format toggle ('Long', yielding ~40–60 minute deep dives). Never trigger standard or short overviews unless explicitly instructed.
+- **Downloader Targeting:** When downloading generated Audio Overviews via Playwright, always target the top/newest audio card in the Studio pane (the "Long" run) rather than older historical runs.
+- **Mutagen & Audiobookshelf Ingestion:** Tag audio tracks with full mutagen metadata (`MP4`, `MP4Cover`), stage into `podcasts/<Series Name>/Episode_<XX>_<Sanitized_Title>.m4a` along with `Cover.jpg` and `Cover.png`, and trigger the library scan via the Podcasts library API (`b6967c3c-b061-4831-a06b-3e4aea9121ca`).

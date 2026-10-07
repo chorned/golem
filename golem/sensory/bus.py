@@ -28,6 +28,9 @@ AlertType = Union[
         "completion",
         "health_anomaly",
         "eye_log",
+        "eye_attached",
+        "eye_inspection",
+        "eye_blocker",
         "eye_telemetry",
         "nose_alert",
         "mouth_briefing",
@@ -84,6 +87,11 @@ class ShoulderTapAlert:
     def is_eye_telemetry(self) -> bool:
         """True if this alert signals eye telemetry."""
         return self.alert_type == "eye_telemetry"
+
+    @property
+    def is_eye_observation(self) -> bool:
+        """True for structured Eye observation events (attached / inspection / blocker)."""
+        return self.alert_type in ("eye_attached", "eye_inspection", "eye_blocker")
 
     @property
     def is_nose_alert(self) -> bool:

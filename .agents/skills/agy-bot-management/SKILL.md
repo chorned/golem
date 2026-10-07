@@ -1,6 +1,6 @@
 ---
 name: agy-bot-management
-description: Comprehensive operational runbook for monitoring, starting, stopping, restarting, debugging, and testing the AGY native macOS Slack background daemon (com.user.antigravity-slack). Use whenever inspecting service status, viewing logs, updating configurations, or troubleshooting the AGY Slack bot.
+description: Comprehensive operational runbook for monitoring, starting, stopping, restarting, debugging, and testing the AGY native macOS Slack background daemon (com.user.first-mate). Use whenever inspecting service status, viewing logs, updating configurations, or troubleshooting the AGY Slack bot.
 ---
 
 # AGY Bot Management Guide
@@ -8,13 +8,15 @@ description: Comprehensive operational runbook for monitoring, starting, stoppin
 This skill provides step-by-step instructions for managing the native macOS background service that connects Slack to the local Antigravity CLI (`agy`).
 
 ## Service Architecture
-- **Daemon Label:** `com.user.antigravity-slack`
-- **Plist Location:** `~/Library/LaunchAgents/com.user.antigravity-slack.plist`
-- **Project Directory:** `/Users/hermes/projects/AGY`
-- **Virtual Environment:** `/Users/hermes/projects/AGY/.venv`
+- **Daemon Label:** `com.user.first-mate` (launchd domain `gui/502`)
+- **Plist Location:** `~/Library/LaunchAgents/com.user.first-mate.plist`
+- **Entry Point:** `/Users/hermes/projects/first-mate/app.py`
+- **Project Directory:** `/Users/hermes/projects/first-mate`
+- **Virtual Environment:** `/Users/hermes/projects/first-mate/.venv`
 - **Log Files:** 
-  - Standard Out: `/Users/hermes/projects/AGY/bot.log`
-  - Standard Error: `/Users/hermes/projects/AGY/bot.err`
+  - Standard Out: `/Users/hermes/projects/first-mate/bot.log`
+  - Standard Error: `/Users/hermes/projects/first-mate/bot.err`
+- **Retired:** `com.user.antigravity-slack` (pointed at a deleted worktree, exited `78 EX_CONFIG`). Its plist is archived in `~/Library/LaunchAgents.disabled/`. Do not reload it.
 
 ---
 
@@ -22,12 +24,12 @@ This skill provides step-by-step instructions for managing the native macOS back
 
 To verify if the daemon is loaded and running:
 ```bash
-launchctl list | grep antigravity-slack
+launchctl print gui/$(id -u)/com.user.first-mate | grep -E "state =|pid =|runs =|last exit"
 ```
 - **Output interpretation:**
-  - `<PID>    0    com.user.antigravity-slack`: Running healthy with process ID `<PID>`.
-  - `-        0    com.user.antigravity-slack`: Loaded but idle (will restart if KeepAlive is true).
-  - Empty output: The daemon is not currently loaded into launchd.
+  - `state = running` with a `pid`: Running healthy.
+  - `state = spawn scheduled` / non-zero `last exit code`: Crash-looping or misconfigured; inspect `bot.err`.
+  - `Could not find service`: The daemon is not loaded into launchd.
 
 ---
 
@@ -35,18 +37,18 @@ launchctl list | grep antigravity-slack
 
 ### Restarting the Service (Recommended after code/env updates)
 ```bash
-launchctl unload ~/Library/LaunchAgents/com.user.antigravity-slack.plist 2>/dev/null || true
-launchctl load -w ~/Library/LaunchAgents/com.user.antigravity-slack.plist
+launchctl kickstart -k gui/$(id -u)/com.user.first-mate
 ```
+Then confirm with `tail -n 15 /Users/hermes/projects/first-mate/bot.err` and look for `Bolt app is running!`.
 
 ### Stopping the Service
 ```bash
-launchctl unload ~/Library/LaunchAgents/com.user.antigravity-slack.plist
+launchctl bootout gui/$(id -u)/com.user.first-mate
 ```
 
 ### Starting / Enabling the Service
 ```bash
-launchctl load -w ~/Library/LaunchAgents/com.user.antigravity-slack.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.user.first-mate.plist
 ```
 
 ---
@@ -56,10 +58,10 @@ launchctl load -w ~/Library/LaunchAgents/com.user.antigravity-slack.plist
 Real-time tailing of connection logs and errors:
 ```bash
 # View recent error and debug output (includes Socket Mode connection status)
-tail -f /Users/hermes/projects/AGY/bot.err
+tail -f /Users/hermes/projects/first-mate/bot.err
 
 # View standard output
-tail -f /Users/hermes/projects/AGY/bot.log
+tail -f /Users/hermes/projects/first-mate/bot.log
 ```
 
 ### Common Log Signatures:
@@ -82,7 +84,7 @@ cd /Users/hermes/projects/first-mate
 
 ## 5. Configuration & Workspace Management
 
-- **Credentials & Defaults:** Stored in `/Users/hermes/projects/AGY/.env`.
+- **Credentials & Defaults:** Stored in `/Users/hermes/projects/first-mate/.env`.
 - **Dynamic Workspace Switch:** In any Slack thread, users can send:
   ```text
   switch to /path/to/project

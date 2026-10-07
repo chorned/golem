@@ -66,7 +66,6 @@
         .terminal-log-row,
         .terminal-log-stream,
         .terminal-stream,
-        .hand-card-terminal,
         .hand-card-cmd,
         .stream-entry,
         .lead-info,
@@ -450,8 +449,13 @@
             flex-direction: column;
             align-items: center;
             justify-content: flex-start;
-            padding: 0 36px;
-            overflow: hidden;
+            padding: 0 36px 28px;
+            /* Scroll instead of clipping: rows 2-3 of the hands grid sit below the sensory windows
+               and would be cut off (unreachable) on shorter viewports. */
+            overflow-x: hidden;
+            overflow-y: auto;
+            scrollbar-width: thin;
+            scrollbar-color: rgba(230, 0, 0, 0.5) transparent;
             max-width: 1400px;
             margin: 0 auto;
             width: 100%;
@@ -462,13 +466,26 @@
         .golem-face-matrix {
             position: relative;
             width: 100%;
-            max-width: 1260px;
+            max-width: 1400px;
             display: flex;
             flex-direction: column;
             align-items: center;
             margin: 0 auto;
             z-index: 20;
             flex-shrink: 0;
+            box-sizing: border-box;
+        }
+
+        /* 3-Column Side-by-Side Sensory Command Deck (Desktop) */
+        .sensory-organs-row {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 16px;
+            width: 100%;
+            max-width: 1400px;
+            margin: 14px auto 16px auto;
+            box-sizing: border-box;
+            z-index: 20;
         }
 
         .golem-anchor {
@@ -476,36 +493,29 @@
             display: flex;
             justify-content: center;
             width: 100%;
-            transition: margin 0.15s ease-out;
         }
 
-        /* Each terminal the EXACT same width (580px) */
+        /* Full-width inside each grid cell */
         .anchor-eyes,
         .anchor-nose,
         .anchor-mouth {
             width: 100%;
-            max-width: 580px;
+            max-width: 100%;
+            margin-top: 0 !important;
+            display: flex;
+            flex-direction: column;
         }
 
-        .anchor-eyes {
-            margin-top: clamp(14px, 6vh, 80px);
-        }
-
-        .anchor-nose {
-            margin-top: clamp(30px, 12vh, 160px);
-        }
-
-        .anchor-mouth {
-            margin-top: clamp(30px, 12vh, 160px);
-        }
-
-        /* Exception: Hands agent terminal wide enough for 3 horizontally and 3 vertically */
+        /* Hands agent terminal grid positioned cleanly below sensory organs */
         .anchor-hands {
-            max-width: 1240px;
+            max-width: 1400px;
             width: 100%;
             display: flex;
+            flex-direction: column;
             justify-content: center;
-            transition: margin 0.15s ease-out, max-width 0.2s ease-out;
+            margin-top: 8px !important;
+            margin-bottom: 24px;
+            z-index: 20;
         }
 
         .sensory-window {
@@ -515,20 +525,21 @@
         .sensory-lead-body,
         .terminal-body {
             font-family: var(--font-crt);
-            font-size: 11px;
-            line-height: 18px;
+            font-size: 11.5px;
+            line-height: 1.5;
             background: rgba(7, 9, 14, 0.95);
-            padding: 6px 10px;
+            padding: 8px 10px;
             color: #cbd5e1;
             border-top: 1px solid #1e2430;
             display: flex;
             flex-direction: column;
-            gap: 0;
-            height: 84px;
-            min-height: 84px;
-            max-height: 84px;
+            gap: 2px;
+            height: 280px;
+            min-height: 140px;
+            max-height: none;
             box-sizing: border-box;
-            overflow: hidden !important; /* Scrolling removed in collapsed terminal */
+            overflow-y: auto !important;
+            overflow-x: hidden;
             user-select: text !important;
             -webkit-user-select: text !important;
             cursor: text;
@@ -536,33 +547,62 @@
 
         .terminal-log-line {
             font-family: var(--font-crt);
-            font-size: 11px;
-            line-height: 18px;
-            height: 18px;
-            min-height: 18px;
-            max-height: 18px;
-            flex-shrink: 0;
-            display: flex;
-            align-items: center;
-            color: #94a3b8;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
+            font-size: 11.5px;
+            line-height: 1.5;
+            min-height: 20px;
+            height: auto;
+            max-height: none;
+            display: block;
+            color: #cbd5e1;
+            white-space: pre-wrap;
+            word-break: break-word;
+            overflow-wrap: anywhere;
             box-sizing: border-box;
             user-select: text !important;
             -webkit-user-select: text !important;
             cursor: text;
+            padding: 2px 4px;
+            margin-bottom: 2px;
+            border-radius: 2px;
         }
 
         .terminal-log-line:hover {
-            background: rgba(255, 255, 255, 0.05);
+            background: rgba(255, 255, 255, 0.06);
         }
 
         .log-ts {
             color: #64748b;
             font-size: 11px;
             margin-right: 6px;
-            flex-shrink: 0;
+            display: inline-block;
+            font-family: var(--font-crt);
+            user-select: all;
+        }
+
+        .log-level-life {
+            color: #10b981;
+            font-weight: bold;
+            font-size: 11px;
+            margin-right: 6px;
+            display: inline-block;
+            font-family: var(--font-crt);
+        }
+
+        .log-level-thought {
+            color: #c084fc;
+            font-weight: bold;
+            font-size: 11px;
+            margin-right: 6px;
+            display: inline-block;
+            font-family: var(--font-crt);
+        }
+
+        .log-level-debug {
+            color: #38bdf8;
+            font-weight: bold;
+            font-size: 11px;
+            margin-right: 6px;
+            display: inline-block;
             font-family: var(--font-crt);
         }
 
@@ -571,7 +611,7 @@
             font-weight: bold;
             font-size: 11px;
             margin-right: 6px;
-            flex-shrink: 0;
+            display: inline-block;
             font-family: var(--font-crt);
         }
 
@@ -580,7 +620,7 @@
             font-weight: bold;
             font-size: 11px;
             margin-right: 6px;
-            flex-shrink: 0;
+            display: inline-block;
             font-family: var(--font-crt);
         }
 
@@ -589,7 +629,7 @@
             font-weight: bold;
             font-size: 11px;
             margin-right: 6px;
-            flex-shrink: 0;
+            display: inline-block;
             font-family: var(--font-crt);
         }
 
@@ -598,17 +638,31 @@
             font-weight: 500;
             font-size: 11px;
             margin-right: 6px;
-            flex-shrink: 0;
+            display: inline-block;
             font-family: var(--font-crt);
         }
 
+        .log-tag {
+            font-weight: 700;
+            font-size: 11px;
+            margin-right: 6px;
+            display: inline-block;
+            font-family: var(--font-crt);
+            letter-spacing: 0.5px;
+        }
+
+        .log-tag-eye { color: #67e8f9; }
+        .log-tag-nose { color: #fbbf24; }
+        .log-tag-mouth { color: #86efac; }
+
         .log-msg {
             color: #e2e8f0;
-            font-size: 11px;
+            font-size: 11.5px;
             font-family: var(--font-crt);
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
+            white-space: pre-wrap;
+            word-break: break-word;
+            overflow-wrap: anywhere;
+            display: inline;
         }
 
         /* Hand Agents Grid: wide enough to comfortably fit 3 horizontally and 3 vertically */
@@ -693,7 +747,8 @@
         .hand-card {
             display: flex;
             flex-direction: column;
-            height: 104px; /* Compact height so 3 rows comfortably fit vertically */
+            min-height: 180px;
+            height: auto;
             user-select: text !important;
             -webkit-user-select: text !important;
         }
@@ -701,9 +756,9 @@
         .hand-card-body {
             flex: 1;
             font-family: var(--font-crt);
-            font-size: 11px;
+            font-size: 11.5px;
             background: rgba(7, 9, 14, 0.95);
-            padding: 5px 8px;
+            padding: 8px 10px;
             display: flex;
             flex-direction: column;
             justify-content: space-between;
@@ -717,29 +772,171 @@
         .hand-card-cmd {
             font-weight: bold;
             font-size: 11px;
-            line-height: 15px;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
+            line-height: 1.4;
+            white-space: pre-wrap;
+            word-break: break-word;
+            overflow-wrap: anywhere;
+            color: var(--runic-cyan);
+            margin-bottom: 4px;
             user-select: text !important;
             -webkit-user-select: text !important;
             cursor: text;
         }
 
-        .hand-card-terminal {
+        /* Live Herdr pane mirror (read-only) with line breaks and no ellipsizing */
+        .hand-card-xterm {
+            display: block;
             flex: 1;
-            overflow: hidden !important; /* Scrolling removed in collapsed terminal */
-            font-family: var(--font-crt);
-            font-size: 11px;
-            line-height: 15px;
-            color: #cbd5e1;
-            margin: 1px 0;
+            min-height: 100px;
+            margin: 2px 0;
+            overflow-y: auto !important;
+            overflow-x: hidden;
+            position: relative;
+            cursor: text;
             white-space: pre-wrap;
-            word-break: break-all;
+            word-break: break-word;
+            overflow-wrap: anywhere;
+        }
+
+        .inline-terminal-container {
+            height: 100%;
+            width: 100%;
+            overflow-y: auto;
+            overflow-x: hidden;
+            font-family: var(--font-crt);
+            font-size: 11.5px;
+            line-height: 1.45;
+            white-space: pre-wrap;
+            word-break: break-word;
+            overflow-wrap: anywhere;
+            color: #cbd5e1;
+            box-sizing: border-box;
+            padding: 4px 6px;
             user-select: text !important;
             -webkit-user-select: text !important;
             cursor: text;
         }
+
+        /* Mobile Viewport & Tab Switching (< 768px or .mobile-mode) */
+        .mobile-tab-strip {
+            display: none;
+        }
+        .mobile-panel {
+            display: none;
+        }
+
+        @media (max-width: 768px) {
+            .arcade-girder-left,
+            .arcade-girder-right {
+                display: none !important;
+            }
+
+            header.arcade-hud {
+                margin: 0 !important;
+                padding: 6px 10px !important;
+                flex-wrap: wrap;
+                gap: 8px;
+            }
+
+            .hud-right .hud-counter-box {
+                display: none !important;
+            }
+
+            .mobile-tab-strip {
+                display: flex !important;
+                position: sticky;
+                top: 0;
+                z-index: 40;
+                background: rgba(13, 15, 22, 0.98);
+                border-bottom: 2px solid #232936;
+                padding: 6px 8px;
+                gap: 6px;
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+            }
+
+            .mobile-tab-btn {
+                flex: 1;
+                min-width: 64px;
+                padding: 8px 4px;
+                background: #11141d;
+                border: 1px solid #232936;
+                border-radius: 4px;
+                color: #94a3b8;
+                font-family: var(--font-space);
+                font-size: 11px;
+                font-weight: 600;
+                cursor: pointer;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                gap: 4px;
+                white-space: nowrap;
+                transition: all 0.15s ease;
+            }
+
+            .mobile-tab-btn.active {
+                background: rgba(0, 240, 255, 0.18);
+                border-color: var(--runic-cyan);
+                color: #ffffff;
+                box-shadow: 0 0 8px rgba(0, 240, 255, 0.35);
+            }
+
+            .sensory-organs-row {
+                display: flex !important;
+                flex-direction: column !important;
+                margin: 4px 0 !important;
+                gap: 8px !important;
+            }
+
+            /* Mobile Tab Visibility */
+            body.mobile-mode .golem-anchor,
+            body.mobile-mode .mobile-panel {
+                display: none !important;
+            }
+
+            body.mobile-mode .golem-anchor.mobile-active-tab,
+            body.mobile-mode .mobile-panel.mobile-active-tab {
+                display: flex !important;
+                width: 100% !important;
+                margin: 0 !important;
+            }
+
+            .terminal-body {
+                height: calc(100vh - 135px) !important;
+                max-height: none !important;
+                font-size: 12.5px !important;
+                line-height: 1.55 !important;
+            }
+
+            .terminal-log-line {
+                font-size: 12px !important;
+                line-height: 1.5 !important;
+            }
+
+            .hands-grid {
+                grid-template-columns: 1fr !important;
+            }
+
+            .hand-card {
+                min-height: 160px !important;
+            }
+        }
+
+        .hand-card-xterm .xterm { height: 100%; padding: 0; }
+        .hand-card-xterm .xterm-viewport { background-color: transparent !important; }
+
+        .pane-tag {
+            font-family: var(--font-pixel);
+            font-size: 7px;
+            letter-spacing: 0.5px;
+            color: var(--runic-green);
+            display: none;
+            white-space: nowrap;
+        }
+
+        .pane-tag.is-visible { display: inline; }
+        .pane-tag.is-offline { color: var(--runic-gold); }
 
         .hand-card-footer {
             font-family: var(--font-pixel);
@@ -825,6 +1022,12 @@
             max-width: 400px !important;
         }
 
+        /* A live pane needs real width: agent reasoning and TUIs are unreadable at 400px. */
+        .hand-card.pane-live.terminal-expanded {
+            width: min(1100px, 94vw) !important;
+            max-width: min(1100px, 94vw) !important;
+        }
+
         @keyframes expandTerminalAnim {
             from {
                 opacity: 0.8;
@@ -856,14 +1059,11 @@
             flex-direction: column !important;
         }
 
-        .terminal-expanded .hand-card-terminal {
+        .terminal-expanded .hand-card-xterm {
             flex: 1 !important;
             height: 100% !important;
             max-height: none !important;
             min-height: 0 !important;
-            overflow-y: auto !important;
-            scrollbar-width: thin;
-            scrollbar-color: rgba(230, 0, 0, 0.5) transparent;
         }
 
         .status-pill-badge {
@@ -1066,6 +1266,64 @@
         <div class="girder-rivet"></div>
     </div>
 
+    <!-- Top Arcade HUD Header with real-time fleet gauges and simulation controls -->
+    <header class="arcade-hud">
+        <div class="hud-left">
+            <div class="golem-core-emblem">
+                <span>🗿</span>
+            </div>
+            <div class="hud-title-wrap">
+                <div class="hud-title-row">
+                    <span class="hud-title">STONEFORGE</span>
+                    <span class="hud-version-tag">GOLEM // MESH</span>
+                    <div class="sync-badge" id="sync-badge">
+                        <span class="sync-dot"></span>
+                        <span id="sync-label" style="font-family: var(--font-space); font-size: 8px;">MESH_CONNECTED</span>
+                    </div>
+                </div>
+                <div class="hud-subtitle">Autonomous Fleet Chief of Staff &amp; Observability Matrix</div>
+                <div class="hud-lineage" style="display: none;">Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.</div>
+            </div>
+        </div>
+        <div class="hud-right">
+            <div class="hud-counter-box" title="System Uptime">
+                <span style="color: #64748b;">UPTIME:</span>
+                <span id="uptime-display" style="color: #38bdf8; font-family: var(--font-crt);">00:00:00</span>
+            </div>
+            <div class="hud-counter-box" title="Disk Usage">
+                <span style="color: #64748b;">DISK:</span>
+                <span id="disk-val" style="color: #4ade80; font-family: var(--font-crt);">--%</span>
+            </div>
+            <div class="hud-counter-box" title="Docker Containers">
+                <span style="color: #64748b;">DOCKER:</span>
+                <span id="docker-val" style="color: #a78bfa; font-family: var(--font-crt);">--</span>
+            </div>
+            <div class="hud-counter-box" title="Tailscale Mesh">
+                <span style="color: #64748b;">TAILSCALE:</span>
+                <span id="tailscale-val" style="color: #f59e0b; font-family: var(--font-crt);">--</span>
+            </div>
+            <div class="hud-counter-box" title="Error Log Counter">
+                <span style="color: #64748b;">ERRORS:</span>
+                <span id="error-count-val" style="color: #f87171; font-family: var(--font-crt);">0</span>
+            </div>
+            <button id="sim-hands-btn" class="overclock-btn" title="Simulate Hand Agents across Fleet Mesh">
+                <span>⚡</span>
+                <span id="sim-hands-text">Sim 6 Hands</span>
+            </button>
+            <div id="conn-status" style="display: none;">ONLINE</div>
+            <div id="port-display" style="display: none;">8765</div>
+        </div>
+    </header>
+
+    <!-- Mobile Tab Strip (Only displayed on mobile phone viewports) -->
+    <nav class="mobile-tab-strip" id="mobile-tab-strip">
+        <button class="mobile-tab-btn active" data-tab="hands">🤖 Hands <span id="mobile-hands-count" class="tab-badge" style="background: rgba(0, 240, 255, 0.2); padding: 1px 5px; border-radius: 3px; font-size: 9px; margin-left: 2px;">0</span></button>
+        <button class="mobile-tab-btn" data-tab="eyes">👁️ Eyes</button>
+        <button class="mobile-tab-btn" data-tab="nose">👃 Nose</button>
+        <button class="mobile-tab-btn" data-tab="mouth">👄 Mouth</button>
+        <button class="mobile-tab-btn" data-tab="fleet">🌐 Fleet</button>
+    </nav>
+
     <!-- Hidden metadata for test / system invariants -->
     <div style="display: none;" aria-hidden="true" data-meta="lineage">
         Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh. Hand Agents Grid
@@ -1075,80 +1333,79 @@
     <main class="workspace-canvas" id="workspace-canvas">
         <!-- Central Golem Facial Feature Anchor Matrix -->
         <div class="golem-face-matrix" id="golem-face-matrix">
-            <!-- 1. Eye Agent Terminal Anchor (Positioned directly over glowing cyan runic eyes) -->
-            <div class="golem-anchor anchor-eyes" id="anchor-eyes" data-anchor="eyes">
-                <article class="sensory-window arcade-window-red" id="eye-card">
-                    <div class="arcade-header-red">
-                        <div style="display: flex; align-items: center; gap: 8px;">
-                            <span style="width: 8px; height: 8px; background: var(--runic-cyan); border-radius: 50%; box-shadow: 0 0 6px var(--runic-cyan);"></span>
-                            <span>Eye Agent</span>
-                            <span style="color: #67e8f9; font-family: var(--font-space); font-size: 8px; font-weight: 600;">[OCULAR_STREAM]</span>
+            <!-- 3-Column Functional Desktop Layout for Sensory Organs -->
+            <div class="sensory-organs-row" id="sensory-organs-row">
+                <!-- 1. Eye Agent Terminal Anchor (Ocular Stream) -->
+                <div class="golem-anchor anchor-eyes" id="anchor-eyes" data-anchor="eyes" data-tab="eyes">
+                    <article class="sensory-window arcade-window-red" id="eye-card">
+                        <div class="arcade-header-red">
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <span style="width: 8px; height: 8px; background: var(--runic-cyan); border-radius: 50%; box-shadow: 0 0 6px var(--runic-cyan);"></span>
+                                <span>Eye Agent</span>
+                                <span style="color: #67e8f9; font-family: var(--font-space); font-size: 8px; font-weight: 600;">[OCULAR_STREAM]</span>
+                            </div>
+                            <div class="terminal-header-actions">
+                                <span id="eye-state-badge" class="status-pill-badge badge-green">OBSERVING</span>
+                                <button class="arcade-ctrl-btn btn-expand" title="Expand to full viewport height" aria-label="Expand terminal">□</button>
+                                <button class="arcade-ctrl-btn btn-close" title="Close" aria-label="Close">×</button>
+                            </div>
                         </div>
-                        <div class="terminal-header-actions">
-                            <span id="eye-state-badge" class="status-pill-badge badge-green">OBSERVING</span>
-                            <button class="arcade-ctrl-btn btn-expand" title="Expand to full viewport height" aria-label="Expand terminal">□</button>
-                            <button class="arcade-ctrl-btn btn-close" title="Close" aria-label="Close">×</button>
+                        <div class="terminal-body" id="eye-terminal-body"></div>
+                    </article>
+                </div>
+
+                <!-- 2. Nose Agent Terminal Anchor (Heuristic Sniffer) -->
+                <div class="golem-anchor anchor-nose" id="anchor-nose" data-anchor="nose" data-tab="nose">
+                    <article class="sensory-window arcade-window-red" id="nose-card">
+                        <div class="arcade-header-red">
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <span style="width: 8px; height: 8px; background: var(--runic-cyan); border-radius: 50%; box-shadow: 0 0 6px var(--runic-cyan);"></span>
+                                <span>Nose Agent</span>
+                                <span style="color: #a5f3fc; font-family: var(--font-space); font-size: 8px; font-weight: 600;">[HEURISTIC_SNIFFER]</span>
+                            </div>
+                            <div class="terminal-header-actions">
+                                <span id="nose-nodes-badge" class="status-pill-badge badge-cyan" title="Fleet node reachability">NODES --</span>
+                                <span id="nose-ports-badge" class="status-pill-badge badge-cyan" title="Local listening ports">PORTS --</span>
+                                <span id="nose-mem-badge" class="status-pill-badge badge-cyan" title="Host memory used">MEM --</span>
+                                <span id="nose-status-badge" class="status-pill-badge badge-green">QUIESCENT</span>
+                                <button class="arcade-ctrl-btn btn-expand" title="Expand to full viewport height" aria-label="Expand terminal">□</button>
+                                <button class="arcade-ctrl-btn btn-close" title="Close" aria-label="Close">×</button>
+                            </div>
                         </div>
-                    </div>
-                    <div class="terminal-body" id="eye-terminal-body">
-                        <div class="terminal-log-line"><span class="log-ts">2026-10-04 00:43:41</span> <span class="log-level-info">[INFO]</span> <span class="log-source">Golem.Sensory.Eyes:</span> EyesTaskObserver calibrated (interval=15.0s, mode=sha256)</div>
-                        <div class="terminal-log-line"><span class="log-ts">2026-10-04 00:43:41</span> <span class="log-level-info">[INFO]</span> <span class="log-source">Golem.Sensory.Eyes:</span> Monitoring execution pane 'runner' [status=IDLE]</div>
-                        <div class="terminal-log-line"><span class="log-ts">2026-10-04 00:43:41</span> <span class="log-level-info">[INFO]</span> <span class="log-source">Golem.Sensory.Eyes:</span> Buffer delta unchanged (0 tokens, quiescent gate active)</div>
-                        <div class="terminal-log-line"><span class="log-ts">2026-10-04 00:45:00</span> <span class="log-level-info">[INFO]</span> <span class="log-source">Golem.Sensory.Eyes:</span> Shoulder tap bus listening on 'runner'</div>
-                    </div>
-                </article>
+                        <div class="terminal-body" id="nose-terminal-body"></div>
+                    </article>
+                </div>
+
+                <!-- 3. Mouth Agent Terminal Anchor (Voice Synth Dispatch) -->
+                <div class="golem-anchor anchor-mouth" id="anchor-mouth" data-anchor="mouth" data-tab="mouth">
+                    <article class="sensory-window arcade-window-red" id="mouth-card">
+                        <div class="arcade-header-red">
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <span style="width: 8px; height: 8px; background: var(--runic-green); border-radius: 50%; box-shadow: 0 0 6px var(--runic-green);"></span>
+                                <span>Mouth Agent</span>
+                                <span style="color: #bbf7d0; font-family: var(--font-space); font-size: 8px; font-weight: 600;">[VOICE_SYNTH_DISPATCH]</span>
+                            </div>
+                            <div class="terminal-header-actions">
+                                <span id="mouth-model-badge" class="status-pill-badge badge-amber">gemini-3.8-flash</span>
+                                <span id="mouth-turns-badge" class="status-pill-badge badge-cyan" style="display: none;">0 turns</span>
+                                <button class="arcade-ctrl-btn btn-expand" title="Expand to full viewport height" aria-label="Expand terminal">□</button>
+                                <button class="arcade-ctrl-btn btn-close" title="Close" aria-label="Close">×</button>
+                            </div>
+                        </div>
+                        <div class="terminal-body" id="mouth-terminal-body"></div>
+                    </article>
+                </div>
             </div>
 
-            <!-- 2. Nose Agent Terminal Anchor (Positioned directly over carved stone nose ridge) -->
-            <div class="golem-anchor anchor-nose" id="anchor-nose" data-anchor="nose">
-                <article class="sensory-window arcade-window-red" id="nose-card">
-                    <div class="arcade-header-red">
-                        <div style="display: flex; align-items: center; gap: 8px;">
-                            <span style="width: 8px; height: 8px; background: var(--runic-cyan); border-radius: 50%; box-shadow: 0 0 6px var(--runic-cyan);"></span>
-                            <span>Nose Agent</span>
-                            <span style="color: #a5f3fc; font-family: var(--font-space); font-size: 8px; font-weight: 600;">[HEURISTIC_SNIFFER]</span>
-                        </div>
-                        <div class="terminal-header-actions">
-                            <span id="nose-status-badge" class="status-pill-badge badge-green">QUIESCENT</span>
-                            <button class="arcade-ctrl-btn btn-expand" title="Expand to full viewport height" aria-label="Expand terminal">□</button>
-                            <button class="arcade-ctrl-btn btn-close" title="Close" aria-label="Close">×</button>
-                        </div>
+            <!-- 4. Hand Agents Terminal Anchor (3x3 Grid positioned below sensory deck) -->
+            <div class="golem-anchor anchor-hands" id="anchor-hands" data-anchor="hands" data-tab="hands">
+                <div class="hands-section-header" style="margin-bottom: 6px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #1e2430; padding-bottom: 4px;">
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <span style="color: var(--runic-cyan); font-weight: bold; font-family: var(--font-pixel); font-size: 10px;">HAND AGENTS MATRIX</span>
+                        <span style="color: #64748b; font-family: var(--font-space); font-size: 8px;">[DISTRIBUTED_PTY_MESH]</span>
                     </div>
-                    <div class="terminal-body" id="nose-terminal-body">
-                        <div class="terminal-log-line"><span class="log-ts">2026-10-03 09:53:45</span> <span class="log-level-info">[INFO]</span> <span class="log-source">Golem.Sensory.Nose:</span> NoseSentinel startup calibrated: offset=267519, inode=145671983, mode='eof'</div>
-                        <div class="terminal-log-line"><span class="log-ts">2026-10-03 09:53:45</span> <span class="log-level-info">[INFO]</span> <span class="log-source">Golem.Sensory.Nose:</span> NoseSentinel started (interval=15.0m / 900.0s, bot_err='bot.err')</div>
-                        <div class="terminal-log-line"><span class="log-ts">2026-10-03 09:53:45</span> <span class="log-level-info">[INFO]</span> <span class="log-source">AGY:</span> The Nose 24/7 Fleet Health Sentinel active.</div>
-                        <div class="terminal-log-line"><span class="log-ts">2026-10-04 00:43:41</span> <span class="log-level-info">[INFO]</span> <span class="log-source">Golem.Sensory.Nose:</span> Quiescent scan clean: 0 anomalies, 0 errors, fleet healthy.</div>
-                    </div>
-                </article>
-            </div>
-
-            <!-- 3. Mouth Agent Terminal Anchor (Positioned directly over magma tooth mechanical mouth) -->
-            <div class="golem-anchor anchor-mouth" id="anchor-mouth" data-anchor="mouth">
-                <article class="sensory-window arcade-window-red" id="mouth-card">
-                    <div class="arcade-header-red">
-                        <div style="display: flex; align-items: center; gap: 8px;">
-                            <span style="width: 8px; height: 8px; background: var(--runic-green); border-radius: 50%; box-shadow: 0 0 6px var(--runic-green);"></span>
-                            <span>Mouth Agent</span>
-                            <span style="color: #bbf7d0; font-family: var(--font-space); font-size: 8px; font-weight: 600;">[VOICE_SYNTH_DISPATCH]</span>
-                        </div>
-                        <div class="terminal-header-actions">
-                            <span id="mouth-model-badge" class="status-pill-badge badge-amber">gemini-3.8-flash</span>
-                            <button class="arcade-ctrl-btn btn-expand" title="Expand to full viewport height" aria-label="Expand terminal">□</button>
-                            <button class="arcade-ctrl-btn btn-close" title="Close" aria-label="Close">×</button>
-                        </div>
-                    </div>
-                    <div class="terminal-body" id="mouth-terminal-body">
-                        <div class="terminal-log-line"><span class="log-ts">2026-10-03 17:00:10</span> <span class="log-level-info">[INFO]</span> <span class="log-source">Golem.Gateway.Router:</span> Initialized new warm session 'D0C2J1HKNN7' in cwd '/Users/hermes/projects/first-mate'</div>
-                        <div class="terminal-log-line"><span class="log-ts">2026-10-03 17:58:49</span> <span class="log-level-info">[INFO]</span> <span class="log-source">Golem.Gateway.Session:</span> Closing expired session (reason: inactivity_timeout)</div>
-                        <div class="terminal-log-line"><span class="log-ts">2026-10-04 00:43:41</span> <span class="log-level-info">[INFO]</span> <span class="log-source">Golem.Agent.Mouth:</span> Liaison standing by for Carl's instructions (model='gemini-3.8-flash')</div>
-                        <div class="terminal-log-line"><span class="log-ts">2026-10-04 00:43:41</span> <span class="log-level-info">[INFO]</span> <span class="log-source">Golem.Agent.Mouth:</span> Sub-second response engine ready; out-of-band inquiries armed</div>
-                    </div>
-                </article>
-            </div>
-
-            <!-- 4. Hand Agents Terminal Anchor (Positioned directly under mouth with matching spacing) -->
-            <div class="golem-anchor anchor-hands" id="anchor-hands" data-anchor="hands">
+                    <div style="color: #94a3b8; font-size: 9px; font-family: var(--font-crt);">Active Workers: <span id="hands-active-counter" style="color: #4ade80;">0</span></div>
+                </div>
                 <div class="hands-grid" id="hands-grid">
                     <!-- Standby view: cleanly rendered when 0 active hands are registered -->
                     <div class="hands-idle-card" id="hands-standby-card">
@@ -1162,6 +1419,45 @@
                         </div>
                     </div>
                 </div>
+            </div>
+
+            <!-- 5. Mobile Fleet Panel (Accessible on mobile phone via Fleet tab) -->
+            <div class="mobile-panel" id="mobile-fleet-panel" data-tab="fleet" style="width: 100%;">
+                <article class="sensory-window arcade-window-red" style="width: 100%;">
+                    <div class="arcade-header-red">
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <span style="width: 8px; height: 8px; background: var(--runic-gold); border-radius: 50%; box-shadow: 0 0 6px var(--runic-gold);"></span>
+                            <span>Fleet Telemetry &amp; Node Health</span>
+                            <span style="color: var(--runic-gold); font-family: var(--font-space); font-size: 8px; font-weight: 600;">[FLEET_TOPOLOGY]</span>
+                        </div>
+                    </div>
+                    <div class="terminal-body" style="height: auto; min-height: 220px; padding: 12px; gap: 10px;">
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                            <div style="background: rgba(13, 15, 22, 0.8); border: 1px solid #232936; border-radius: 4px; padding: 8px;">
+                                <div style="color: #64748b; font-size: 10px;">DISK FREE / USAGE</div>
+                                <div id="mobile-disk-stat" style="color: #4ade80; font-size: 14px; font-weight: bold; margin-top: 2px;">--%</div>
+                            </div>
+                            <div style="background: rgba(13, 15, 22, 0.8); border: 1px solid #232936; border-radius: 4px; padding: 8px;">
+                                <div style="color: #64748b; font-size: 10px;">DOCKER CONTAINERS</div>
+                                <div id="mobile-docker-stat" style="color: #a78bfa; font-size: 14px; font-weight: bold; margin-top: 2px;">--</div>
+                            </div>
+                            <div style="background: rgba(13, 15, 22, 0.8); border: 1px solid #232936; border-radius: 4px; padding: 8px;">
+                                <div style="color: #64748b; font-size: 10px;">TAILSCALE MESH</div>
+                                <div id="mobile-ts-stat" style="color: #f59e0b; font-size: 14px; font-weight: bold; margin-top: 2px;">--</div>
+                            </div>
+                            <div style="background: rgba(13, 15, 22, 0.8); border: 1px solid #232936; border-radius: 4px; padding: 8px;">
+                                <div style="color: #64748b; font-size: 10px;">SYSTEM UPTIME</div>
+                                <div id="mobile-uptime-stat" style="color: #38bdf8; font-size: 14px; font-weight: bold; margin-top: 2px;">00:00:00</div>
+                            </div>
+                        </div>
+                        <div style="border-top: 1px solid #1e2430; padding-top: 8px; font-size: 11px; color: #94a3b8; line-height: 1.6;">
+                            <div>&bull; <strong>localhost</strong>: hermes (Chief of Staff &amp; Homelab)</div>
+                            <div>&bull; <strong>personal-laptop</strong>: Carl's MacBook (Strict Ad-Hoc)</div>
+                            <div>&bull; <strong>desktop-pc</strong>: Windows CUDA / PyTorch Compute Grid</div>
+                            <div>&bull; <strong>oci-machine</strong>: Cloud Ops VPS (Production &amp; WireGuard)</div>
+                        </div>
+                    </div>
+                </article>
             </div>
         </div>
     </main>
@@ -1191,6 +1487,9 @@
             const dockerVal = document.getElementById('docker-val');
             const tailscaleVal = document.getElementById('tailscale-val');
             const errorCountVal = document.getElementById('error-count-val');
+            const noseNodesBadge = document.getElementById('nose-nodes-badge');
+            const nosePortsBadge = document.getElementById('nose-ports-badge');
+            const noseMemBadge = document.getElementById('nose-mem-badge');
             const mouthModelBadge = document.getElementById('mouth-model-badge');
             const mouthTurnsBadge = document.getElementById('mouth-turns-badge');
             const mouthBriefingLead = document.getElementById('mouth-briefing-lead');
@@ -1213,51 +1512,191 @@
             let last_verdict_summary = null;
             let last_smells_off = null;
 
-            // Face Landmark Alignment: Pixel-anchors terminals to Golem eyes, nose, mouth, and hands
-            function alignFaceAnchors() {
-                const W = window.innerWidth;
-                const H = window.innerHeight;
-                const hud = document.querySelector('header.arcade-hud');
-                const hudH = hud ? hud.offsetHeight : 0;
-                const imgRatio = 512 / 286;
-                const winRatio = W / H;
-
-                let renderedH, offsetY;
-                if (winRatio > imgRatio) {
-                    renderedH = W / imgRatio;
-                    offsetY = (H - renderedH) / 2;
+            // Mobile Device & Viewport Detection
+            function checkMobileMode() {
+                const isPhone = window.innerWidth <= 768 || /Mobi|Android|iPhone|iPad|iPod|webOS|BlackBerry/i.test(navigator.userAgent);
+                if (isPhone) {
+                    document.body.classList.add('mobile-mode');
+                    const activeBtn = document.querySelector('.mobile-tab-btn.active');
+                    const tabKey = activeBtn ? activeBtn.getAttribute('data-tab') : 'hands';
+                    switchMobileTab(tabKey);
                 } else {
-                    renderedH = H;
-                    offsetY = 0;
+                    document.body.classList.remove('mobile-mode');
+                    document.querySelectorAll('.golem-anchor, .mobile-panel').forEach(el => {
+                        el.classList.remove('mobile-active-tab');
+                    });
+                }
+            }
+
+            function switchMobileTab(tabName) {
+                document.querySelectorAll('.mobile-tab-btn').forEach(btn => {
+                    btn.classList.toggle('active', btn.getAttribute('data-tab') === tabName);
+                });
+                document.querySelectorAll('.golem-anchor, .mobile-panel').forEach(el => {
+                    el.classList.remove('mobile-active-tab');
+                });
+                if (tabName === 'hands') {
+                    const el = document.getElementById('anchor-hands');
+                    if (el) el.classList.add('mobile-active-tab');
+                } else if (tabName === 'eyes') {
+                    const el = document.getElementById('anchor-eyes');
+                    if (el) el.classList.add('mobile-active-tab');
+                } else if (tabName === 'nose') {
+                    const el = document.getElementById('anchor-nose');
+                    if (el) el.classList.add('mobile-active-tab');
+                } else if (tabName === 'mouth') {
+                    const el = document.getElementById('anchor-mouth');
+                    if (el) el.classList.add('mobile-active-tab');
+                } else if (tabName === 'fleet') {
+                    const el = document.getElementById('mobile-fleet-panel');
+                    if (el) el.classList.add('mobile-active-tab');
+                }
+            }
+
+            document.querySelectorAll('.mobile-tab-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    switchMobileTab(btn.getAttribute('data-tab'));
+                });
+            });
+
+            // Simulator toggle controls
+            const simHandsBtn = document.getElementById('sim-hands-btn');
+            const simHandsText = document.getElementById('sim-hands-text');
+            let isSimulating = false;
+
+            if (simHandsBtn) {
+                fetch('/api/simulate_hands')
+                    .then(r => r.json())
+                    .then(data => {
+                        if (data && data.running) {
+                            isSimulating = true;
+                            if (simHandsText) simHandsText.textContent = '⏹ Stop Sim';
+                            simHandsBtn.style.background = 'linear-gradient(90deg, #15803d, #166534)';
+                            simHandsBtn.style.borderColor = '#22c55e';
+                        }
+                    })
+                    .catch(() => {});
+
+                simHandsBtn.addEventListener('click', async () => {
+                    try {
+                        if (!isSimulating) {
+                            simHandsBtn.disabled = true;
+                            const res = await fetch('/api/simulate_hands', {
+                                method: 'POST',
+                                headers: {'Content-Type': 'application/json'},
+                                body: JSON.stringify({count: 6})
+                            });
+                            const data = await res.json();
+                            if (data && data.running) {
+                                isSimulating = true;
+                                if (simHandsText) simHandsText.textContent = '⏹ Stop Sim';
+                                simHandsBtn.style.background = 'linear-gradient(90deg, #15803d, #166534)';
+                                simHandsBtn.style.borderColor = '#22c55e';
+                            }
+                        } else {
+                            simHandsBtn.disabled = true;
+                            const res = await fetch('/api/simulate_hands', { method: 'DELETE' });
+                            const data = await res.json();
+                            isSimulating = false;
+                            if (simHandsText) simHandsText.textContent = '⚡ Sim 6 Hands';
+                            simHandsBtn.style.background = 'linear-gradient(90deg, #4c0519, #881337)';
+                            simHandsBtn.style.borderColor = '#f43f5e';
+                        }
+                    } catch (e) {
+                        console.error('Simulate hands error:', e);
+                    } finally {
+                        simHandsBtn.disabled = false;
+                    }
+                });
+            }
+
+            // Self-contained Inline Terminal Emulator (Air-gapped, zero external CDN scripts)
+            class InlineTerminal {
+                constructor(options = {}) {
+                    this.options = options;
+                    this.element = null;
+                    this.buffer = {
+                        active: {
+                            viewportY: 0,
+                            baseY: 0,
+                        }
+                    };
                 }
 
-                // Landmark percentages from colossus.png & stitch_reference/screen.png:
-                // Eye header: 11.25%, Nose header: 30.08%, Mouth header: 48.83%
-                const eyeTargetY = Math.max(12, offsetY + renderedH * 0.1125);
-                const noseTargetY = Math.max(eyeTargetY + 92, offsetY + renderedH * 0.3008);
-                const mouthTargetY = Math.max(noseTargetY + 92, offsetY + renderedH * 0.4883);
+                open(host) {
+                    if (!host) return;
+                    this.host = host;
+                    this.element = document.createElement('div');
+                    this.element.className = 'inline-terminal-container';
+                    host.innerHTML = '';
+                    host.appendChild(this.element);
+                }
 
-                const anchorEyes = document.getElementById('anchor-eyes');
-                const anchorNose = document.getElementById('anchor-nose');
-                const anchorMouth = document.getElementById('anchor-mouth');
-                const anchorHands = document.getElementById('anchor-hands');
+                loadAddon(addon) {}
 
-                if (anchorEyes && anchorNose && anchorMouth) {
-                    const eyeMargin = Math.max(8, eyeTargetY - hudH);
-                    const eyeCardH = anchorEyes.offsetHeight || 92;
-                    const noseMargin = Math.max(12, noseTargetY - eyeTargetY - eyeCardH);
-                    const noseCardH = anchorNose.offsetHeight || 92;
-                    const mouthMargin = Math.max(12, mouthTargetY - noseTargetY - noseCardH);
-                    // Match the spacing between all other terminals
-                    const handsMargin = Math.max(12, Math.round((noseMargin + mouthMargin) / 2));
+                write(data, callback) {
+                    if (!this.element) return;
+                    const html = this._ansiToHtml(String(data));
+                    this.element.insertAdjacentHTML('beforeend', html);
+                    while (this.element.childNodes.length > 200) {
+                        this.element.removeChild(this.element.firstChild);
+                    }
+                    this.buffer.active.baseY = this.element.scrollHeight;
+                    this.buffer.active.viewportY = this.element.scrollTop;
+                    this.scrollToBottom();
+                    if (typeof callback === 'function') callback();
+                }
 
-                    anchorEyes.style.marginTop = `${Math.round(eyeMargin)}px`;
-                    anchorNose.style.marginTop = `${Math.round(noseMargin)}px`;
-                    anchorMouth.style.marginTop = `${Math.round(mouthMargin)}px`;
-                    if (anchorHands) {
-                        anchorHands.style.marginTop = `${Math.round(handsMargin)}px`;
+                scrollToBottom() {
+                    if (this.element) {
+                        this.element.scrollTop = this.element.scrollHeight;
+                        this.buffer.active.viewportY = this.element.scrollTop;
                     }
                 }
+
+                scrollToLine(y) {
+                    if (this.element) {
+                        this.element.scrollTop = y;
+                        this.buffer.active.viewportY = y;
+                    }
+                }
+
+                dispose() {
+                    if (this.element && this.element.parentNode) {
+                        this.element.parentNode.removeChild(this.element);
+                    }
+                    this.element = null;
+                }
+
+                _ansiToHtml(str) {
+                    let s = escapeHtml(str);
+                    s = s.replace(/\r\n/g, '<br>').replace(/\n/g, '<br>');
+                    const colors = {
+                        '30': '#64748b', '31': '#f87171', '32': '#4ade80', '33': '#fbbf24',
+                        '34': '#60a5fa', '35': '#c084fc', '36': '#22d3ee', '37': '#f1f5f9',
+                        '90': '#94a3b8', '91': '#ef4444', '92': '#22c55e', '93': '#f59e0b',
+                        '94': '#3b82f6', '95': '#a855f7', '96': '#06b6d4', '97': '#ffffff',
+                    };
+                    s = s.replace(/\x1b\[([0-9;]+)m/g, (match, p1) => {
+                        const codes = p1.split(';');
+                        if (codes.includes('0')) return '</span>';
+                        let styles = [];
+                        for (const c of codes) {
+                            if (colors[c]) styles.push(`color: ${colors[c]}`);
+                            if (c === '1') styles.push('font-weight: bold');
+                            if (c === '2') styles.push('opacity: 0.7');
+                            if (c === '4') styles.push('text-decoration: underline');
+                        }
+                        return styles.length ? `<span style="${styles.join('; ')}">` : '';
+                    });
+                    return `<span>${s}</span>`;
+                }
+            }
+            window.Terminal = InlineTerminal;
+            window.FitAddon = { FitAddon: class { fit() {} } };
+
+            function alignFaceAnchors() {
+                checkMobileMode();
             }
 
             window.addEventListener('resize', alignFaceAnchors);
@@ -1336,6 +1775,30 @@
                 if (noseStreamLog && data.verdict_summary) {
                     noseStreamLog.textContent = `>> ${data.verdict_summary}`;
                 }
+                updateNoseGauges(data);
+            }
+
+            // Live gauges (fleet reachability, listening ports, memory): refreshed on every tick.
+            function updateNoseGauges(data) {
+                if (data.fleet_nodes && noseNodesBadge) {
+                    const entries = Object.entries(data.fleet_nodes);
+                    const online = entries.filter(([, n]) => Boolean(n && n.online)).length;
+                    noseNodesBadge.textContent = `NODES ${online}/${entries.length}`;
+                    noseNodesBadge.className = 'status-pill-badge ' + (online === entries.length ? 'badge-green' : 'badge-red');
+                    noseNodesBadge.title = entries.map(([name, n]) => `${name}: ${(n && n.status) || 'unknown'}`).join('\n');
+                }
+                if (Array.isArray(data.ports) && nosePortsBadge) {
+                    const flagged = Array.isArray(data.flagged_ports) ? data.flagged_ports.map(p => (p && p.port !== undefined) ? p.port : p) : [];
+                    nosePortsBadge.textContent = flagged.length ? `PORTS ${data.ports.length} ⚠ ${flagged.join(',')}` : `PORTS ${data.ports.length}`;
+                    nosePortsBadge.className = 'status-pill-badge ' + (flagged.length ? 'badge-amber' : 'badge-cyan');
+                }
+                if (data.memory && noseMemBadge) {
+                    const pct = Number(data.memory.percent_used);
+                    if (!Number.isNaN(pct)) {
+                        noseMemBadge.textContent = `MEM ${pct.toFixed(0)}%`;
+                        noseMemBadge.className = 'status-pill-badge ' + (pct >= 90 ? 'badge-red' : (pct >= 75 ? 'badge-amber' : 'badge-cyan'));
+                    }
+                }
             }
 
             function escapeHtml(str) {
@@ -1348,7 +1811,18 @@
                     .replace(/'/g, '&#039;');
             }
 
-            function formatLogLine(raw) {
+            const LOG_TAGS = {
+                'eye-terminal-body': 'EYE',
+                'nose-terminal-body': 'NOSE',
+                'mouth-terminal-body': 'MOUTH'
+            };
+
+            function tagForContainer(container) {
+                return (container && LOG_TAGS[container.id]) || '';
+            }
+
+            function formatLogLine(raw, tag) {
+                if (typeof tag !== 'string') tag = '';
                 if (typeof raw !== 'string') raw = JSON.stringify(raw);
                 raw = raw.trim();
                 if (!raw) return '';
@@ -1370,7 +1844,23 @@
 
                 let levelClass = 'log-level-info';
                 let levelText = '[INFO]';
-                if (rest.includes('[WARNING]') || rest.includes('[WARN]')) {
+                if (rest.includes('[THOUGHT]')) {
+                    levelClass = 'log-level-thought';
+                    levelText = '[THOUGHT]';
+                    rest = rest.replace(/\[THOUGHT\]/, '').trim();
+                } else if (rest.includes('[LIFE]') || rest.includes('[PULSE]') || rest.includes('[HEARTBEAT]')) {
+                    levelClass = 'log-level-life';
+                    levelText = '[LIFE]';
+                    rest = rest.replace(/\[LIFE\]|\[PULSE\]|\[HEARTBEAT\]/, '').trim();
+                } else if (rest.includes('[DEBUG]')) {
+                    levelClass = 'log-level-debug';
+                    levelText = '[DEBUG]';
+                    rest = rest.replace(/\[DEBUG\]/, '').trim();
+                } else if (rest.includes('[BLOCKER]')) {
+                    levelClass = 'log-level-warn';
+                    levelText = '[BLOCKER]';
+                    rest = rest.replace(/\[BLOCKER\]/, '').trim();
+                } else if (rest.includes('[WARNING]') || rest.includes('[WARN]')) {
                     levelClass = 'log-level-warn';
                     levelText = '[WARN]';
                     rest = rest.replace(/\[WARNING\]|\[WARN\]/, '').trim();
@@ -1391,12 +1881,13 @@
                     rest = rest.slice(srcMatch[0].length).trim();
                 }
 
-                return `<div class="terminal-log-line"><span class="log-ts">${escapeHtml(ts)}</span><span class="${levelClass}">${levelText}</span>${src ? `<span class="log-source">${escapeHtml(src)}</span>` : ''}<span class="log-msg">${escapeHtml(rest)}</span></div>`;
+                const tagHtml = tag ? `<span class="log-tag log-tag-${escapeHtml(tag.toLowerCase())}">[${escapeHtml(tag)}]</span>` : '';
+                return `<div class="terminal-log-line"><span class="log-ts">${escapeHtml(ts)}</span>${tagHtml}<span class="${levelClass}">${levelText}</span>${src ? `<span class="log-source">${escapeHtml(src)}</span>` : ''}<span class="log-msg">${escapeHtml(rest)}</span></div>`;
             }
 
             function appendAgentLog(container, text) {
                 if (!container || !text) return;
-                const lineHtml = formatLogLine(text);
+                const lineHtml = formatLogLine(text, tagForContainer(container));
                 if (!lineHtml) return;
                 container.insertAdjacentHTML('beforeend', lineHtml);
                 while (container.children.length > 100) {
@@ -1423,6 +1914,16 @@
                     }
                     item.el.remove();
                 }
+
+                if (item.paneResize) {
+                    item.paneResize.disconnect();
+                    item.paneResize = null;
+                }
+                if (item.xterm) {
+                    try { item.xterm.dispose(); } catch (_) {}
+                    item.xterm = null;
+                }
+                paneFrames.delete(paneId);
 
                 activeHands.delete(paneId);
                 renderHandsState();
@@ -1495,6 +1996,103 @@
                 }
             }
 
+            // Live Herdr pane mirror: latest full snapshot per pane, applied to an xterm.js instance.
+            const paneFrames = new Map();
+
+            function setPaneTag(item, text, offline) {
+                const tag = item && item.el && item.el.querySelector('.pane-tag');
+                if (!tag) return;
+                tag.textContent = text;
+                tag.classList.toggle('is-visible', Boolean(text));
+                tag.classList.toggle('is-offline', Boolean(offline));
+            }
+
+            function ensurePaneTerm(item) {
+                if (!item || !item.el) return null;
+                if (item.xterm) return item.xterm;
+                if (typeof window.Terminal !== 'function') return null;
+                const host = item.el.querySelector('.hand-card-xterm');
+                if (!host) return null;
+
+                const css = getComputedStyle(document.documentElement);
+                const term = new window.Terminal({
+                    disableStdin: true,
+                    cursorBlink: false,
+                    cursorInactiveStyle: 'none',
+                    convertEol: true,
+                    scrollback: 5000,
+                    fontSize: 12,
+                    lineHeight: 1.2,
+                    fontFamily: (css.getPropertyValue('--font-crt') || '').trim() || 'monospace',
+                    theme: {
+                        background: '#07090e',
+                        foreground: '#cbd5e1',
+                        cursor: '#07090e',
+                        selectionBackground: 'rgba(0, 240, 255, 0.3)'
+                    }
+                });
+
+                // The host is display:none until the card is marked pane-live; xterm must measure a visible node.
+                item.el.classList.add('pane-live');
+                let fit = null;
+                try {
+                    if (window.FitAddon && typeof window.FitAddon.FitAddon === 'function') {
+                        fit = new window.FitAddon.FitAddon();
+                        term.loadAddon(fit);
+                    }
+                    term.open(host);
+                } catch (err) {
+                    item.el.classList.remove('pane-live');
+                    try { term.dispose(); } catch (_) {}
+                    return null;
+                }
+
+                let raf = 0;
+                const refit = () => {
+                    if (!fit || raf) return;
+                    raf = requestAnimationFrame(() => {
+                        raf = 0;
+                        try { fit.fit(); } catch (_) {}
+                    });
+                };
+                refit();
+                if (typeof ResizeObserver === 'function') {
+                    item.paneResize = new ResizeObserver(refit);
+                    item.paneResize.observe(host);
+                }
+
+                item.xterm = term;
+                return term;
+            }
+
+            function applyPaneFrame(item, frame) {
+                if (!item || !frame || typeof frame.text !== 'string') return;
+                if (item.paneRev === frame.rev && item.xterm) return;
+                const term = ensurePaneTerm(item);
+                if (!term) return;
+                item.paneRev = frame.rev;
+
+                // Frames are complete snapshots: drop trailing blank rows, repaint in one write, keep the user's scroll.
+                const body = frame.text.replace(/(?:\r?\n[ \t]*(?:\x1b\[[0-9;]*m)*[ \t]*)+$/, '').replace(/\r?\n$/, '');
+                const buf = term.buffer.active;
+                const atBottom = buf.viewportY >= buf.baseY;
+                const prevY = buf.viewportY;
+                term.write('\x1b[0m\x1b[?25l\x1b[3J\x1b[H\x1b[2J' + body + '\x1b[0m', () => {
+                    if (atBottom) term.scrollToBottom();
+                    else term.scrollToLine(prevY);
+                });
+                setPaneTag(item, `\u25CF LIVE PANE r${frame.rev}`, false);
+            }
+
+            // Raw ANSI delta straight into xterm. Once authoritative pane snapshots (pane_frame)
+            // are flowing for this card they repaint the whole screen, so deltas are ignored.
+            function writeHandDelta(item, delta) {
+                if (!item || !delta || item.paneRev) return;
+                const term = ensurePaneTerm(item);
+                if (!term) return;
+                term.write(String(delta));
+            }
+
             function getOrCreateHandCard(h) {
                 if (!h) return null;
                 const paneId = h.pane_id || 'runner';
@@ -1543,9 +2141,10 @@
                     </div>
                     <div class="hand-card-body">
                         <div class="hand-card-cmd" style="color: var(--runic-cyan);">&gt; ${escapeHtml(cmdText)}</div>
-                        <div class="hand-card-terminal" style="display: block;"></div>
+                        <div class="hand-card-xterm"></div>
                         <div class="hand-card-footer">
                             <span class="worker-state" style="color: #94a3b8;">${escapeHtml(h.status || 'RUNNING')}</span>
+                            <span class="pane-tag"></span>
                             <span class="status-pill-badge badge-cyan status-badge">${escapeHtml(h.status || 'RUNNING')}</span>
                         </div>
                     </div>
@@ -1567,38 +2166,31 @@
                     });
                 }
 
-                const nowTs = formatFullTimestamp();
-                const defaultLog = `${nowTs} [INFO] Golem.Hands: Agent '${paneId}' initialized on ${h.node || 'localhost'}\n${nowTs} [INFO] Golem.Hands: Command: ${h.command || 'Active Task'}${pidDisplay}\n${nowTs} [INFO] Golem.Hands: Process buffer attached; streaming execution trace...`;
-
-                const term = card.querySelector('.hand-card-terminal');
-                if (term) {
-                    term.textContent = h.buffer_tail || defaultLog;
-                    term.scrollTop = term.scrollHeight;
-                }
-
                 handsGrid.appendChild(card);
 
                 const item = {
                     ...h,
-                    buffer_tail: h.buffer_tail || defaultLog,
                     el: card,
                     settleTimeout: null
                 };
                 activeHands.set(paneId, item);
                 renderHandsState();
 
+                // xterm.js is the only renderer for a Hand card; mount it now and seed it with any buffer we were handed.
+                ensurePaneTerm(item);
+                const cachedFrame = paneFrames.get(paneId);
+                if (cachedFrame) {
+                    // A snapshot may have arrived before the card existed (e.g. SSE reconnect priming).
+                    applyPaneFrame(item, cachedFrame);
+                } else if (h.buffer_tail) {
+                    writeHandDelta(item, h.buffer_tail);
+                }
+
                 return card;
             }
 
             function updateCardUi(item) {
                 if (!item || !item.el) return;
-                const term = item.el.querySelector('.hand-card-terminal');
-                if (term) {
-                    if (item.buffer_tail !== undefined && item.buffer_tail !== null && item.buffer_tail !== '') {
-                        term.textContent = item.buffer_tail;
-                        term.scrollTop = term.scrollHeight;
-                    }
-                }
                 const cmdEl = item.el.querySelector('.hand-card-cmd');
                 if (cmdEl && item.command) {
                     const pidDisplay = (item.pid !== undefined && item.pid !== null) ? ` [PID: ${item.pid}]` : '';
@@ -1657,7 +2249,7 @@
                         if (Array.isArray(data.nose.logs) && data.nose.logs.length > 0) {
                             const noseTerm = document.getElementById('nose-terminal-body');
                             if (noseTerm) {
-                                noseTerm.innerHTML = data.nose.logs.map(formatLogLine).join('');
+                                noseTerm.innerHTML = data.nose.logs.map(l => formatLogLine(l, 'NOSE')).join('');
                                 noseTerm.scrollTop = noseTerm.scrollHeight;
                             }
                         }
@@ -1675,7 +2267,7 @@
                         if (Array.isArray(data.eyes.logs) && data.eyes.logs.length > 0) {
                             const eyeTerm = document.getElementById('eye-terminal-body');
                             if (eyeTerm) {
-                                eyeTerm.innerHTML = data.eyes.logs.map(formatLogLine).join('');
+                                eyeTerm.innerHTML = data.eyes.logs.map(l => formatLogLine(l, 'EYE')).join('');
                                 eyeTerm.scrollTop = eyeTerm.scrollHeight;
                             }
                         }
@@ -1689,7 +2281,7 @@
                         if (Array.isArray(data.mouth.logs) && data.mouth.logs.length > 0) {
                             const mouthTerm = document.getElementById('mouth-terminal-body');
                             if (mouthTerm) {
-                                mouthTerm.innerHTML = data.mouth.logs.map(formatLogLine).join('');
+                                mouthTerm.innerHTML = data.mouth.logs.map(l => formatLogLine(l, 'MOUTH')).join('');
                                 mouthTerm.scrollTop = mouthTerm.scrollHeight;
                             }
                         }
@@ -1735,7 +2327,7 @@
                 };
 
                 eventSource.addEventListener('connected', function(e) {
-                    appendAgentLog(document.getElementById('eye-terminal-body'), '[INFO] Golem.Sensory.Eyes: [SSE] Link established to Stoneforge Mesh Bus.');
+                    // Link state is shown by the connection indicator; nothing is injected into agent terminals.
                 });
 
                 eventSource.addEventListener('heartbeat', function(e) {
@@ -1755,7 +2347,9 @@
                     try {
                         const data = JSON.parse(e.data);
                         const msg = data.message || data.text || JSON.stringify(data);
-                        appendAgentLog(document.getElementById('eye-terminal-body'), msg);
+                        const isBlocker = String(data.state || '').toUpperCase() === 'BLOCKER';
+                        const hasLevel = /\[(INFO|WARN|WARNING|ERROR|CRITICAL)\]/.test(msg);
+                        appendAgentLog(document.getElementById('eye-terminal-body'), (isBlocker && !hasLevel) ? `[WARN] ${msg}` : msg);
                         if (data.state && eyeStateBadge) eyeStateBadge.textContent = data.state.toUpperCase();
                     } catch (_) {
                         appendAgentLog(document.getElementById('eye-terminal-body'), e.data);
@@ -1766,12 +2360,12 @@
                     try {
                         const data = JSON.parse(e.data);
                         if (data.state && eyeStateBadge) eyeStateBadge.textContent = data.state.toUpperCase();
-                        if (data.last_diff) {
-                            appendAgentLog(document.getElementById('eye-terminal-body'), `[INFO] Golem.Sensory.Eyes: Diff detected: ${data.last_diff}`);
-                        }
                     } catch (_) {}
                 });
 
+                // Gauges/badges update on every telemetry tick. The Nose *log* is appended only by
+                // server-side `nose_log` events (node state change, port open/close, anomaly,
+                // explicit health check), so identical ticks never produce log lines.
                 function handleNoseTelemetryUpdate(data, isAlert = false) {
                     if (!data) return;
                     updateNoseData(data);
@@ -1781,15 +2375,10 @@
 
                     const smellsOff = Boolean(data.smells_off);
                     const summaryChanged = Boolean(last_verdict_summary === null || summary !== last_verdict_summary);
-                    const anomalyOccurred = Boolean(smellsOff && last_smells_off !== true);
-
-                    // Strictly append when verdict_summary changes, an anomaly occurs (smells_off == true), or an explicit bus alert arrives
-                    if (summaryChanged || anomalyOccurred || isAlert) {
-                        const level = smellsOff ? '[WARN]' : '[INFO]';
-                        appendAgentLog(document.getElementById('nose-terminal-body'), `${level} Golem.Sensory.Nose: ${summary}`);
+                    if (summaryChanged || isAlert) {
                         last_verdict_summary = summary;
-                        last_smells_off = smellsOff;
                     }
+                    last_smells_off = smellsOff;
                 }
 
                 eventSource.addEventListener('nose_telemetry', function(e) {
@@ -1803,6 +2392,14 @@
                     try {
                         const data = JSON.parse(e.data);
                         handleNoseTelemetryUpdate(data, true);
+                    } catch (_) {}
+                });
+
+                eventSource.addEventListener('nose_log', function(e) {
+                    try {
+                        const data = JSON.parse(e.data);
+                        const level = data.level === 'warn' ? '[WARN]' : '[INFO]';
+                        appendAgentLog(document.getElementById('nose-terminal-body'), `${level} ${data.message || data.text || ''}`);
                     } catch (_) {}
                 });
 
@@ -1863,7 +2460,33 @@
                             if (item.buffer_tail.length > 8192) {
                                 item.buffer_tail = item.buffer_tail.slice(-8192);
                             }
+                            writeHandDelta(item, delta);
                             updateCardUi(item);
+                        }
+                    } catch (_) {}
+                });
+
+                eventSource.addEventListener('pane_frame', function(e) {
+                    try {
+                        const data = JSON.parse(e.data);
+                        if (!data.pane_id) return;
+                        paneFrames.set(data.pane_id, data);
+                        const item = activeHands.get(data.pane_id);
+                        if (item) applyPaneFrame(item, data);
+                    } catch (_) {}
+                });
+
+                eventSource.addEventListener('pane_state', function(e) {
+                    try {
+                        const data = JSON.parse(e.data);
+                        const item = data.pane_id && activeHands.get(data.pane_id);
+                        if (!item) return;
+                        if (data.state === 'unavailable') {
+                            setPaneTag(item, '\u25CB PANE OFFLINE', true);
+                            const tag = item.el && item.el.querySelector('.pane-tag');
+                            if (tag) tag.title = data.error || 'Herdr pane unavailable';
+                        } else if (data.state === 'live' && item.paneRev) {
+                            setPaneTag(item, `\u25CF LIVE PANE r${item.paneRev}`, false);
                         }
                     } catch (_) {}
                 });

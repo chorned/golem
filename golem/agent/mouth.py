@@ -213,6 +213,12 @@ async def generate_mouth_response(
             pass
 
     # 2. Dynamic Mouth LLM call via Gemini Flash
+    if os.environ.get("FIRSTMATE_TEST_MODE") == "1":
+        pid = status_info.get("pid") or getattr(getattr(session, "active_execution", None), "pid", None) or "active"
+        command = status_info.get("command") or getattr(getattr(session, "active_execution", None), "command", "") or ""
+        pid_str = f"PID {pid}" if pid else ""
+        return f"⚓ *Liaison Update:* Runner In Progress. Still on it! Background execution for `{command}` ({pid_str}) is running smoothly."
+
     key = api_key or get_gemini_api_key()
     if not key:
         return "⚠️ *Mouth Generation Error:* GEMINI_API_KEY is not configured. Cannot generate dynamic response."

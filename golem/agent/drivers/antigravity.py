@@ -34,12 +34,26 @@ logger = logging.getLogger("Golem.Agent.Drivers.Antigravity")
 
 DEFAULT_AGY_BIN = "/Users/hermes/.local/bin/agy"
 
+# Matches AGY / upstream quota-exhaustion failures (subscription quota, 429, RESOURCE_EXHAUSTED, etc.).
+QUOTA_ERROR_PATTERN = re.compile(
+    r"quota|resource[_ ]exhausted|rate[ -]?limit|too many requests|\b429\b|"
+    r"resets? in|capacity (?:is )?exhausted|out of (?:credits|usage)",
+    re.IGNORECASE,
+)
+
+
+def is_quota_error(text: Optional[str]) -> bool:
+    """Return True if the error text looks like a model quota / rate-limit exhaustion."""
+    return bool(text) and bool(QUOTA_ERROR_PATTERN.search(str(text)))
+
 
 class AntigravityDriver(BaseAgentDriver):
     """
     Antigravity CLI execution driver (The Hands) wrapping agy stream-json mode.
     Maintains persistent stdin/stdout pipes across multiple conversational turns,
     parses raw line-delimited NDJSON events, and emits strongly typed AgentEvent objects.
+    On quota exhaustion, automatically respawns on the next model in the configured
+    fallback chain (GOLEM_ANTIGRAVITY_FALLBACK_MODELS) and retries the turn.
     """
 
     def __init__(
@@ -49,6 +63,7 @@ class AntigravityDriver(BaseAgentDriver):
         agy_bin: str = DEFAULT_AGY_BIN,
         extra_args: Optional[List[str]] = None,
         env: Optional[Dict[str, str]] = None,
+        fallback_models: Optional[List[str]] = None,
         **kwargs: Any,
     ) -> None:
         resolved_model = model
@@ -59,6 +74,13 @@ class AntigravityDriver(BaseAgentDriver):
             except ImportError:
                 resolved_model = os.environ.get("ANTIGRAVITY_MODEL") or None
 
+        if fallback_models is None:
+            try:
+                from golem.config import get_engine_fallback_models
+                fallback_models = get_engine_fallback_models("antigravity")
+            except ImportError:
+                fallback_models = []
+
         super().__init__(
             cwd=cwd,
             model=resolved_model,
@@ -67,6 +89,8 @@ class AntigravityDriver(BaseAgentDriver):
             **kwargs,
         )
         self.agy_bin: str = agy_bin
+        self.fallback_models: List[str] = [m for m in fallback_models if m and m != resolved_model]
+        self.fallback_history: List[Dict[str, str]] = []
 
         self.process: Optional[asyncio.subprocess.Process] = None
         self._lock: asyncio.Lock = asyncio.Lock()
@@ -281,10 +305,57 @@ class AntigravityDriver(BaseAgentDriver):
         except Exception as e:
             logger.warning(f"Could not parse agy init event: {e}")
 
+    def _set_resume_args(self, conversation_id: Optional[str]) -> None:
+        """Replace any existing --conversation pair in extra_args with the given conversation id."""
+        args = list(self.extra_args)
+        cleaned: List[str] = []
+        skip = False
+        for a in args:
+            if skip:
+                skip = False
+                continue
+            if a == "--conversation":
+                skip = True
+                continue
+            cleaned.append(a)
+        if conversation_id:
+            cleaned.extend(["--conversation", conversation_id])
+        self.extra_args = cleaned
+
+    async def _switch_to_fallback_model(self, reason: str) -> Optional[str]:
+        """
+        Tear down the current agy process and pin the next model in the fallback chain.
+        Resumes the same conversation so context carries over. Returns the new model, or None
+        if the fallback chain is exhausted.
+        """
+        if not self.fallback_models:
+            return None
+        new_model = self.fallback_models.pop(0)
+        old_model = self.model
+        conv_id = self.conversation_id
+        try:
+            await self.terminate_session()
+        except Exception as e:
+            logger.debug(f"terminate_session during fallback raised: {e}")
+        self.model = new_model
+        if "--model" in self.extra_args:
+            idx = self.extra_args.index("--model")
+            del self.extra_args[idx:idx + 2]
+        self._set_resume_args(conv_id)
+        self.fallback_history.append({"from": old_model or "", "to": new_model, "reason": reason[:300]})
+        logger.warning(
+            f"AGY quota exhausted on '{old_model}'; switching to fallback model '{new_model}' "
+            f"(conversation={conv_id}): {reason[:200]}"
+        )
+        return new_model
+
     async def send_prompt(self, prompt: str) -> AsyncGenerator[AgentEvent, None]:
         """
         Submit user prompt to stdin and yield parsed AgentEvent objects
         until the 'result' event signals turn completion.
+
+        If the turn fails with a quota / rate-limit error and fallback models are configured
+        (GOLEM_ANTIGRAVITY_FALLBACK_MODELS), transparently respawns on the next model and retries.
         """
         if self._active_generator is not None:
             old_gen = self._active_generator
@@ -298,14 +369,53 @@ class AntigravityDriver(BaseAgentDriver):
             except Exception:
                 pass
 
-        gen = self._stream_turn_impl(prompt)
-        self._active_generator = gen
-        try:
-            async for event in gen:
-                yield event
-        finally:
-            if self._active_generator is gen:
-                self._active_generator = None
+        while True:
+            gen = self._stream_turn_impl(prompt)
+            self._active_generator = gen
+            quota_reason: Optional[str] = None
+            try:
+                async for event in gen:
+                    if (
+                        isinstance(event, FinishEvent)
+                        and self.fallback_models
+                        and event.status == "ERROR"
+                        and is_quota_error(event.error or event.response)
+                    ):
+                        quota_reason = str(event.error or event.response)
+                        break
+                    yield event
+            except RuntimeError as e:
+                # e.g. agy exited prematurely on start with a quota message in stderr
+                if self.fallback_models and is_quota_error(str(e)):
+                    quota_reason = str(e)
+                else:
+                    raise
+            finally:
+                if self._active_generator is gen:
+                    self._active_generator = None
+                if quota_reason is not None:
+                    try:
+                        await gen.aclose()
+                    except Exception:
+                        pass
+
+            if quota_reason is None:
+                return
+
+            new_model = await self._switch_to_fallback_model(quota_reason)
+            if new_model is None:
+                yield FinishEvent(
+                    response="",
+                    status="ERROR",
+                    error=quota_reason,
+                    conversation_id=self.conversation_id,
+                )
+                return
+            yield StatusUpdateEvent(
+                status="model_fallback",
+                detail=f"Quota exhausted; switched to {new_model} and retrying.",
+                conversation_id=self.conversation_id,
+            )
 
     async def _stream_turn_impl(self, prompt: str) -> AsyncGenerator[AgentEvent, None]:
         """Internal turn execution loop under self._lock."""
