@@ -466,7 +466,7 @@
         .golem-face-matrix {
             position: relative;
             width: 100%;
-            max-width: 1400px;
+            max-width: 1260px;
             display: flex;
             flex-direction: column;
             align-items: center;
@@ -476,46 +476,42 @@
             box-sizing: border-box;
         }
 
-        /* 3-Column Side-by-Side Sensory Command Deck (Desktop) */
-        .sensory-organs-row {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 16px;
-            width: 100%;
-            max-width: 1400px;
-            margin: 14px auto 16px auto;
-            box-sizing: border-box;
-            z-index: 20;
-        }
-
         .golem-anchor {
             position: relative;
             display: flex;
             justify-content: center;
             width: 100%;
+            transition: margin 0.15s ease-out;
         }
 
-        /* Full-width inside each grid cell */
+        /* Each terminal the EXACT same width (580px) */
         .anchor-eyes,
         .anchor-nose,
         .anchor-mouth {
             width: 100%;
-            max-width: 100%;
-            margin-top: 0 !important;
-            display: flex;
-            flex-direction: column;
+            max-width: 580px;
         }
 
-        /* Hands agent terminal grid positioned cleanly below sensory organs */
+        .anchor-eyes {
+            margin-top: clamp(14px, 6vh, 80px);
+        }
+
+        .anchor-nose {
+            margin-top: clamp(30px, 12vh, 160px);
+        }
+
+        .anchor-mouth {
+            margin-top: clamp(30px, 12vh, 160px);
+        }
+
+        /* Exception: Hands agent terminal wide enough for 3 horizontally and 3 vertically */
         .anchor-hands {
-            max-width: 1400px;
+            max-width: 1240px;
             width: 100%;
             display: flex;
             flex-direction: column;
             justify-content: center;
-            margin-top: 8px !important;
-            margin-bottom: 24px;
-            z-index: 20;
+            transition: margin 0.15s ease-out, max-width 0.2s ease-out;
         }
 
         .sensory-window {
@@ -525,18 +521,18 @@
         .sensory-lead-body,
         .terminal-body {
             font-family: var(--font-crt);
-            font-size: 11.5px;
-            line-height: 1.5;
+            font-size: 11px;
+            line-height: 18px;
             background: rgba(7, 9, 14, 0.95);
-            padding: 8px 10px;
+            padding: 6px 10px;
             color: #cbd5e1;
             border-top: 1px solid #1e2430;
             display: flex;
             flex-direction: column;
-            gap: 2px;
-            height: 280px;
-            min-height: 140px;
-            max-height: none;
+            gap: 0;
+            height: 84px;
+            min-height: 84px;
+            max-height: 84px;
             box-sizing: border-box;
             overflow-y: auto !important;
             overflow-x: hidden;
@@ -747,8 +743,9 @@
         .hand-card {
             display: flex;
             flex-direction: column;
-            min-height: 180px;
-            height: auto;
+            height: 104px;
+            min-height: 104px;
+            max-height: 104px;
             user-select: text !important;
             -webkit-user-select: text !important;
         }
@@ -756,9 +753,9 @@
         .hand-card-body {
             flex: 1;
             font-family: var(--font-crt);
-            font-size: 11.5px;
+            font-size: 11px;
             background: rgba(7, 9, 14, 0.95);
-            padding: 8px 10px;
+            padding: 5px 8px;
             display: flex;
             flex-direction: column;
             justify-content: space-between;
@@ -772,12 +769,12 @@
         .hand-card-cmd {
             font-weight: bold;
             font-size: 11px;
-            line-height: 1.4;
+            line-height: 15px;
             white-space: pre-wrap;
             word-break: break-word;
             overflow-wrap: anywhere;
             color: var(--runic-cyan);
-            margin-bottom: 4px;
+            margin-bottom: 2px;
             user-select: text !important;
             -webkit-user-select: text !important;
             cursor: text;
@@ -787,7 +784,8 @@
         .hand-card-xterm {
             display: block;
             flex: 1;
-            min-height: 100px;
+            min-height: 40px;
+            height: 100%;
             margin: 2px 0;
             overflow-y: auto !important;
             overflow-x: hidden;
@@ -1266,54 +1264,18 @@
         <div class="girder-rivet"></div>
     </div>
 
-    <!-- Top Arcade HUD Header with real-time fleet gauges and simulation controls -->
-    <header class="arcade-hud">
-        <div class="hud-left">
-            <div class="golem-core-emblem">
-                <span>🗿</span>
-            </div>
-            <div class="hud-title-wrap">
-                <div class="hud-title-row">
-                    <span class="hud-title">STONEFORGE</span>
-                    <span class="hud-version-tag">GOLEM // MESH</span>
-                    <div class="sync-badge" id="sync-badge">
-                        <span class="sync-dot"></span>
-                        <span id="sync-label" style="font-family: var(--font-space); font-size: 8px;">MESH_CONNECTED</span>
-                    </div>
-                </div>
-                <div class="hud-subtitle">Autonomous Fleet Chief of Staff &amp; Observability Matrix</div>
-                <div class="hud-lineage" style="display: none;">Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.</div>
-            </div>
-        </div>
-        <div class="hud-right">
-            <div class="hud-counter-box" title="System Uptime">
-                <span style="color: #64748b;">UPTIME:</span>
-                <span id="uptime-display" style="color: #38bdf8; font-family: var(--font-crt);">00:00:00</span>
-            </div>
-            <div class="hud-counter-box" title="Disk Usage">
-                <span style="color: #64748b;">DISK:</span>
-                <span id="disk-val" style="color: #4ade80; font-family: var(--font-crt);">--%</span>
-            </div>
-            <div class="hud-counter-box" title="Docker Containers">
-                <span style="color: #64748b;">DOCKER:</span>
-                <span id="docker-val" style="color: #a78bfa; font-family: var(--font-crt);">--</span>
-            </div>
-            <div class="hud-counter-box" title="Tailscale Mesh">
-                <span style="color: #64748b;">TAILSCALE:</span>
-                <span id="tailscale-val" style="color: #f59e0b; font-family: var(--font-crt);">--</span>
-            </div>
-            <div class="hud-counter-box" title="Error Log Counter">
-                <span style="color: #64748b;">ERRORS:</span>
-                <span id="error-count-val" style="color: #f87171; font-family: var(--font-crt);">0</span>
-            </div>
-            <button id="sim-hands-btn" class="overclock-btn" title="Simulate Hand Agents across Fleet Mesh">
-                <span>⚡</span>
-                <span id="sim-hands-text">Sim 6 Hands</span>
-            </button>
-            <div id="conn-status" style="display: none;">ONLINE</div>
-            <div id="port-display" style="display: none;">8765</div>
-        </div>
-    </header>
+    <!-- Hidden status metrics and controls (header menu removed per user preference) -->
+    <div style="display: none;" aria-hidden="true" id="hidden-status-dock">
+        <span id="uptime-display">00:00:00</span>
+        <span id="disk-val">--%</span>
+        <span id="docker-val">--</span>
+        <span id="tailscale-val">--</span>
+        <span id="error-count-val">0</span>
+        <span id="conn-status">ONLINE</span>
+        <span id="port-display">8765</span>
+        <span id="sync-label">MESH_CONNECTED</span>
+        <button id="sim-hands-btn"><span id="sim-hands-text">Sim 6 Hands</span></button>
+    </div>
 
     <!-- Mobile Tab Strip (Only displayed on mobile phone viewports) -->
     <nav class="mobile-tab-strip" id="mobile-tab-strip">
@@ -1333,8 +1295,6 @@
     <main class="workspace-canvas" id="workspace-canvas">
         <!-- Central Golem Facial Feature Anchor Matrix -->
         <div class="golem-face-matrix" id="golem-face-matrix">
-            <!-- 3-Column Functional Desktop Layout for Sensory Organs -->
-            <div class="sensory-organs-row" id="sensory-organs-row">
                 <!-- 1. Eye Agent Terminal Anchor (Ocular Stream) -->
                 <div class="golem-anchor anchor-eyes" id="anchor-eyes" data-anchor="eyes" data-tab="eyes">
                     <article class="sensory-window arcade-window-red" id="eye-card">
@@ -1394,8 +1354,6 @@
                         </div>
                         <div class="terminal-body" id="mouth-terminal-body"></div>
                     </article>
-                </div>
-            </div>
 
             <!-- 4. Hand Agents Terminal Anchor (3x3 Grid positioned below sensory deck) -->
             <div class="golem-anchor anchor-hands" id="anchor-hands" data-anchor="hands" data-tab="hands">
@@ -1695,8 +1653,60 @@
             window.Terminal = InlineTerminal;
             window.FitAddon = { FitAddon: class { fit() {} } };
 
+            // Face Landmark Alignment: Pixel-anchors terminals to Golem eyes, nose, mouth, and hands
             function alignFaceAnchors() {
                 checkMobileMode();
+                if (window.innerWidth <= 768) {
+                    const anchors = [
+                        document.getElementById('anchor-eyes'),
+                        document.getElementById('anchor-nose'),
+                        document.getElementById('anchor-mouth'),
+                        document.getElementById('anchor-hands')
+                    ];
+                    anchors.forEach(a => { if (a) a.style.marginTop = '0px'; });
+                    return;
+                }
+
+                const W = window.innerWidth;
+                const H = window.innerHeight;
+                const imgRatio = 512 / 286;
+                const winRatio = W / H;
+
+                let renderedH, offsetY;
+                if (winRatio > imgRatio) {
+                    renderedH = W / imgRatio;
+                    offsetY = (H - renderedH) / 2;
+                } else {
+                    renderedH = H;
+                    offsetY = 0;
+                }
+
+                // Landmark percentages from colossus.png & stitch_reference/screen.png:
+                // Eye header: 11.25%, Nose header: 30.08%, Mouth header: 48.83%
+                const eyeTargetY = Math.max(12, offsetY + renderedH * 0.1125);
+                const noseTargetY = Math.max(eyeTargetY + 92, offsetY + renderedH * 0.3008);
+                const mouthTargetY = Math.max(noseTargetY + 92, offsetY + renderedH * 0.4883);
+
+                const anchorEyes = document.getElementById('anchor-eyes');
+                const anchorNose = document.getElementById('anchor-nose');
+                const anchorMouth = document.getElementById('anchor-mouth');
+                const anchorHands = document.getElementById('anchor-hands');
+
+                if (anchorEyes && anchorNose && anchorMouth) {
+                    const eyeMargin = Math.max(8, eyeTargetY);
+                    const eyeCardH = anchorEyes.offsetHeight || 92;
+                    const noseMargin = Math.max(12, noseTargetY - eyeTargetY - eyeCardH);
+                    const noseCardH = anchorNose.offsetHeight || 92;
+                    const mouthMargin = Math.max(12, mouthTargetY - noseTargetY - noseCardH);
+                    const handsMargin = Math.max(12, Math.round((noseMargin + mouthMargin) / 2));
+
+                    anchorEyes.style.marginTop = `${Math.round(eyeMargin)}px`;
+                    anchorNose.style.marginTop = `${Math.round(noseMargin)}px`;
+                    anchorMouth.style.marginTop = `${Math.round(mouthMargin)}px`;
+                    if (anchorHands) {
+                        anchorHands.style.marginTop = `${Math.round(handsMargin)}px`;
+                    }
+                }
             }
 
             window.addEventListener('resize', alignFaceAnchors);

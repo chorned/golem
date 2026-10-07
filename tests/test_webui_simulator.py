@@ -283,14 +283,21 @@ class TestDashboardFunctionalAndMobileDesign(unittest.TestCase):
         self.assertNotIn("text-overflow: ellipsis", block)
         self.assertNotIn("white-space: nowrap", block)
 
-    def test_functional_3_column_desktop_layout(self) -> None:
-        """Verify side-by-side 3-column sensory organs layout on desktop."""
-        self.assertIn(".sensory-organs-row", self.content)
-        self.assertIn("grid-template-columns: repeat(3, 1fr);", self.content)
+    def test_facial_anchor_layout_and_fixed_height(self) -> None:
+        """Verify facial feature anchor points, fixed terminal window heights, and header removal."""
+        self.assertIn('.anchor-eyes', self.content)
+        self.assertIn('.anchor-nose', self.content)
+        self.assertIn('.anchor-mouth', self.content)
+        self.assertIn('.anchor-hands', self.content)
         self.assertIn('id="anchor-eyes"', self.content)
         self.assertIn('id="anchor-nose"', self.content)
         self.assertIn('id="anchor-mouth"', self.content)
         self.assertIn('id="anchor-hands"', self.content)
+        self.assertIn('alignFaceAnchors', self.content)
+        self.assertIn('height: 84px;', self.content)
+        self.assertIn('height: 104px;', self.content)
+        # Verify header menu is removed
+        self.assertNotIn('<header class="arcade-hud">', self.content)
 
     def test_mobile_responsive_design_and_switcher(self) -> None:
         """Verify alternative mobile-optimized design strictly triggered on phone viewports."""
