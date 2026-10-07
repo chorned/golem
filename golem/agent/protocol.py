@@ -16,6 +16,7 @@ from typing import Dict, Any, Optional, List, Literal, Type, Union
 AgentEventType = Literal[
     "base",
     "text_delta",
+    "thought_delta",
     "status_update",
     "tool_start",
     "tool_end",
@@ -54,6 +55,8 @@ class AgentEvent:
         subclass_map: Dict[str, Type[AgentEvent]] = {
             "base": AgentEvent,
             "text_delta": TextDeltaEvent,
+            "thought_delta": ThoughtDeltaEvent,
+            "thought": ThoughtDeltaEvent,
             "status_update": StatusUpdateEvent,
             "tool_start": ToolStartEvent,
             "tool_end": ToolEndEvent,
@@ -75,6 +78,11 @@ class AgentEvent:
         if target_cls is TextDeltaEvent:
             if "text_delta" not in init_kwargs and "text" in data:
                 init_kwargs["text_delta"] = data["text"]
+
+        # Special alias handling for ThoughtDeltaEvent (thought vs text)
+        if target_cls is ThoughtDeltaEvent:
+            if "thought" not in init_kwargs and "text" in data:
+                init_kwargs["thought"] = data["text"]
 
         return target_cls(**init_kwargs)
 
@@ -120,6 +128,39 @@ class TextDeltaEvent(AgentEvent):
     @text.setter
     def text(self, value: str) -> None:
         self.text_delta = value
+
+
+@dataclass
+class ThoughtDeltaEvent(AgentEvent):
+    """Event emitted when internal assistant reasoning/thinking tokens are produced."""
+    event_type: str = "thought_delta"
+    thought: str = ""
+
+    def __init__(
+        self,
+        thought: str = "",
+        text: str = "",
+        event_type: str = "thought_delta",
+        **kwargs: Any,
+    ) -> None:
+        base_field_names = {f.name for f in getattr(AgentEvent, "__dataclass_fields__", {}).values()}
+        base_kwargs = {k: v for k, v in kwargs.items() if k in base_field_names}
+        super().__init__(event_type=event_type, **base_kwargs)
+        self.thought = thought or text
+        self.__post_init__()
+
+    def __post_init__(self) -> None:
+        if self.event_type != "thought_delta":
+            self.event_type = "thought_delta"
+
+    @property
+    def text(self) -> str:
+        """Alias for thought."""
+        return self.thought
+
+    @text.setter
+    def text(self, value: str) -> None:
+        self.thought = value
 
 
 @dataclass

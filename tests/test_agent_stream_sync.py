@@ -25,6 +25,7 @@ from golem.agent.adapter import HeadlessAgentAdapter
 from golem.agent.protocol import (
     AgentEvent,
     TextDeltaEvent,
+    ThoughtDeltaEvent,
     StatusUpdateEvent,
     ToolStartEvent,
     ToolEndEvent,
@@ -583,6 +584,79 @@ class TestAgentStreamSync(unittest.IsolatedAsyncioTestCase):
             )
         finally:
             await adapter.stop()
+
+
+class TestThoughtDeltaAndWebUIFormatting(unittest.TestCase):
+    """Test ThoughtDeltaEvent protocol, accumulator, and WebUI ANSI formatting."""
+
+    def test_thought_delta_event_protocol(self) -> None:
+        """ThoughtDeltaEvent serializes and deserializes cleanly through AgentEvent NDJSON."""
+        ev = ThoughtDeltaEvent(thought="Analyzing repository structure...")
+        self.assertEqual(ev.event_type, "thought_delta")
+        self.assertEqual(ev.thought, "Analyzing repository structure...")
+        self.assertEqual(ev.text, "Analyzing repository structure...")
+
+        # Test from_dict
+        d = ev.to_dict()
+        parsed = AgentEvent.from_dict(d)
+        self.assertIsInstance(parsed, ThoughtDeltaEvent)
+        self.assertEqual(parsed.thought, "Analyzing repository structure...")
+
+        # Test from_ndjson
+        line = ev.to_ndjson()
+        parsed_nd = AgentEvent.from_ndjson(line)
+        self.assertIsInstance(parsed_nd, ThoughtDeltaEvent)
+        self.assertEqual(parsed_nd.thought, "Analyzing repository structure...")
+
+    def test_backstage_execution_accumulator_thoughts(self) -> None:
+        """Accumulator records thoughts into self.thoughts while keeping text_deltas isolated."""
+        from golem.gateway.ingress import BackstageExecutionAccumulator
+
+        acc = BackstageExecutionAccumulator()
+        acc.record_event(ThoughtDeltaEvent(thought="Deciding on next step"))
+        acc.record_event(TextDeltaEvent(text="Hello Carl"))
+
+        self.assertEqual(acc.thoughts, ["Deciding on next step"])
+        self.assertEqual(acc.text_deltas, ["Hello Carl"])
+        # Public output must only contain text deltas, never raw thoughts
+        self.assertEqual(acc.get_full_output(), "Hello Carl")
+
+    def test_format_hand_event_for_webui_thought(self) -> None:
+        """_format_hand_event_for_webui formats thoughts with ANSI purple marker and indent."""
+        from golem.gateway.ingress import _format_hand_event_for_webui
+
+        ev = ThoughtDeltaEvent(thought="First thought line\nSecond thought line")
+        formatted = _format_hand_event_for_webui(ev)
+        self.assertIsNotNone(formatted)
+        self.assertIn("[THOUGHT]", formatted)
+        self.assertIn("First thought line", formatted)
+        self.assertIn("Second thought line", formatted)
+
+    def test_format_hand_event_for_webui_tools(self) -> None:
+        """_format_hand_event_for_webui formats tool start and tool end with command and output."""
+        from golem.gateway.ingress import _format_hand_event_for_webui
+
+        start_ev = ToolStartEvent(
+            tool_name="run_command",
+            parameters={"CommandLine": "pytest tests/test_agent.py", "Cwd": "/workspace/first-mate"},
+        )
+        formatted_start = _format_hand_event_for_webui(start_ev)
+        self.assertIsNotNone(formatted_start)
+        self.assertIn("[TOOL START]", formatted_start)
+        self.assertIn("run_command", formatted_start)
+        self.assertIn("pytest tests/test_agent.py", formatted_start)
+
+        end_ev = ToolEndEvent(
+            tool_name="run_command",
+            output="3 passed in 0.12s",
+            duration_seconds=0.12,
+            is_error=False,
+        )
+        formatted_end = _format_hand_event_for_webui(end_ev)
+        self.assertIsNotNone(formatted_end)
+        self.assertIn("[TOOL END]", formatted_end)
+        self.assertIn("run_command", formatted_end)
+        self.assertIn("3 passed in 0.12s", formatted_end)
 
 
 if __name__ == "__main__":

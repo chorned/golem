@@ -33,7 +33,16 @@ from golem.gateway.session import (
     is_out_of_band_message,
 )
 from golem.agent.mouth import generate_mouth_response, get_gemini_api_key
-from golem.agent.protocol import FinishEvent, TextDeltaEvent
+from golem.agent.protocol import (
+    AgentEvent,
+    FinishEvent,
+    TextDeltaEvent,
+    ThoughtDeltaEvent,
+    StatusUpdateEvent,
+    ToolStartEvent,
+    ToolEndEvent,
+    AwaitingInputEvent,
+)
 from golem.sensory.bus import (
     ShoulderTapEventBus,
     ShoulderTapAlert,
@@ -231,6 +240,7 @@ class BackstageExecutionAccumulator:
     def __init__(self, max_output_chars: int = 50_000) -> None:
         self.max_output_chars: int = max_output_chars
         self.text_deltas: List[str] = []
+        self.thoughts: List[str] = []
         self.tool_calls: List[Dict[str, Any]] = []
         self.status_updates: List[str] = []
         self.model_fallback_notes: List[str] = []
@@ -239,6 +249,7 @@ class BackstageExecutionAccumulator:
         self.error_message: str = ""
         self.has_awaiting_input: bool = False
         self.awaiting_input_prompt: str = ""
+        self.interim_message_ts: Optional[str] = None
         self.start_time: float = time.time()
         self.end_time: Optional[float] = None
 
@@ -256,6 +267,15 @@ class BackstageExecutionAccumulator:
             )
             if delta:
                 self.text_deltas.append(delta)
+
+        elif ev_type in ("thought_delta", "thought"):
+            thought = (
+                getattr(event_item, "thought", "")
+                or getattr(event_item, "text", "")
+                or (event_item.get("thought", "") if isinstance(event_item, dict) else "")
+            )
+            if thought:
+                self.thoughts.append(thought)
 
         elif ev_type == "tool_start":
             tool_name = getattr(event_item, "tool_name", "") or (
@@ -553,6 +573,30 @@ async def swap_reaction(
     if old_name and old_name != new_name:
         await remove_reaction(client, channel, timestamp, old_name)
     await add_reaction(client, channel, timestamp, new_name)
+
+
+async def set_assistant_status(
+    client: Any,
+    channel: str,
+    thread_ts: str,
+    status: str = "",
+) -> None:
+    """
+    Set or clear native Slack Assistant animated pulsing status in thread.
+    Gracefully no-ops if scope (assistant:write) is absent or client does not support it.
+    """
+    if not client or not channel or not thread_ts:
+        return
+    try:
+        fn = getattr(client, "assistant_threads_setStatus", None)
+        if fn is None and hasattr(client, "_client"):
+            fn = getattr(client._client, "assistant_threads_setStatus", None)
+        if fn is not None:
+            res = fn(channel_id=channel, thread_ts=thread_ts, status=status)
+            if inspect.isawaitable(res):
+                await res
+    except Exception as exc:
+        logger.debug(f"assistant_threads_setStatus notice ({status}): {exc}")
 
 
 def strip_bot_mentions(text: str, bot_user_id: Optional[str] = None) -> str:
@@ -1136,6 +1180,8 @@ class IngressGateway:
         # ZERO canned greeting announcements are posted
         if not is_imessage and ts:
             await add_reaction(client, channel, ts, "gear")
+            if thread_ts:
+                await set_assistant_status(client, channel, thread_ts, "Thinking...")
 
         try:
             # 4. Command Interception
@@ -1246,9 +1292,9 @@ class IngressGateway:
                     await self._post_response(client, channel, thread_ts, msg, is_imessage)
                     return
 
-                msg = "🚀 *Update:* System update verified cleanly. Reloading daemon..."
+                msg = "🚀 *Update:* Verifying test suite before reloading daemon..."
                 if not is_imessage and ts:
-                    await swap_reaction(client, channel, ts, "gear", "white_check_mark")
+                    await swap_reaction(client, channel, ts, "gear", "eyes")
                 await self._post_response(client, channel, thread_ts, msg, is_imessage)
 
                 async def _do_ingress_reload() -> None:
@@ -1262,7 +1308,18 @@ class IngressGateway:
                                 stdout=asyncio.subprocess.PIPE,
                                 stderr=asyncio.subprocess.PIPE,
                             )
-                            await proc.communicate()
+                            stdout, stderr = await proc.communicate()
+                            if proc.returncode != 0:
+                                err_snip = (stderr or stdout).decode("utf-8", errors="replace")[-500:]
+                                fail_msg = f"❌ *Update Aborted:* Test verification failed (exit {proc.returncode}):\n```{err_snip}```"
+                                if not is_imessage and ts:
+                                    await swap_reaction(client, channel, ts, "eyes", "x")
+                                await self._post_response(client, channel, thread_ts, fail_msg, is_imessage)
+                                return
+                            succ_msg = "🚀 *Update:* Verification passed cleanly. Daemon reloaded."
+                            if not is_imessage and ts:
+                                await swap_reaction(client, channel, ts, "eyes", "white_check_mark")
+                            await self._post_response(client, channel, thread_ts, succ_msg, is_imessage)
                             return
                         except Exception as e:
                             logger.warning(f"safe_update.sh invocation failed: {e}")
@@ -1274,6 +1331,8 @@ class IngressGateway:
                                 "launchctl", "kickstart", "-k", "-p", f"gui/{uid}/{lbl}"
                             )
                             await proc.communicate()
+                        if not is_imessage and ts:
+                            await swap_reaction(client, channel, ts, "eyes", "white_check_mark")
                     except Exception as e:
                         logger.warning(f"launchctl kickstart failed: {e}")
 
@@ -1635,6 +1694,9 @@ class IngressGateway:
             except Exception:
                 pass
             raise
+        finally:
+            if not is_imessage and thread_ts:
+                await set_assistant_status(client, channel, thread_ts, "")
 
     async def _post_response(
         self,
@@ -1643,23 +1705,41 @@ class IngressGateway:
         thread_ts: str,
         text: str,
         is_imessage: bool,
-    ) -> None:
-        """Sanitize text for Slack and deliver in boundary-aware chunks."""
+        update_ts: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Sanitize text for Slack and deliver in boundary-aware chunks. Supports in-place chat_update."""
         if not text:
-            return
+            return None
 
         sanitized = sanitize_for_slack(text)
         chunks = split_message_boundary_aware(sanitized, max_chars=3800)
 
-        for chunk in chunks:
+        first_resp = None
+        for idx, chunk in enumerate(chunks):
             if not chunk:
                 continue
+
+            if idx == 0 and update_ts and not is_imessage and hasattr(client, "chat_update"):
+                try:
+                    res = client.chat_update(channel=channel, ts=update_ts, text=chunk)
+                    if inspect.isawaitable(res):
+                        res = await res
+                    if first_resp is None:
+                        first_resp = res
+                    continue
+                except Exception as exc:
+                    logger.debug(f"chat_update failed for ts={update_ts}, falling back to postMessage: {exc}")
+
             if is_imessage:
                 res = client.chat_postMessage(channel=channel, text=chunk)
             else:
                 res = client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=chunk)
-            if asyncio.iscoroutine(res):
-                await res
+            if inspect.isawaitable(res):
+                res = await res
+            if first_resp is None:
+                first_resp = res
+
+        return first_resp
 
     async def _handle_out_of_band_cancellation(
         self,
@@ -1782,6 +1862,144 @@ class IngressGateway:
         except Exception as exc:
             logger.debug(f"EyesTaskObserver attach warning: {exc}")
             return None
+
+
+def _format_hand_event_for_webui(event_item: Any) -> Optional[str]:
+    """
+    Format internal backstage AgentEvents into rich ANSI terminal output
+    for live streaming into the WebUI xterm.js hand agent card.
+    Captures reasoning/thoughts, tool invocations, command outputs, and status updates.
+    """
+    ev_type = getattr(event_item, "event_type", None) or (
+        event_item.get("event_type") if isinstance(event_item, dict) else None
+    )
+
+    if ev_type in ("thought_delta", "thought"):
+        thought = (
+            getattr(event_item, "thought", "")
+            or getattr(event_item, "text", "")
+            or (event_item.get("thought", "") if isinstance(event_item, dict) else "")
+        )
+        if thought and thought.strip():
+            lines = thought.strip().splitlines()
+            if len(lines) == 1:
+                return f"\x1b[38;5;141m▸ [THOUGHT]\x1b[0m \x1b[38;5;252m{lines[0]}\x1b[0m\n"
+            else:
+                formatted = [f"\x1b[38;5;141m▸ [THOUGHT]\x1b[0m \x1b[38;5;252m{lines[0]}\x1b[0m"]
+                for l in lines[1:]:
+                    formatted.append(f"  \x1b[38;5;240m│\x1b[0m \x1b[38;5;250m{l}\x1b[0m")
+                return "\n".join(formatted) + "\n"
+        return None
+
+    elif ev_type == "tool_start":
+        tool_name = getattr(event_item, "tool_name", "") or (
+            event_item.get("tool_name", "") if isinstance(event_item, dict) else ""
+        )
+        params = getattr(event_item, "parameters", {}) or (
+            event_item.get("parameters", {}) if isinstance(event_item, dict) else {}
+        )
+        if not isinstance(params, dict):
+            params = {}
+
+        if tool_name in ("run_command", "bash", "cmd", "herdr_pane_run"):
+            cmd = params.get("CommandLine") or params.get("command") or params.get("cmd") or ""
+            cwd = params.get("Cwd") or params.get("cwd") or ""
+            cwd_str = f" \x1b[90m(in {cwd})\x1b[0m" if cwd else ""
+            return f"\x1b[36m● [TOOL START]\x1b[0m \x1b[1;37m{tool_name}\x1b[0m{cwd_str}\n  \x1b[33m$\x1b[0m \x1b[1;37m{cmd}\x1b[0m\n"
+
+        elif tool_name in ("view_file", "read_file", "view"):
+            path = params.get("AbsolutePath") or params.get("path") or params.get("TargetFile") or ""
+            lines_str = ""
+            if "StartLine" in params or "EndLine" in params:
+                lines_str = f" \x1b[90m(lines {params.get('StartLine', 1)}-{params.get('EndLine', 'end')})\x1b[0m"
+            return f"\x1b[36m● [TOOL START]\x1b[0m \x1b[1;37m{tool_name}\x1b[0m \x1b[32m{path}\x1b[0m{lines_str}\n"
+
+        elif tool_name in ("write_to_file", "replace_file_content", "multi_replace_file_content"):
+            path = params.get("TargetFile") or params.get("path") or ""
+            desc = params.get("Description") or ""
+            desc_str = f" \x1b[90m— {desc}\x1b[0m" if desc else ""
+            return f"\x1b[36m● [TOOL START]\x1b[0m \x1b[1;37m{tool_name}\x1b[0m \x1b[32m{path}\x1b[0m{desc_str}\n"
+
+        elif tool_name in ("grep_search", "search", "find"):
+            query = params.get("Query") or params.get("query") or ""
+            path = params.get("SearchPath") or params.get("path") or ""
+            return f"\x1b[36m● [TOOL START]\x1b[0m \x1b[1;37m{tool_name}\x1b[0m query=\x1b[33m'{query}'\x1b[0m in \x1b[32m{path}\x1b[0m\n"
+
+        else:
+            param_items = [
+                f"{k}={v!r}" for k, v in list(params.items())[:3]
+                if k not in ("ArtifactMetadata",)
+            ]
+            param_str = ", ".join(param_items)
+            if len(param_str) > 100:
+                param_str = param_str[:97] + "..."
+            return f"\x1b[36m● [TOOL START]\x1b[0m \x1b[1;37m{tool_name}\x1b[0m\x1b[90m({param_str})\x1b[0m\n"
+
+    elif ev_type == "tool_end":
+        tool_name = getattr(event_item, "tool_name", "") or (
+            event_item.get("tool_name", "") if isinstance(event_item, dict) else ""
+        )
+        output = getattr(event_item, "output", "") or (
+            event_item.get("output", "") if isinstance(event_item, dict) else ""
+        )
+        duration = getattr(event_item, "duration_seconds", None)
+        is_error = getattr(event_item, "is_error", False)
+        dur_str = f" \x1b[90m({duration:.2f}s)\x1b[0m" if isinstance(duration, (int, float)) else ""
+
+        if is_error:
+            header = f"\x1b[31m✖ [TOOL ERROR]\x1b[0m \x1b[1;31m{tool_name}\x1b[0m{dur_str}\n"
+        else:
+            header = f"\x1b[32m✔ [TOOL END]\x1b[0m \x1b[1;32m{tool_name}\x1b[0m{dur_str}\n"
+
+        out_str = str(output).strip() if output is not None else ""
+        if out_str:
+            lines = out_str.splitlines()
+            if len(lines) > 50:
+                display_lines = lines[:35] + [f"... [{len(lines) - 45} lines truncated] ..."] + lines[-10:]
+            else:
+                display_lines = lines
+            body = "\n".join(f"  \x1b[90m│\x1b[0m {l}" for l in display_lines) + "\n"
+            return header + body
+        return header
+
+    elif ev_type == "status_update":
+        status = getattr(event_item, "status", "") or (
+            event_item.get("status", "") if isinstance(event_item, dict) else ""
+        )
+        detail = getattr(event_item, "detail", "") or (
+            event_item.get("detail", "") if isinstance(event_item, dict) else ""
+        )
+        if status == "model_fallback":
+            return f"\x1b[33m⚡ [MODEL FALLBACK]\x1b[0m \x1b[1;33m{detail}\x1b[0m\n"
+        elif detail:
+            return f"\x1b[33m▸ [STATUS]\x1b[0m \x1b[90m{detail}\x1b[0m\n"
+        elif status and status != "working":
+            return f"\x1b[33m▸ [STATUS]\x1b[0m \x1b[90m{status}\x1b[0m\n"
+        return None
+
+    elif ev_type == "text_delta":
+        delta = (
+            getattr(event_item, "text_delta", "")
+            or getattr(event_item, "text", "")
+            or (event_item.get("text_delta", "") if isinstance(event_item, dict) else "")
+        )
+        return delta or None
+
+    elif ev_type == "awaiting_input":
+        prompt = getattr(event_item, "prompt", "") or (
+            event_item.get("prompt", "") if isinstance(event_item, dict) else ""
+        )
+        return f"\x1b[33m⚠️ [AWAITING INPUT]\x1b[0m \x1b[1;33m{prompt}\x1b[0m\n"
+
+    elif ev_type == "finish":
+        status = getattr(event_item, "status", "SUCCESS")
+        if status == "SUCCESS":
+            return "\n\x1b[32m✔ [TASK COMPLETE]\x1b[0m \x1b[90mExecution finished successfully.\x1b[0m\n"
+        else:
+            err = getattr(event_item, "error", "") or "Execution encountered an error."
+            return f"\n\x1b[31m✖ [TASK FAILED]\x1b[0m \x1b[1;31m{err}\x1b[0m\n"
+
+    return None
 
     async def _execute_backstage_task(
         self,
@@ -1907,7 +2125,19 @@ class IngressGateway:
                             "Execution is running silently; I'll brief you as soon as it settles."
                         )
                         if client and channel:
-                            await self._post_response(client, channel, thread_ts, ack_msg, is_imessage)
+                            resp = await self._post_response(client, channel, thread_ts, ack_msg, is_imessage)
+                            if resp:
+                                msg_ts = (
+                                    resp.get("ts")
+                                    if isinstance(resp, dict)
+                                    else getattr(resp, "ts", getattr(resp, "data", {}).get("ts") if hasattr(resp, "data") else None)
+                                )
+                                if msg_ts:
+                                    accumulator.interim_message_ts = str(msg_ts)
+                        if not is_imessage and thread_ts:
+                            await set_assistant_status(
+                                client, channel, thread_ts, f"Running on {node_label} via {effective_worker}..."
+                            )
                         eyes_observer = self._attach_eyes_observer(
                             session=session,
                             pane=pane,
@@ -1946,6 +2176,8 @@ class IngressGateway:
                                     card = f"⚠️ *Confirmation Required:* Runner is waiting for input:\n> `{content}`"
                                 if not is_imessage and ts and client:
                                     await swap_reaction(client, channel, ts, "gear", "warning")
+                                    if thread_ts:
+                                        await set_assistant_status(client, channel, thread_ts, "Awaiting input...")
                                 if client and channel:
                                     await self._post_response(client, channel, thread_ts, card, is_imessage)
                             if eq_task not in done:
@@ -1966,14 +2198,8 @@ class IngressGateway:
 
                 accumulator.record_event(event_item)
 
-                # Stream incremental buffer deltas on each TextDeltaEvent
-                delta_text = None
-                if isinstance(event_item, TextDeltaEvent):
-                    delta_text = event_item.text_delta or getattr(event_item, "text", "")
-                elif getattr(event_item, "event_type", None) == "text_delta":
-                    delta_text = getattr(event_item, "text_delta", None) or getattr(event_item, "text", "")
-                elif isinstance(event_item, dict) and event_item.get("event_type") == "text_delta":
-                    delta_text = event_item.get("text_delta") or event_item.get("text", "")
+                # Format rich execution events (thoughts, tools, outputs, deltas) for WebUI terminal
+                delta_text = _format_hand_event_for_webui(event_item)
 
                 if delta_text and webui is not None:
                     try:
@@ -2397,6 +2623,9 @@ class IngressGateway:
                 return
 
         # Step 2: Synthesize Executive Briefing via functionResponse
+        if not is_imessage and thread_ts:
+            await set_assistant_status(client, channel, thread_ts, "Synthesizing executive briefing...")
+
         briefing_text, error_info = await self._execute_step2_synthesis(
             sys_prompt=sys_prompt,
             prompt=prompt,
@@ -2437,11 +2666,19 @@ class IngressGateway:
         elif fn_name == "check_nose" and tool_result.get("smells_off"):
             target_reaction = "warning"
         elif turn_status == "ERROR":
-            target_reaction = "x"
+            # Determine if this was an actual fatal failure vs successful operational work
+            # despite non-zero exit codes or sub-command errors.
+            has_fatal_error = (
+                not full_output
+                or (error_msg and not tool_result.get("output_tail"))
+                or bool(re.search(r"\b(fatal error|operation failed|task failed|execution failed|unhandled exception)\b", clean_briefing[:250], re.IGNORECASE))
+            )
+            target_reaction = "x" if has_fatal_error else "white_check_mark"
         else:
             target_reaction = "white_check_mark"
 
-        await self._post_response(client, channel, thread_ts, clean_briefing, is_imessage)
+        interim_ts = getattr(accumulator, "interim_message_ts", None) if "accumulator" in locals() and accumulator else None
+        await self._post_response(client, channel, thread_ts, clean_briefing, is_imessage, update_ts=interim_ts)
         await self._broadcast_mouth_briefing(clean_briefing, model)
 
         # Handle file directives
@@ -2606,8 +2843,9 @@ class IngressGateway:
             else accumulator.get("status", "SUCCESS")
         )
         target_reaction = "x" if status == "ERROR" else "white_check_mark"
+        interim_ts = getattr(accumulator, "interim_message_ts", None) if isinstance(accumulator, BackstageExecutionAccumulator) else None
         if clean_output:
-            await self._post_response(client, channel, thread_ts, clean_output, is_imessage)
+            await self._post_response(client, channel, thread_ts, clean_output, is_imessage, update_ts=interim_ts)
             await self._broadcast_mouth_briefing(clean_output, None)
         if not is_imessage and ts:
             await swap_reaction(client, channel, ts, "gear", target_reaction)
@@ -2640,6 +2878,7 @@ __all__ = [
     "add_reaction",
     "remove_reaction",
     "swap_reaction",
+    "set_assistant_status",
     "strip_bot_mentions",
     "strip_flushed_chunks",
     "DEFAULT_MAX_FILE_SIZE_BYTES",

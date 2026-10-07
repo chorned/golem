@@ -1174,7 +1174,7 @@ async def handle_update_request(channel: str, thread_ts: Optional[str] = None, m
         await client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=sanitize_for_slack(msg))
         return
 
-    msg = "🚀 *Update:* System update verified cleanly. Reloading daemon..."
+    msg = "🚀 *Update:* Verifying test suite before reloading daemon..."
     await client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=sanitize_for_slack(msg))
 
     async def _reload():
@@ -1187,7 +1187,14 @@ async def handle_update_request(channel: str, thread_ts: Optional[str] = None, m
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                 )
-                await proc.communicate()
+                stdout, stderr = await proc.communicate()
+                if proc.returncode != 0:
+                    err_snip = (stderr or stdout).decode("utf-8", errors="replace")[-500:]
+                    msg = f"❌ *Update Aborted:* Test verification failed (exit {proc.returncode}):\n```{err_snip}```"
+                    await client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=sanitize_for_slack(msg))
+                    return
+                msg = "🚀 *Update:* Verification passed cleanly. Daemon reloaded."
+                await client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=sanitize_for_slack(msg))
                 return
             except Exception as e:
                 logger.warning(f"safe_update.sh invocation failed: {e}")
@@ -1682,13 +1689,13 @@ async def handle_slash_command(ack, body, client, command):
         "command_payload": command,
     }
 
-    if USE_HEADLESS_GATEWAY and ingress_gateway is not None:
+    if cmd in ("/update", "!update"):
+        await handle_update_request(channel=channel, thread_ts=None, client=client)
+    elif USE_HEADLESS_GATEWAY and ingress_gateway is not None:
         await ingress_gateway.handle_message(event, client)
     else:
         # Fallback to direct executive command handlers
-        if cmd in ("/update", "!update"):
-            await handle_update_request(channel=channel, thread_ts=None, client=client)
-        elif cmd in ("/bearings", "!bearings"):
+        if cmd in ("/bearings", "!bearings"):
             await handle_bearings_request(channel=channel, thread_ts=None, client=client)
         elif cmd in ("/ahoy", "!ahoy"):
             await handle_ahoy_request(channel=channel, thread_ts=None, client=client)

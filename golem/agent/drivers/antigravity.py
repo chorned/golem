@@ -22,6 +22,7 @@ from typing import Optional, List, Dict, Any, AsyncGenerator, Deque, Set
 from golem.agent.protocol import (
     AgentEvent,
     TextDeltaEvent,
+    ThoughtDeltaEvent,
     StatusUpdateEvent,
     ToolStartEvent,
     ToolEndEvent,
@@ -501,10 +502,12 @@ class AntigravityDriver(BaseAgentDriver):
                         except Exception:
                             pass
                     await self.terminate_session()
+                    completed_cleanly = True
+                    is_clean = (exit_code == 0 or exit_code is None)
                     yield FinishEvent(
-                        response="",
-                        status="ERROR",
-                        error=f"Process terminated unexpectedly (exit code {exit_code}): {stderr_msg}",
+                        response="".join(accumulated_text),
+                        status="SUCCESS" if is_clean else "ERROR",
+                        error="" if is_clean else f"Process terminated unexpectedly (exit code {exit_code}): {stderr_msg}",
                         conversation_id=self.conversation_id,
                     )
                     break
@@ -548,13 +551,43 @@ class AntigravityDriver(BaseAgentDriver):
 
                     if step_type == "agent_response":
                         in_tool_call = False
-                        delta = step.get("text_delta")
-                        if delta:
+                        delta = step.get("text_delta") or ""
+                        is_thought = bool(step.get("is_thought") or step.get("thought"))
+                        thought_content = step.get("thought") or (delta if is_thought else "")
+                        if is_thought and thought_content:
+                            yield ThoughtDeltaEvent(
+                                thought=str(thought_content),
+                                conversation_id=self.conversation_id,
+                                step_index=step_idx,
+                            )
+                        elif delta.strip().startswith("▸ Thought") or delta.strip().startswith("<thought>"):
+                            yield ThoughtDeltaEvent(
+                                thought=delta,
+                                conversation_id=self.conversation_id,
+                                step_index=step_idx,
+                            )
+                        elif delta:
                             accumulated_text.append(delta)
                             if tools_executed_count > 0:
                                 text_since_last_tool.append(delta)
                             yield TextDeltaEvent(
                                 text_delta=delta,
+                                conversation_id=self.conversation_id,
+                                step_index=step_idx,
+                            )
+                    elif step_type in ("thought", "reasoning", "thinking", "plan"):
+                        th_text = (
+                            step.get("thought")
+                            or step.get("reasoning")
+                            or step.get("thinking")
+                            or step.get("text_delta")
+                            or step.get("content")
+                            or step.get("detail")
+                            or ""
+                        )
+                        if th_text:
+                            yield ThoughtDeltaEvent(
+                                thought=str(th_text),
                                 conversation_id=self.conversation_id,
                                 step_index=step_idx,
                             )
@@ -681,6 +714,22 @@ class AntigravityDriver(BaseAgentDriver):
                         tool_name=ai.get("tool_name"),
                         conversation_id=self.conversation_id,
                     )
+
+                elif event_type in ("thought", "reasoning", "thinking"):
+                    th = msg.get(event_type) or {}
+                    th_text = (
+                        th.get("thought")
+                        or th.get("content")
+                        or th.get("text")
+                        or th.get("text_delta")
+                        or (th if isinstance(th, str) else "")
+                        or msg.get("text", "")
+                    )
+                    if th_text:
+                        yield ThoughtDeltaEvent(
+                            thought=str(th_text),
+                            conversation_id=self.conversation_id,
+                        )
 
                 elif event_type == "result":
                     res = msg.get("result") or {}

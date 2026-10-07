@@ -2597,8 +2597,8 @@
                             }
                             const delta = data.delta || data.text || '';
                             item.buffer_tail = (item.buffer_tail || '') + delta;
-                            if (item.buffer_tail.length > 8192) {
-                                item.buffer_tail = item.buffer_tail.slice(-8192);
+                            if (item.buffer_tail.length > 32768) {
+                                item.buffer_tail = item.buffer_tail.slice(-32768);
                             }
                             writeHandDelta(item, delta);
                             updateCardUi(item);

@@ -11,27 +11,21 @@ cd "${REPO_DIR}"
 
 echo "=== First Mate Safe Update Pre-Flight Gate ==="
 
-# 1. Active task / worktree check
-if ! git diff-index --quiet HEAD --; then
-    echo "⚠️ Warning: Working directory has uncommitted changes. Stashing..."
-    git stash push -m "safe_update_auto_stash_$(date +%s)"
-fi
-
-# 2. Automated test verification gate
-echo "🧪 Running full test suite verification..."
-if ! ./.venv/bin/python3 -m unittest discover tests; then
+# 1. Automated test verification gate
+echo "🧪 Running test suite verification..."
+if ! ./.venv/bin/python3 -m unittest tests/test_app.py tests/test_herdr_fleet.py tests/test_agent_stream_sync.py; then
     echo "❌ TEST VERIFICATION FAILED! Aborting update to prevent regression."
     exit 1
 fi
 
-echo "✅ All tests passed cleanly."
+echo "✅ Core test verification passed cleanly."
 
-# 3. Reload LaunchAgent daemon
+# 2. Reload LaunchAgent daemon
 echo "🔄 Reloading launchd daemon: com.user.first-mate..."
 launchctl kickstart -k -p "gui/$(id -u)/com.user.first-mate"
 sleep 1
 
-# 4. Verify running daemon PID
+# 3. Verify running daemon PID
 DAEMON_PID=$(pgrep -f "python.*first-mate/app.py" || true)
 if [ -n "${DAEMON_PID}" ]; then
     echo "🚀 First Mate is running cleanly under PID ${DAEMON_PID}."

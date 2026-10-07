@@ -391,6 +391,12 @@ class EyesTaskObserver:
         target_channel = channel or self.channel
         target_thread = thread_ts or self.thread_ts
         target_pane = pane or self.pane
+        if not buffer_text or "no terminal output recorded" in buffer_text.lower():
+            return None
+
+        clean_buffer = self.normalize_buffer_text(buffer_text)
+        if not clean_buffer or "no terminal output recorded" in clean_buffer.lower():
+            return None
 
         classification = await self.classify_buffer(buffer_text)
         if classification.get("skipped") or classification.get("state") in ("UNCHANGED", "IDLE"):
@@ -401,8 +407,6 @@ class EyesTaskObserver:
         blocker_type = classification.get("blocker_type")
         blocker_url = classification.get("blocker_url")
         blocker_prompt = classification.get("blocker_prompt")
-
-        clean_buffer = self.normalize_buffer_text(buffer_text)
         if self.webui_server is not None and hasattr(self.webui_server, "update_hand_buffer"):
             try:
                 self.webui_server.update_hand_buffer(target_pane, clean_buffer)
