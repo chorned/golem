@@ -1163,8 +1163,44 @@ async def handle_wrapup_request(channel: str, thread_ts: Optional[str] = None, m
 
 
 async def handle_update_request(channel: str, thread_ts: Optional[str] = None, msg_ts: Optional[str] = None, client: Any = None):
-    msg = "🚀 *Update:* System update verified cleanly."
+    # Check for active running sessions/hands
+    active_count = len([s for s in sessions.values() if getattr(s, "status", "") == "running" or getattr(s, "is_busy", False)])
+    if ingress_gateway and getattr(ingress_gateway, "webui_server", None):
+        active_hands = list(getattr(ingress_gateway.webui_server, "_active_hands", {}).values())
+        active_count += len(active_hands)
+
+    if active_count > 0:
+        msg = f"⚠️ *Update Aborted:* Fleet active with {active_count} executing task(s). Wait for completion before reloading."
+        await client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=sanitize_for_slack(msg))
+        return
+
+    msg = "🚀 *Update:* System update verified cleanly. Reloading daemon..."
     await client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=sanitize_for_slack(msg))
+
+    async def _reload():
+        await asyncio.sleep(0.5)
+        script = os.path.join(HOST_DIR, "scripts", "safe_update.sh")
+        if os.path.exists(script) and os.access(script, os.X_OK):
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    script,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                await proc.communicate()
+                return
+            except Exception as e:
+                logger.warning(f"safe_update.sh invocation failed: {e}")
+        try:
+            uid = os.getuid()
+            for label in ["com.user.first-mate", "com.user.golem"]:
+                cmd = ["launchctl", "kickstart", "-k", "-p", f"gui/{uid}/{label}"]
+                proc = await asyncio.create_subprocess_exec(*cmd)
+                await proc.communicate()
+        except Exception as e:
+            logger.warning(f"launchctl kickstart invocation failed: {e}")
+
+    asyncio.create_task(_reload())
 
 
 # ------------------------------------------------------------------------------
@@ -1619,6 +1655,95 @@ async def handle_button_reject(ack, body, client):
 
 
 # ------------------------------------------------------------------------------
+# Slack Slash Commands Dispatcher (/update, /bearings, /ahoy, /wrapup, /learn, etc.)
+# ------------------------------------------------------------------------------
+async def handle_slash_command(ack, body, client, command):
+    """
+    Unified Slack Slash Command handler.
+    Calls ack() immediately (<200ms) to satisfy Slack's 3-second timeout gate,
+    preventing "failed because the app did not respond" errors.
+    """
+    await ack()
+    cmd = (command.get("command") or "").strip().lower()
+    text = (command.get("text") or "").strip()
+    channel = command.get("channel_id") or ""
+    user = command.get("user_id") or ""
+
+    logger.info(f"[Slash Command Received] {cmd} with text='{text}' from user {user} in {channel}")
+
+    event = {
+        "type": "message",
+        "channel": channel,
+        "user": user,
+        "text": f"{cmd} {text}".strip(),
+        "ts": "",
+        "thread_ts": None,
+        "is_slash_command": True,
+        "command_payload": command,
+    }
+
+    if USE_HEADLESS_GATEWAY and ingress_gateway is not None:
+        await ingress_gateway.handle_message(event, client)
+    else:
+        # Fallback to direct executive command handlers
+        if cmd in ("/update", "!update"):
+            await handle_update_request(channel=channel, thread_ts=None, client=client)
+        elif cmd in ("/bearings", "!bearings"):
+            await handle_bearings_request(channel=channel, thread_ts=None, client=client)
+        elif cmd in ("/ahoy", "!ahoy"):
+            await handle_ahoy_request(channel=channel, thread_ts=None, client=client)
+        elif cmd in ("/wrapup", "!wrapup"):
+            await handle_wrapup_request(channel=channel, thread_ts=None, client=client)
+        elif cmd in ("/learn", "!learn"):
+            await handle_learn_request(channel=channel, thread_ts=None, user_notes=text, client=client)
+        else:
+            await process_user_prompt(event, client)
+
+
+SLASH_COMMANDS = [
+    "/update",
+    "/bearings",
+    "/ahoy",
+    "/wrapup",
+    "/learn",
+    "/health",
+    "/nose",
+    "/eyes",
+    "/status",
+    "/archive",
+]
+for _cmd in SLASH_COMMANDS:
+    app.command(_cmd)(handle_slash_command)
+
+
+@app.command(re.compile(r"^/.*"))
+async def handle_wildcard_slash_command(ack, body, client, command):
+    """Fallback catch-all for any other slash command to prevent timeout failures."""
+    cmd = (command.get("command") or "").strip().lower()
+    if cmd in SLASH_COMMANDS:
+        return
+    await ack()
+    logger.info(f"[Catch-All Slash Command] {cmd} from user {command.get('user_id')}")
+    channel = command.get("channel_id") or ""
+    user = command.get("user_id") or ""
+    text = (command.get("text") or "").strip()
+    event = {
+        "type": "message",
+        "channel": channel,
+        "user": user,
+        "text": f"{cmd} {text}".strip(),
+        "ts": "",
+        "thread_ts": None,
+        "is_slash_command": True,
+        "command_payload": command,
+    }
+    if USE_HEADLESS_GATEWAY and ingress_gateway is not None:
+        await ingress_gateway.handle_message(event, client)
+    else:
+        await process_user_prompt(event, client)
+
+
+# ------------------------------------------------------------------------------
 # BlueBubbles iMessage Transport Integration
 # ------------------------------------------------------------------------------
 bb_transport: Optional[BlueBubblesTransport] = None
@@ -1910,6 +2035,7 @@ __all__ = [
     "handle_ahoy_request",
     "handle_wrapup_request",
     "handle_update_request",
+    "handle_slash_command",
     # Clients & Instances
     "app",
     "herdr_client",

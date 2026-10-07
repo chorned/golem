@@ -45,7 +45,7 @@ from golem.transport.file_transfer import (
     extract_and_strip_file_directives,
     upload_directive_files,
 )
-from golem.config import get_mouth_model, get_default_hand_worker
+from golem.config import get_mouth_model, get_default_hand_worker, get_host_dir, get_daemon_label
 from golem.execution.delegation import WorkerDelegator
 
 logger = logging.getLogger("Golem.Gateway.Ingress")
@@ -1232,6 +1232,52 @@ class IngressGateway:
                 if not is_imessage and ts:
                     await swap_reaction(client, channel, ts, "gear", "white_check_mark")
                 await self._post_response(client, channel, thread_ts, msg, is_imessage)
+                return
+
+            elif cmd_token in ("/update", "!update"):
+                active_hands = []
+                if getattr(self, "webui_server", None):
+                    active_hands = list(getattr(self.webui_server, "_active_hands", {}).values())
+                active_count = len(active_hands)
+                if active_count > 0:
+                    msg = f"⚠️ *Update Aborted:* Fleet active with {active_count} executing task(s). Wait for completion before reloading."
+                    if not is_imessage and ts:
+                        await swap_reaction(client, channel, ts, "gear", "warning")
+                    await self._post_response(client, channel, thread_ts, msg, is_imessage)
+                    return
+
+                msg = "🚀 *Update:* System update verified cleanly. Reloading daemon..."
+                if not is_imessage and ts:
+                    await swap_reaction(client, channel, ts, "gear", "white_check_mark")
+                await self._post_response(client, channel, thread_ts, msg, is_imessage)
+
+                async def _do_ingress_reload() -> None:
+                    await asyncio.sleep(0.5)
+                    host_dir = get_host_dir()
+                    script = os.path.join(host_dir, "scripts", "safe_update.sh")
+                    if os.path.exists(script) and os.access(script, os.X_OK):
+                        try:
+                            proc = await asyncio.create_subprocess_exec(
+                                script,
+                                stdout=asyncio.subprocess.PIPE,
+                                stderr=asyncio.subprocess.PIPE,
+                            )
+                            await proc.communicate()
+                            return
+                        except Exception as e:
+                            logger.warning(f"safe_update.sh invocation failed: {e}")
+                    try:
+                        uid = os.getuid()
+                        labels = {get_daemon_label(), "com.user.first-mate", "com.user.golem"}
+                        for lbl in labels:
+                            proc = await asyncio.create_subprocess_exec(
+                                "launchctl", "kickstart", "-k", "-p", f"gui/{uid}/{lbl}"
+                            )
+                            await proc.communicate()
+                    except Exception as e:
+                        logger.warning(f"launchctl kickstart failed: {e}")
+
+                asyncio.create_task(_do_ingress_reload())
                 return
 
             elif cmd_token in ("/health", "!health", "/nose", "!nose"):

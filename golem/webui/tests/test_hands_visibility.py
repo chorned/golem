@@ -152,6 +152,33 @@ class HandsVisibilityTests(unittest.IsolatedAsyncioTestCase):
 
                 self.assertEqual(await _read_events(resp, after, 1.0), ["p0", "p2"])
 
+    async def test_kill_hand_api_endpoint_unregisters_and_broadcasts(self):
+        self.srv.register_active_hand("worker-1", "localhost", "long task", 1234, mirror=False)
+        self.assertIn("worker-1", self.srv._active_hands)
+
+        async with aiohttp.ClientSession() as s:
+            async with s.post(f"{self.base}/api/hands/worker-1/kill") as resp:
+                self.assertEqual(resp.status, 200)
+                data = await resp.json()
+                self.assertTrue(data.get("ok"))
+                self.assertEqual(data.get("pane_id"), "worker-1")
+
+        self.assertNotIn("worker-1", self.srv._active_hands)
+        hands = await self._status_hands()
+        self.assertEqual(len(hands), 0)
+
+    async def test_kill_hand_delete_method(self):
+        self.srv.register_active_hand("worker-delete", "localhost", "rm task", 5678, mirror=False)
+        self.assertIn("worker-delete", self.srv._active_hands)
+
+        async with aiohttp.ClientSession() as s:
+            async with s.delete(f"{self.base}/api/hands/worker-delete") as resp:
+                self.assertEqual(resp.status, 200)
+                data = await resp.json()
+                self.assertTrue(data.get("ok"))
+
+        self.assertNotIn("worker-delete", self.srv._active_hands)
+
 
 if __name__ == "__main__":
     unittest.main()

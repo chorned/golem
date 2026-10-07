@@ -904,6 +904,95 @@ class TestThinIngressGateway(unittest.IsolatedAsyncioTestCase):
 
         await router.teardown("C_OAUTH_APP", "100.999")
 
+    async def test_slash_command_ack_and_dispatch(self):
+        """Verify slash command immediately acks within milliseconds and dispatches to handler."""
+        ack_called = False
+
+        async def mock_ack():
+            nonlocal ack_called
+            ack_called = True
+
+        client = AsyncMock()
+        client.chat_postMessage = AsyncMock(return_value={"ok": True})
+
+        command = {
+            "command": "/update",
+            "text": "",
+            "channel_id": "C_SLASH_TEST",
+            "user_id": "U_USER1",
+        }
+
+        with patch("app.handle_update_request", new_callable=AsyncMock) as mock_handle_update:
+            await app.handle_slash_command(mock_ack, {}, client, command)
+            self.assertTrue(ack_called, "Slash command handler MUST call ack() immediately")
+            mock_handle_update.assert_awaited_once_with(channel="C_SLASH_TEST", thread_ts=None, client=client)
+
+    async def test_wildcard_slash_command_acks_immediately(self):
+        """Verify wildcard slash command listener acks unregistered slash commands immediately to prevent timeouts."""
+        ack_called = False
+
+        async def mock_ack():
+            nonlocal ack_called
+            ack_called = True
+
+        client = AsyncMock()
+        client.chat_postMessage = AsyncMock(return_value={"ok": True})
+
+        command = {
+            "command": "/customcommand",
+            "text": "test arg",
+            "channel_id": "C_WILDCARD_TEST",
+            "user_id": "U_USER2",
+        }
+
+        with patch("app.ingress_gateway", None):
+            with patch("app.process_user_prompt", new_callable=AsyncMock) as mock_prompt:
+                await app.handle_wildcard_slash_command(mock_ack, {}, client, command)
+                self.assertTrue(ack_called, "Wildcard slash command listener MUST call ack() immediately")
+                mock_prompt.assert_awaited_once()
+
+    async def test_handle_update_request_aborts_when_busy(self):
+        """Verify handle_update_request aborts update if active running tasks exist."""
+        client = AsyncMock()
+        client.chat_postMessage = AsyncMock(return_value={"ok": True})
+
+        # Add a running session
+        running_session = MagicMock()
+        running_session.status = "running"
+        running_session.is_busy = True
+        app.sessions["C_BUSY:100.1"] = running_session
+
+        await app.handle_update_request("C_BUSY", thread_ts="100.1", client=client)
+
+        client.chat_postMessage.assert_awaited_once()
+        posted_text = client.chat_postMessage.call_args.kwargs.get("text", "")
+        self.assertIn("Update Aborted", posted_text)
+
+    async def test_ingress_gateway_intercepts_update(self):
+        """Verify IngressGateway intercepts /update and !update cleanly without invoking Mouth LLM."""
+        from golem.gateway.router import SessionRouter
+        from golem.gateway.ingress import IngressGateway
+
+        router = SessionRouter(default_target_cwd="/Users/hermes/projects/first-mate")
+        gateway = IngressGateway(router=router)
+
+        client = AsyncMock()
+        client.chat_postMessage = AsyncMock(return_value={"ok": True})
+        client.reactions_add = AsyncMock(return_value={"ok": True})
+
+        event = {
+            "channel": "C_UPDATE_INGRESS",
+            "ts": "100.555",
+            "thread_ts": "100.555",
+            "text": "/update",
+        }
+
+        with patch.object(gateway, "_post_response", new_callable=AsyncMock) as mock_post:
+            await gateway.handle_message(event, client)
+            mock_post.assert_awaited_once()
+            posted_text = mock_post.call_args[0][3]
+            self.assertIn("Update:", posted_text)
+
 
 if __name__ == "__main__":
     unittest.main()

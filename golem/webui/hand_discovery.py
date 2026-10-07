@@ -106,7 +106,15 @@ class HerdrHandSync:
         self.hide_labels = hide_labels
         # herdr pane_id -> registry key of the hand we created for it
         self.discovered: Dict[str, str] = {}
+        self.killed_panes: Set[str] = set()
         self._warned_missing = False
+
+    def mark_killed(self, *pane_ids: Optional[str]) -> None:
+        """Mark one or more pane IDs or labels as permanently killed so discovery never re-adds them."""
+        for pid in pane_ids:
+            if pid:
+                self.killed_panes.add(pid)
+                self.discovered.pop(pid, None)
 
     async def list_panes(self) -> List[Dict[str, Any]]:
         proc = await asyncio.create_subprocess_exec(
@@ -153,7 +161,12 @@ class HerdrHandSync:
     def reconcile(self, panes: List[Dict[str, Any]]) -> bool:
         """Apply one snapshot of panes to the registry. Returns True if anything changed."""
         srv = self.server
-        wanted = {p["pane_id"]: p for p in panes if is_hand_pane(p, self.hide_labels)}
+        wanted = {
+            p["pane_id"]: p for p in panes
+            if is_hand_pane(p, self.hide_labels)
+            and p["pane_id"] not in self.killed_panes
+            and (p.get("label") or "").strip() not in self.killed_panes
+        }
         changed = False
 
         for pane_id, key in list(self.discovered.items()):

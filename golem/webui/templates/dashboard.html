@@ -988,6 +988,43 @@
             transform: scale(0.94);
         }
 
+        .arcade-ctrl-btn.btn-confirm-kill {
+            background: #dc2626 !important;
+            border-color: #f87171 !important;
+            color: #ffffff !important;
+            font-size: 8px !important;
+            font-weight: 700 !important;
+            font-family: var(--font-pixel), var(--font-crt), monospace !important;
+            width: auto !important;
+            min-width: 34px !important;
+            padding: 0 5px !important;
+            letter-spacing: 0.5px;
+            box-shadow: 0 0 10px rgba(239, 68, 68, 0.85) !important;
+            animation: arcade-kill-pulse 0.5s ease-in-out infinite alternate !important;
+        }
+
+        .arcade-ctrl-btn.btn-killing {
+            background: #7f1d1d !important;
+            border-color: #991b1b !important;
+            color: #fca5a5 !important;
+            width: auto !important;
+            min-width: 24px !important;
+            padding: 0 4px !important;
+            cursor: wait !important;
+            pointer-events: none !important;
+        }
+
+        @keyframes arcade-kill-pulse {
+            0% {
+                box-shadow: 0 0 4px #ef4444;
+                transform: scale(1);
+            }
+            100% {
+                box-shadow: 0 0 12px #ff4444, inset 0 0 4px #ff8888;
+                transform: scale(1.08);
+            }
+        }
+
         /* Full Viewport Height Terminal Expansion (Keeps Same Width!) */
         .terminal-expanded {
             position: fixed !important;
@@ -1454,6 +1491,7 @@
             const mouthBriefingLead = document.getElementById('mouth-briefing-lead');
             const mouthTtsState = document.getElementById('mouth-tts-state');
             const handsCountBadge = document.getElementById('hands-count-badge');
+            const handsActiveCounter = document.getElementById('hands-active-counter');
             const manaBar = document.getElementById('mana-bar');
             const manaVal = document.getElementById('mana-val');
             const creditsDisplay = document.getElementById('credits-display');
@@ -1468,6 +1506,7 @@
             let isPaused = false;
             let eventSource = null;
             const activeHands = new Map();
+            const killedPanes = new Set();
             let last_verdict_summary = null;
             let last_smells_off = null;
 
@@ -1908,6 +1947,78 @@
             }
 
             // Hand Agents Dynamic Lifecycle Management
+            function resetKillButton(btn) {
+                if (!btn) return;
+                if (btn._confirmTimeout) {
+                    clearTimeout(btn._confirmTimeout);
+                    btn._confirmTimeout = null;
+                }
+                btn.dataset.confirming = 'false';
+                btn.disabled = false;
+                btn.textContent = '×';
+                btn.title = 'Kill Herdr Pane';
+                btn.classList.remove('btn-confirm-kill', 'btn-killing');
+            }
+
+            function requestKillHandPane(paneId, btn) {
+                if (!paneId || !btn) return;
+
+                // State 2: Confirmed! Second click within confirmation window
+                if (btn.dataset.confirming === 'true') {
+                    if (btn._confirmTimeout) {
+                        clearTimeout(btn._confirmTimeout);
+                        btn._confirmTimeout = null;
+                    }
+                    btn.dataset.confirming = 'false';
+                    btn.disabled = true;
+                    btn.textContent = '...';
+                    btn.title = 'Terminating Herdr pane permanently...';
+                    btn.classList.remove('btn-confirm-kill');
+                    btn.classList.add('btn-killing');
+
+                    killedPanes.add(paneId);
+                    const card = btn.closest('article');
+                    if (card) {
+                        const herdrPane = card.getAttribute('data-herdr-pane-id');
+                        if (herdrPane) killedPanes.add(herdrPane);
+                        card.style.opacity = '0.5';
+                        card.style.filter = 'grayscale(0.5)';
+                        card.style.pointerEvents = 'none';
+                    }
+
+                    fetch(`/api/hands/${encodeURIComponent(paneId)}/kill`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ pane_id: paneId })
+                    }).then(res => {
+                        if (!res.ok) {
+                            console.warn(`Kill pane ${paneId} returned HTTP ${res.status}`);
+                        }
+                    }).catch(err => {
+                        console.error(`Kill pane ${paneId} failed:`, err);
+                    }).finally(() => {
+                        unmountHandCard(paneId);
+                    });
+                    return;
+                }
+
+                // Reset any other buttons currently in confirming state
+                document.querySelectorAll('.btn-confirm-kill').forEach(otherBtn => {
+                    if (otherBtn !== btn) resetKillButton(otherBtn);
+                });
+
+                // State 1: Enter "are you sure?" state
+                btn.dataset.confirming = 'true';
+                btn.textContent = 'KILL?';
+                btn.title = 'Are you sure? Click again to permanently kill Herdr pane';
+                btn.classList.add('btn-confirm-kill');
+
+                // Auto-revert after 4 seconds if not confirmed
+                btn._confirmTimeout = setTimeout(() => {
+                    resetKillButton(btn);
+                }, 4000);
+            }
+
             function unmountHandCard(paneId) {
                 const item = activeHands.get(paneId);
                 if (!item) return;
@@ -1945,6 +2056,10 @@
                 const count = activeHands.size;
                 const anchorHands = document.getElementById('anchor-hands');
                 if (anchorHands) anchorHands.style.maxWidth = '1240px';
+
+                if (handsActiveCounter) {
+                    handsActiveCounter.textContent = String(count);
+                }
 
                 if (count === 0) {
                     // Standby View: render clean, high-contrast standby card
@@ -2107,6 +2222,9 @@
             function getOrCreateHandCard(h) {
                 if (!h) return null;
                 const paneId = h.pane_id || 'runner';
+                if (killedPanes.has(paneId) || (h.herdr_pane_id && killedPanes.has(h.herdr_pane_id))) {
+                    return null;
+                }
                 if (activeHands.has(paneId)) {
                     const item = activeHands.get(paneId);
                     if (item.settleTimeout) {
@@ -2134,6 +2252,9 @@
                 card.className = 'hand-card arcade-window-red';
                 card.id = `dyn-hand-${safePaneId}`;
                 card.setAttribute('data-pane-id', paneId);
+                if (h.herdr_pane_id) {
+                    card.setAttribute('data-herdr-pane-id', h.herdr_pane_id);
+                }
 
                 const pidDisplay = (h.pid !== undefined && h.pid !== null) ? ` [PID: ${h.pid}]` : '';
                 const cmdText = (h.command || 'Active Task') + pidDisplay;
@@ -2147,7 +2268,7 @@
                         <div class="terminal-header-actions">
                             <span class="status-pill-badge badge-red hand-card-tag" style="border-color: #b91c1c; color: var(--runic-gold); font-size: 8px;">${tag}</span>
                             <button class="arcade-ctrl-btn btn-expand" title="Expand to full viewport height" aria-label="Expand terminal">□</button>
-                            <button class="arcade-ctrl-btn btn-close" title="Close" aria-label="Close">×</button>
+                            <button class="arcade-ctrl-btn btn-close" title="Kill Herdr Pane" aria-label="Kill Herdr Pane">×</button>
                         </div>
                     </div>
                     <div class="hand-card-body">
@@ -2173,7 +2294,7 @@
                 if (closeBtn) {
                     closeBtn.addEventListener('click', (e) => {
                         e.stopPropagation();
-                        unmountHandCard(paneId);
+                        requestKillHandPane(paneId, closeBtn);
                     });
                 }
 
@@ -2442,6 +2563,7 @@
                 eventSource.addEventListener('hand_spawn', function(e) {
                     try {
                         const data = JSON.parse(e.data);
+                        if (data && (killedPanes.has(data.pane_id) || killedPanes.has(data.herdr_pane_id))) return;
                         getOrCreateHandCard(data);
                     } catch (_) {}
                 });
@@ -2450,7 +2572,7 @@
                     try {
                         const data = JSON.parse(e.data);
                         const paneId = data.pane_id;
-                        if (!paneId) return;
+                        if (!paneId || killedPanes.has(paneId)) return;
 
                         let item = activeHands.get(paneId);
                         if (!item) {
@@ -2480,7 +2602,7 @@
                 eventSource.addEventListener('pane_frame', function(e) {
                     try {
                         const data = JSON.parse(e.data);
-                        if (!data.pane_id) return;
+                        if (!data.pane_id || killedPanes.has(data.pane_id)) return;
                         paneFrames.set(data.pane_id, data);
                         const item = activeHands.get(data.pane_id);
                         if (item) applyPaneFrame(item, data);
@@ -2535,7 +2657,9 @@
                             list = Object.values(data);
                         }
 
-                        if (list.length === 0) {
+                        // Filter out panes explicitly killed by user
+                        const filteredList = list.filter(h => !killedPanes.has(h.pane_id) && !killedPanes.has(h.herdr_pane_id));
+                        if (filteredList.length === 0) {
                             // All hands cleared / settled -> return to standby view
                             for (const [id, item] of activeHands.entries()) {
                                 if (item.settleTimeout) clearTimeout(item.settleTimeout);
@@ -2546,7 +2670,7 @@
                             return;
                         }
 
-                        const incomingIds = new Set(list.map(h => h.pane_id));
+                        const incomingIds = new Set(filteredList.map(h => h.pane_id));
                         for (const [id, item] of activeHands.entries()) {
                             if (!incomingIds.has(id)) {
                                 if (item.settleTimeout) clearTimeout(item.settleTimeout);
@@ -2554,7 +2678,7 @@
                                 activeHands.delete(id);
                             }
                         }
-                        list.forEach(h => getOrCreateHandCard(h));
+                        filteredList.forEach(h => getOrCreateHandCard(h));
                         renderHandsState();
                     } catch (_) {}
                 });
@@ -2662,8 +2786,13 @@
                 }
             }
 
-            // Click delegation for Expand / Collapse and click-outside
+            // Click delegation for Expand / Collapse, kill resets, and click-outside
             document.addEventListener('click', (e) => {
+                // If click is not on a confirming kill button, reset confirmation states
+                if (!e.target.closest('.btn-confirm-kill')) {
+                    document.querySelectorAll('.btn-confirm-kill').forEach(btn => resetKillButton(btn));
+                }
+
                 const expandBtn = e.target.closest('.btn-expand');
                 if (expandBtn) {
                     e.stopPropagation();
@@ -2681,10 +2810,7 @@
                     } else if (card) {
                         const paneId = card.getAttribute('data-pane-id');
                         if (paneId) {
-                            unmountHandCard(paneId);
-                        } else {
-                            activeHands.clear();
-                            renderHandsState();
+                            requestKillHandPane(paneId, closeBtn);
                         }
                     }
                     return;
@@ -2697,9 +2823,10 @@
                 }
             });
 
-            // Escape key collapses active expanded terminal
+            // Escape key collapses active expanded terminal and resets confirmation buttons
             document.addEventListener('keydown', (e) => {
                 if (e.key === 'Escape') {
+                    document.querySelectorAll('.btn-confirm-kill').forEach(btn => resetKillButton(btn));
                     const activeExpanded = document.querySelector('.terminal-expanded');
                     if (activeExpanded) toggleTerminalExpand(activeExpanded);
                 }

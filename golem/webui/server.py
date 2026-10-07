@@ -417,6 +417,10 @@ class WebUIServer:
         self.app.router.add_post("/api/simulate_hands", self.handle_simulate_hands_post)
         self.app.router.add_delete("/api/simulate_hands", self.handle_simulate_hands_delete)
         self.app.router.add_get("/api/simulate_hands", self.handle_simulate_hands_get)
+        self.app.router.add_post("/api/hands/{pane_id}/kill", self.handle_kill_hand)
+        self.app.router.add_delete("/api/hands/{pane_id}", self.handle_kill_hand)
+        self.app.router.add_post("/api/panes/{pane_id}/kill", self.handle_kill_hand)
+        self.app.router.add_delete("/api/panes/{pane_id}", self.handle_kill_hand)
 
     def start_hand_simulation(self, count: int = 6) -> None:
         """Start background simulation of N hand agents for testing/demonstration."""
@@ -477,6 +481,117 @@ class WebUIServer:
             "active": is_running,
             "count": count,
             "workers": workers,
+        })
+
+    async def handle_kill_hand(self, request: web.Request) -> web.Response:
+        """
+        Permanently terminate a backstage hand agent and close its Herdr pane.
+        Executes `herdr agent stop <pane>`, `herdr pane close <pane>`, and
+        `herdr workspace close <ws_id>` if applicable.
+        Unregisters the hand, marks it killed in HerdrHandSync, and broadcasts the updated registry.
+        """
+        import urllib.parse
+        pane_id = request.match_info.get("pane_id")
+        if not pane_id:
+            try:
+                body = await request.json()
+                pane_id = body.get("pane_id")
+            except Exception:
+                pane_id = None
+        if not pane_id:
+            pane_id = request.query.get("pane_id")
+
+        if not pane_id:
+            return web.json_response({"ok": False, "error": "Missing pane_id"}, status=400)
+
+        pane_id = urllib.parse.unquote(str(pane_id)).strip()
+
+        key = self._resolve_hand_key(pane_id)
+        herdr_pane = None
+        agent_name = None
+        if key is not None and key in self._active_hands:
+            hand = self._active_hands[key]
+            herdr_pane = hand.get("herdr_pane_id") or hand.get("pane_id")
+            agent_name = hand.get("worker")
+
+        if not herdr_pane:
+            herdr_pane = self._pane_targets.get(key) if key else None
+        if not herdr_pane:
+            herdr_pane = pane_id
+
+        herdr_bin = os.environ.get("GOLEM_HERDR_BIN") or os.environ.get("HERDR_BIN", "herdr")
+        logger.info("Permanently killing hand pane: %s (Herdr pane: %s) via %s", pane_id, herdr_pane, herdr_bin)
+
+        # 1. Best-effort agent stop
+        for agent_target in {herdr_pane, pane_id, agent_name} - {None, "", "pane", "agy"}:
+            try:
+                p = await asyncio.create_subprocess_exec(
+                    herdr_bin, "agent", "stop", str(agent_target),
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL,
+                )
+                await asyncio.wait_for(p.communicate(), timeout=3.0)
+            except Exception as exc:
+                logger.debug("herdr agent stop %s: %s", agent_target, exc)
+
+        # 2. Permanent pane close
+        try:
+            p = await asyncio.create_subprocess_exec(
+                herdr_bin, "pane", "close", str(herdr_pane),
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            await asyncio.wait_for(p.communicate(), timeout=3.0)
+        except Exception as exc:
+            logger.debug("herdr pane close %s: %s", herdr_pane, exc)
+
+        # 3. If workspace-backed pane (wXX:pYY), close workspace & remove worktree
+        if ":" in str(herdr_pane):
+            ws_id = str(herdr_pane).split(":")[0]
+            try:
+                p = await asyncio.create_subprocess_exec(
+                    herdr_bin, "worktree", "remove", "--workspace", ws_id, "--force",
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL,
+                )
+                await asyncio.wait_for(p.communicate(), timeout=3.0)
+            except Exception as exc:
+                logger.debug("herdr worktree remove %s: %s", ws_id, exc)
+
+            try:
+                p = await asyncio.create_subprocess_exec(
+                    herdr_bin, "workspace", "close", ws_id,
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL,
+                )
+                await asyncio.wait_for(p.communicate(), timeout=3.0)
+            except Exception as exc:
+                logger.debug("herdr workspace close %s: %s", ws_id, exc)
+
+        # 4. Unregister from active hands & detach mirror
+        if key is not None:
+            self.unregister_active_hand(key)
+        else:
+            self.unregister_active_hand(pane_id)
+
+        # 5. Mark killed in HerdrHandSync discovery cache so reconciliation never resurrects it
+        if hasattr(self, "_hand_sync") and self._hand_sync is not None:
+            if hasattr(self._hand_sync, "mark_killed"):
+                self._hand_sync.mark_killed(herdr_pane, pane_id, key)
+            elif hasattr(self._hand_sync, "discovered"):
+                self._hand_sync.discovered.pop(herdr_pane, None)
+                self._hand_sync.discovered.pop(pane_id, None)
+                if key:
+                    self._hand_sync.discovered.pop(key, None)
+
+        # 6. Broadcast hands_status to all connected SSE clients
+        self._broadcast_hands()
+
+        return web.json_response({
+            "ok": True,
+            "pane_id": pane_id,
+            "herdr_pane_id": herdr_pane,
+            "status": "killed",
         })
 
     async def handle_index(self, request: web.Request) -> web.Response:
