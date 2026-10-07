@@ -543,11 +543,12 @@
 
         .terminal-log-line {
             font-family: var(--font-crt);
-            font-size: 11.5px;
-            line-height: 1.5;
-            min-height: 20px;
+            font-size: 11px;
+            line-height: 18px;
+            min-height: 18px;
             height: auto;
             max-height: none;
+            flex-shrink: 0 !important;
             display: block;
             color: #cbd5e1;
             white-space: pre-wrap;
@@ -557,9 +558,8 @@
             user-select: text !important;
             -webkit-user-select: text !important;
             cursor: text;
-            padding: 2px 4px;
-            margin-bottom: 2px;
-            border-radius: 2px;
+            padding: 0;
+            margin: 0;
         }
 
         .terminal-log-line:hover {
@@ -570,7 +570,7 @@
             color: #64748b;
             font-size: 11px;
             margin-right: 6px;
-            display: inline-block;
+            display: inline;
             font-family: var(--font-crt);
             user-select: all;
         }
@@ -580,7 +580,7 @@
             font-weight: bold;
             font-size: 11px;
             margin-right: 6px;
-            display: inline-block;
+            display: inline;
             font-family: var(--font-crt);
         }
 
@@ -589,7 +589,7 @@
             font-weight: bold;
             font-size: 11px;
             margin-right: 6px;
-            display: inline-block;
+            display: inline;
             font-family: var(--font-crt);
         }
 
@@ -598,7 +598,7 @@
             font-weight: bold;
             font-size: 11px;
             margin-right: 6px;
-            display: inline-block;
+            display: inline;
             font-family: var(--font-crt);
         }
 
@@ -607,7 +607,7 @@
             font-weight: bold;
             font-size: 11px;
             margin-right: 6px;
-            display: inline-block;
+            display: inline;
             font-family: var(--font-crt);
         }
 
@@ -616,7 +616,7 @@
             font-weight: bold;
             font-size: 11px;
             margin-right: 6px;
-            display: inline-block;
+            display: inline;
             font-family: var(--font-crt);
         }
 
@@ -625,7 +625,7 @@
             font-weight: bold;
             font-size: 11px;
             margin-right: 6px;
-            display: inline-block;
+            display: inline;
             font-family: var(--font-crt);
         }
 
@@ -634,7 +634,7 @@
             font-weight: 500;
             font-size: 11px;
             margin-right: 6px;
-            display: inline-block;
+            display: inline;
             font-family: var(--font-crt);
         }
 
@@ -642,7 +642,7 @@
             font-weight: 700;
             font-size: 11px;
             margin-right: 6px;
-            display: inline-block;
+            display: inline;
             font-family: var(--font-crt);
             letter-spacing: 0.5px;
         }
@@ -653,7 +653,7 @@
 
         .log-msg {
             color: #e2e8f0;
-            font-size: 11.5px;
+            font-size: 11px;
             font-family: var(--font-crt);
             white-space: pre-wrap;
             word-break: break-word;
@@ -1354,6 +1354,7 @@
                         </div>
                         <div class="terminal-body" id="mouth-terminal-body"></div>
                     </article>
+                </div>
 
             <!-- 4. Hand Agents Terminal Anchor (3x3 Grid positioned below sensory deck) -->
             <div class="golem-anchor anchor-hands" id="anchor-hands" data-anchor="hands" data-tab="hands">
@@ -1693,12 +1694,12 @@
                 const anchorHands = document.getElementById('anchor-hands');
 
                 if (anchorEyes && anchorNose && anchorMouth) {
-                    const eyeMargin = Math.max(8, eyeTargetY);
-                    const eyeCardH = anchorEyes.offsetHeight || 92;
-                    const noseMargin = Math.max(12, noseTargetY - eyeTargetY - eyeCardH);
-                    const noseCardH = anchorNose.offsetHeight || 92;
-                    const mouthMargin = Math.max(12, mouthTargetY - noseTargetY - noseCardH);
-                    const handsMargin = Math.max(12, Math.round((noseMargin + mouthMargin) / 2));
+                    const eyeMargin = Math.max(12, eyeTargetY);
+                    const eyeCardH = anchorEyes.offsetHeight || 116;
+                    const noseCardH = anchorNose.offsetHeight || 116;
+                    const noseMargin = Math.max(16, noseTargetY - eyeTargetY - eyeCardH);
+                    const mouthMargin = Math.max(16, mouthTargetY - noseTargetY - noseCardH);
+                    const handsMargin = Math.max(20, Math.round((noseMargin + mouthMargin) / 2));
 
                     anchorEyes.style.marginTop = `${Math.round(eyeMargin)}px`;
                     anchorNose.style.marginTop = `${Math.round(noseMargin)}px`;
