@@ -236,6 +236,108 @@ class TestMouthLLM(unittest.IsolatedAsyncioTestCase):
         with patch.dict(os.environ, {}, clear=True):
             self.assertEqual(get_mouth_model(), "gemini-3.8-flash")
 
+    async def test_call_gemini_api_attaches_user_project_header(self) -> None:
+        """Verify call_gemini_api passes x-goog-user-project header when GOOGLE_CLOUD_PROJECT is set."""
+        from golem.gateway.ingress import call_gemini_api
+
+        captured_headers = {}
+
+        class MockResponse:
+            status = 200
+            async def json(self):
+                return {"candidates": [{"content": {"parts": [{"text": "Hello"}]}}]}
+            async def text(self):
+                return ""
+            async def __aenter__(self):
+                return self
+            async def __aexit__(self, *args):
+                pass
+
+        class MockSession:
+            def post(self, url, json=None, headers=None):
+                captured_headers.update(headers or {})
+                return MockResponse()
+            async def __aenter__(self):
+                return self
+            async def __aexit__(self, *args):
+                pass
+
+        with patch.dict(os.environ, {"GOOGLE_CLOUD_PROJECT": "carl-cloud-credits-12345", "MOUTH_BACKEND": "gemini"}):
+            with patch("aiohttp.ClientSession", return_value=MockSession()):
+                res = await call_gemini_api({"contents": []}, api_key="fake-key")
+                self.assertIsNotNone(res)
+                self.assertEqual(captured_headers.get("x-goog-user-project"), "carl-cloud-credits-12345")
+
+    async def test_call_openai_compatible_backend_translation(self) -> None:
+        """Verify call_gemini_api transparently routes to OpenAI-compatible endpoint when MOUTH_BACKEND=openai."""
+        import json
+        from golem.gateway.ingress import call_gemini_api
+
+        captured_payload = {}
+        captured_headers = {}
+
+        class MockOpenAIResponse:
+            status = 200
+            async def json(self):
+                return {
+                    "choices": [{
+                        "message": {
+                            "role": "assistant",
+                            "tool_calls": [{
+                                "id": "call_123",
+                                "type": "function",
+                                "function": {
+                                    "name": "dispatch_task",
+                                    "arguments": json.dumps({"task_description": "Run tests", "worker": "agy"}),
+                                }
+                            }]
+                        },
+                        "finish_reason": "tool_calls"
+                    }]
+                }
+            async def text(self):
+                return ""
+            async def __aenter__(self):
+                return self
+            async def __aexit__(self, *args):
+                pass
+
+        class MockSession:
+            def post(self, url, json=None, headers=None):
+                captured_payload.update(json or {})
+                captured_headers.update(headers or {})
+                return MockOpenAIResponse()
+            async def __aenter__(self):
+                return self
+            async def __aexit__(self, *args):
+                pass
+
+        gemini_payload = {
+            "systemInstruction": {"parts": [{"text": "You are First Mate"}]},
+            "contents": [{"role": "user", "parts": [{"text": "Please run the test suite"}]}],
+            "tools": [{"functionDeclarations": [{"name": "dispatch_task", "description": "Run task"}]}],
+        }
+
+        with patch.dict(os.environ, {
+            "MOUTH_BACKEND": "openai",
+            "OPENAI_API_KEY": "sk-mock-key-123",
+            "OPENAI_BASE_URL": "https://api.mockllm.com/v1",
+            "MOUTH_MODEL": "claude-3-5-haiku",
+        }):
+            with patch("aiohttp.ClientSession", return_value=MockSession()):
+                resp = await call_gemini_api(gemini_payload)
+                self.assertIsNotNone(resp)
+                # Verify request was translated to OpenAI format
+                self.assertEqual(captured_headers.get("Authorization"), "Bearer sk-mock-key-123")
+                self.assertEqual(captured_payload.get("model"), "claude-3-5-haiku")
+                self.assertEqual(captured_payload["messages"][0]["role"], "system")
+                self.assertEqual(captured_payload["messages"][1]["role"], "user")
+                # Verify response was normalized back into Gemini candidate format
+                cand = resp["candidates"][0]
+                fn_call = cand["content"]["parts"][0]["functionCall"]
+                self.assertEqual(fn_call["name"], "dispatch_task")
+                self.assertEqual(fn_call["args"]["worker"], "agy")
+
 
 if __name__ == "__main__":
     unittest.main()

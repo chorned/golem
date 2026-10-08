@@ -1,6 +1,8 @@
 """Hands registry / WebUI visibility guarantees: every registered hand must reach the browser.
 
 Run from the repo root:  python3 -m unittest golem.webui.tests.test_hands_visibility
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import asyncio

@@ -207,3 +207,43 @@ class TestHerdrFleet(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(res["online"])
             self.assertIn("Online (up 45 days, 2 users)", res["status"])
 
+    async def test_update_node_agy_localhost_and_remote(self):
+        """Verify update_node_agy checks local and remote agy CLI binary versions."""
+        mock_proc_local = MagicMock()
+        mock_proc_local.returncode = 0
+        mock_proc_local.communicate = AsyncMock(
+            return_value=(b"Checking for updates... (current version 1.3.1)\nYou are already on the latest version.", b"")
+        )
+
+        with patch("asyncio.create_subprocess_exec", return_value=mock_proc_local):
+            res = await self.fleet.update_node_agy("hermes")
+            self.assertIn("v1.3.1", res["status"])
+            self.assertFalse(res["updated"])
+
+        mock_proc_remote = MagicMock()
+        mock_proc_remote.returncode = 0
+        mock_proc_remote.communicate = AsyncMock(
+            return_value=(b"Found new version 1.3.1. Update successful!", b"")
+        )
+
+        with patch("asyncio.create_subprocess_exec", return_value=mock_proc_remote):
+            res_remote = await self.fleet.update_node_agy("personal-laptop")
+            self.assertIn("updated", res_remote["status"])
+            self.assertTrue(res_remote["updated"])
+
+    async def test_update_fleet_agy_aggregates_all_nodes(self):
+        """Verify update_fleet_agy concurrently checks all fleet targets."""
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        mock_proc.communicate = AsyncMock(
+            return_value=(b"Checking for updates... (current version 1.3.1)\nYou are already on the latest version.", b"")
+        )
+
+        with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+            fleet_res = await self.fleet.update_fleet_agy(nodes=["hermes", "desktop-pc"])
+            self.assertEqual(len(fleet_res), 2)
+            nodes = [r["node"] for r in fleet_res]
+            self.assertIn("localhost (hermes)", nodes)
+            self.assertIn("desktop-pc", nodes)
+
+

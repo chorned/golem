@@ -8,6 +8,8 @@ PIDs, statuses, and live streaming ANSI terminal deltas to xterm.js.
 Minimally bloats the project:
 - Zero external dependencies (uses standard library asyncio, random, time).
 - Self-contained, clean lifecycle: start(), stop(), and per-tick ANSI stream generation.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 from __future__ import annotations

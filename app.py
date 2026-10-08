@@ -21,6 +21,7 @@ import logging
 import argparse
 import textwrap
 from typing import Dict, Any, Optional, Set, List, Tuple
+from urllib.parse import quote
 
 from dotenv import load_dotenv
 from golem.config import is_webui_enabled, get_webui_host, get_webui_port
@@ -759,12 +760,12 @@ async def ensure_session_agent(
         session.status = "failed"
         logger.error(f"herdr agent start failed for {target_agent}: {err_detail}")
         if client:
-            if trigger_ts and not is_imessage:
+            if trigger_ts:
                 await swap_reacji(client, channel, trigger_ts, "gear", "x")
                 await swap_reacji(client, channel, trigger_ts, "eyes", "x")
             err_msg = f":x: *Hit an issue running the server: Failed to spawn Antigravity agent (`{target_agent}`)*:\n```{err_detail}```"
             if is_imessage:
-                await client.chat_postMessage(channel=channel, text=normalize_for_bluebubbles(err_msg))
+                await client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=normalize_for_bluebubbles(err_msg))
             else:
                 await client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=sanitize_for_slack(err_msg))
         if ws_id:
@@ -779,12 +780,12 @@ async def ensure_session_agent(
         timeout_detail = f"Agent `{target_agent}` failed to reach readiness within 15 seconds."
         logger.error(timeout_detail)
         if client:
-            if trigger_ts and not is_imessage:
+            if trigger_ts:
                 await swap_reacji(client, channel, trigger_ts, "gear", "x")
                 await swap_reacji(client, channel, trigger_ts, "eyes", "x")
             timeout_msg = f":x: *Hit an issue running the server: Failed to start Antigravity agent (`{target_agent}`)*:\n```{timeout_detail}```"
             if is_imessage:
-                await client.chat_postMessage(channel=channel, text=normalize_for_bluebubbles(timeout_msg))
+                await client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=normalize_for_bluebubbles(timeout_msg))
             else:
                 await client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=sanitize_for_slack(timeout_msg))
         if ws_id:
@@ -863,11 +864,11 @@ async def monitor_agent_lifecycle(
                 timeout_msg = f":x: *Hit an issue running the server: Agent (`{agent_name}`) timed out during initialization (>30s).* Session aborted."
                 if session.telemetry_observer:
                     await session.telemetry_observer.settle_failed(error_detail=timeout_msg)
-                if trigger_ts and not session.is_imessage:
+                if trigger_ts:
                     await swap_reacji(client, session.channel, trigger_ts, "gear", "x")
                     await swap_reacji(client, session.channel, trigger_ts, "eyes", "x")
                 if session.is_imessage:
-                    await client.chat_postMessage(channel=session.channel, text=normalize_for_bluebubbles(timeout_msg))
+                    await client.chat_postMessage(channel=session.channel, thread_ts=session.thread_ts, text=normalize_for_bluebubbles(timeout_msg))
                 else:
                     await client.chat_postMessage(channel=session.channel, thread_ts=session.thread_ts, text=sanitize_for_slack(timeout_msg))
                 if session.workspace_id:
@@ -924,7 +925,7 @@ async def monitor_agent_lifecycle(
         if (current_status == "blocked" or is_terminal_blocked) and session.status != "blocked":
             session.status = "blocked"
             session.last_blocked_snapshot = read_out
-            if trigger_ts and not session.is_imessage:
+            if trigger_ts:
                 await swap_reacji(client, session.channel, trigger_ts, "gear", "warning")
             await post_approval_card(session, client, read_out)
             continue
@@ -965,7 +966,7 @@ async def monitor_agent_lifecycle(
                 consecutive_idle_ticks += 1
                 if consecutive_idle_ticks >= 2:
                     session.status = "done"
-                    if trigger_ts and not session.is_imessage:
+                    if trigger_ts:
                         await swap_reacji(client, session.channel, trigger_ts, "gear", "white_check_mark")
                     # Fetch broader buffer to capture full conversational briefings
                     _, final_read, _ = await herdr_client.run_cli([
@@ -992,6 +993,7 @@ async def post_approval_card(session: GatewaySession, client: Any, terminal_snip
         )
         await client.chat_postMessage(
             channel=session.channel,
+            thread_ts=session.thread_ts,
             text=normalize_for_bluebubbles(msg)
         )
     else:
@@ -1048,6 +1050,7 @@ async def post_completion_briefing(session: GatewaySession, client: Any, termina
         for chunk in split_message_boundary_aware(bb_text, max_chars=3500):
             await client.chat_postMessage(
                 channel=session.channel,
+                thread_ts=session.thread_ts,
                 text=chunk
             )
     else:
@@ -1174,7 +1177,7 @@ async def handle_update_request(channel: str, thread_ts: Optional[str] = None, m
         await client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=sanitize_for_slack(msg))
         return
 
-    msg = "🚀 *Update:* Verifying test suite before reloading daemon..."
+    msg = "🚀 *Update:* Verifying core test suite and fleet AGY binaries..."
     await client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=sanitize_for_slack(msg))
 
     async def _reload():
@@ -1184,6 +1187,7 @@ async def handle_update_request(channel: str, thread_ts: Optional[str] = None, m
             try:
                 proc = await asyncio.create_subprocess_exec(
                     script,
+                    "--verify-only",
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                 )
@@ -1193,11 +1197,30 @@ async def handle_update_request(channel: str, thread_ts: Optional[str] = None, m
                     msg = f"❌ *Update Aborted:* Test verification failed (exit {proc.returncode}):\n```{err_snip}```"
                     await client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=sanitize_for_slack(msg))
                     return
-                msg = "🚀 *Update:* Verification passed cleanly. Daemon reloaded."
-                await client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=sanitize_for_slack(msg))
-                return
             except Exception as e:
                 logger.warning(f"safe_update.sh invocation failed: {e}")
+
+        # Check and update agy CLI across fleet
+        fleet_bullets = []
+        try:
+            from herdr_fleet import HerdrFleet
+            fleet_obj = HerdrFleet()
+            agy_results = await fleet_obj.update_fleet_agy()
+            for r in agy_results:
+                n = r.get("node", "unknown")
+                st = r.get("status", "unknown")
+                fleet_bullets.append(f"• *{n}:* {st}")
+        except Exception as e:
+            fleet_bullets.append(f"• Fleet AGY update error: {e}")
+
+        fleet_section = ""
+        if fleet_bullets:
+            fleet_section = "\n\n*Fleet AGY Binary Status:*\n" + "\n".join(fleet_bullets)
+
+        succ_msg = f"🚀 *Update:* Verification passed cleanly. Daemon reloaded.{fleet_section}"
+        await client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=sanitize_for_slack(succ_msg))
+        await asyncio.sleep(0.5)
+
         try:
             uid = os.getuid()
             for label in ["com.user.first-mate", "com.user.golem"]:
@@ -1308,7 +1331,7 @@ async def process_user_prompt(event: Dict[str, Any], client: Any) -> None:
         return
 
     # 3. New Task Dispatch / Follow-Up Prompt to Herdr Pane (Non-verbal :gear: ingress)
-    if not is_imessage:
+    if ts:
         await add_reacji(client, channel, ts, "gear")
 
     is_new_session = session_key not in sessions or sessions[session_key].status == "failed"
@@ -1762,17 +1785,81 @@ async def handle_bluebubbles_inbound_message(
     raw_payload: Dict[str, Any]
 ):
     logger.info(f"[iMessage Received] From {sender} in {chat_guid}: {text[:80]}")
+    message_guid = (
+        raw_payload.get("guid")
+        or raw_payload.get("data", {}).get("guid")
+        or ""
+    )
+    now_ts = str(time.time())
+    ts_val = message_guid or now_ts
+
+    # Extract inbound attachments from BlueBubbles payload if present
+    record = raw_payload.get("data") if isinstance(raw_payload.get("data"), dict) else raw_payload
+    raw_attachments = record.get("attachments") or raw_payload.get("attachments") or []
+    inbound_files: List[Dict[str, Any]] = []
+    if isinstance(raw_attachments, list):
+        for idx, att in enumerate(raw_attachments):
+            if not isinstance(att, dict):
+                continue
+            guid = att.get("guid") or f"att_{int(time.time())}_{idx}"
+            raw_fname = att.get("transferName") or att.get("name") or att.get("filename") or f"attachment_{idx}"
+            mime_type = att.get("mimeType") or att.get("contentType") or "application/octet-stream"
+            size = att.get("totalBytes") or att.get("size") or 0
+            file_path = att.get("filePath") or att.get("path")
+            if file_path and file_path.startswith("~"):
+                file_path = os.path.expanduser(file_path)
+
+            download_url = ""
+            if bb_transport and hasattr(bb_transport, "server_url") and bb_transport.server_url and guid:
+                download_url = f"{bb_transport.server_url.rstrip('/')}/api/v1/attachment/{quote(guid, safe='')}/download?password={quote(bb_transport.password, safe='')}"
+
+            inbound_files.append({
+                "id": guid,
+                "file_id": guid,
+                "name": raw_fname,
+                "title": raw_fname,
+                "size": size,
+                "mimetype": mime_type,
+                "url_private_download": download_url,
+                "url_private": download_url,
+                "url": download_url,
+                "local_path": file_path if (file_path and os.path.isfile(file_path)) else None,
+                "is_imessage": True,
+            })
+
+    raw_thread_originator = str(
+        record.get("threadOriginatorGuid")
+        or record.get("thread_originator_guid")
+        or raw_payload.get("threadOriginatorGuid")
+        or ""
+    ).strip()
+
+    client = bb_transport.get_client(chat_guid) if bb_transport else None
+    if raw_thread_originator and client:
+        effective_thread_ts = client.resolve_thread_root(raw_thread_originator)
+    elif raw_thread_originator:
+        effective_thread_ts = raw_thread_originator
+    else:
+        # Model A (Strict Slack Threading): Top-level text box starts a brand new conversation
+        effective_thread_ts = ts_val
+
     event = {
         "channel": chat_guid,
         "user": sender,
         "text": text,
-        "ts": str(time.time()),
-        "thread_ts": chat_guid,
+        "ts": ts_val,
+        "thread_ts": effective_thread_ts,
+        "message_guid": message_guid or None,
+        "thread_originator_guid": raw_thread_originator or None,
         "is_imessage": True,
+        "files": inbound_files,
         "raw_payload": raw_payload
     }
     if bb_transport:
         client = bb_transport.get_client(chat_guid)
+        if USE_HEADLESS_GATEWAY and ingress_gateway is not None:
+            await ingress_gateway.handle_message(event, client)
+            return
         await process_user_prompt(event, client)
 
 

@@ -51,16 +51,21 @@ from golem.sensory.bus import (
 from golem.transport.normalizer import sanitize_for_slack
 from golem.transport.chunker import split_message_boundary_aware
 from golem.transport.file_transfer import (
+    TRANSFERS_DIR_NAME,
+    DEFAULT_MAX_FILE_SIZE_BYTES,
+    is_sensitive_target,
     extract_and_strip_file_directives,
+    resolve_file_path,
     upload_directive_files,
+    download_file,
+    download_slack_file,
+    sanitize_filename,
+    save_staged_file,
 )
 from golem.config import get_mouth_model, get_default_hand_worker, get_host_dir, get_daemon_label
 from golem.execution.delegation import WorkerDelegator
 
 logger = logging.getLogger("Golem.Gateway.Ingress")
-
-DEFAULT_MAX_FILE_SIZE_BYTES = 104_857_600  # 100MB
-TRANSFERS_DIR_NAME = "slack_transfers"
 
 DISPATCH_TASK_TOOL_DECLARATION: Dict[str, Any] = {
     "name": "dispatch_task",
@@ -190,22 +195,200 @@ def _is_mock_object(obj: Any) -> bool:
 GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
 
 
+async def call_openai_compatible_api(
+    payload: Dict[str, Any],
+    model: Optional[str] = None,
+    api_key: Optional[str] = None,
+    base_url: Optional[str] = None,
+    timeout_seconds: float = 30.0,
+) -> Optional[Dict[str, Any]]:
+    """Execute REST API POST call to OpenAI-compatible chat completions endpoint."""
+    key = api_key or os.environ.get("MOUTH_API_KEY") or os.environ.get("OPENAI_API_KEY") or get_gemini_api_key()
+    url_base = base_url or os.environ.get("MOUTH_BASE_URL") or os.environ.get("OPENAI_BASE_URL") or "https://api.openai.com/v1"
+    endpoint = f"{url_base.rstrip('/')}/chat/completions"
+    model_name = model or os.environ.get("MOUTH_MODEL") or "gpt-4o-mini"
+
+    # 1. Translate messages
+    messages: List[Dict[str, Any]] = []
+    sys_inst = payload.get("systemInstruction", {})
+    if sys_inst and isinstance(sys_inst, dict):
+        sys_parts = sys_inst.get("parts", [])
+        sys_text = "".join([p.get("text", "") for p in sys_parts if isinstance(p, dict) and "text" in p]).strip()
+        if sys_text:
+            messages.append({"role": "system", "content": sys_text})
+
+    for c in payload.get("contents", []):
+        if not isinstance(c, dict):
+            continue
+        gemini_role = c.get("role", "user")
+        role = "assistant" if gemini_role == "model" else "user"
+        parts = c.get("parts", [])
+        for p in parts:
+            if not isinstance(p, dict):
+                continue
+            if "functionCall" in p:
+                fn = p["functionCall"]
+                messages.append({
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [{
+                        "id": f"call_{fn.get('name', 'fn')}",
+                        "type": "function",
+                        "function": {
+                            "name": fn.get("name", ""),
+                            "arguments": json.dumps(fn.get("args", {})),
+                        }
+                    }]
+                })
+            elif "functionResponse" in p:
+                fn_resp = p["functionResponse"]
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": f"call_{fn_resp.get('name', 'fn')}",
+                    "content": json.dumps(fn_resp.get("response", {})),
+                })
+            elif "text" in p and p["text"]:
+                messages.append({"role": role, "content": p["text"]})
+
+    # 2. Translate tools
+    tools: List[Dict[str, Any]] = []
+    raw_tools = payload.get("tools", [])
+    if isinstance(raw_tools, list):
+        for t in raw_tools:
+            if isinstance(t, dict) and "functionDeclarations" in t:
+                for decl in t["functionDeclarations"]:
+                    if isinstance(decl, dict):
+                        tools.append({
+                            "type": "function",
+                            "function": {
+                                "name": decl.get("name", ""),
+                                "description": decl.get("description", ""),
+                                "parameters": decl.get("parameters", {}),
+                            }
+                        })
+
+    openai_payload: Dict[str, Any] = {
+        "model": model_name,
+        "messages": messages,
+    }
+    if tools:
+        openai_payload["tools"] = tools
+
+    tool_cfg = payload.get("toolConfig", {}).get("functionCallingConfig", {})
+    mode = str(tool_cfg.get("mode", "")).upper()
+    if mode == "NONE":
+        openai_payload["tool_choice"] = "none"
+    elif mode == "AUTO" and tools:
+        openai_payload["tool_choice"] = "auto"
+
+    gen_cfg = payload.get("generationConfig", {})
+    if "temperature" in gen_cfg:
+        openai_payload["temperature"] = gen_cfg["temperature"]
+    if "maxOutputTokens" in gen_cfg:
+        openai_payload["max_tokens"] = gen_cfg["maxOutputTokens"]
+
+    headers = {"Content-Type": "application/json"}
+    if key:
+        headers["Authorization"] = f"Bearer {key}"
+
+    timeout = aiohttp.ClientTimeout(total=timeout_seconds)
+    try:
+        async with aiohttp.ClientSession(timeout=timeout) as http_session:
+            async with http_session.post(endpoint, json=openai_payload, headers=headers) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    choices = data.get("choices", [])
+                    if not choices:
+                        return {"candidates": []}
+                    first_choice = choices[0]
+                    msg = first_choice.get("message", {})
+                    tool_calls = msg.get("tool_calls", [])
+                    if tool_calls:
+                        tc = tool_calls[0]
+                        fn_obj = tc.get("function", {})
+                        fn_name = fn_obj.get("name", "")
+                        raw_args = fn_obj.get("arguments", "{}")
+                        try:
+                            fn_args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
+                        except Exception:
+                            fn_args = {"raw": raw_args}
+                        return {
+                            "candidates": [{
+                                "content": {
+                                    "role": "model",
+                                    "parts": [{"functionCall": {"name": fn_name, "args": fn_args}}],
+                                },
+                                "finishReason": first_choice.get("finish_reason", "tool_calls"),
+                            }]
+                        }
+                    content_text = msg.get("content") or ""
+                    return {
+                        "candidates": [{
+                            "content": {
+                                "role": "model",
+                                "parts": [{"text": content_text}],
+                            },
+                            "finishReason": first_choice.get("finish_reason", "stop"),
+                        }]
+                    }
+                else:
+                    err_text = await resp.text()
+                    logger.warning(f"OpenAI-compatible API returned status {resp.status}: {err_text}")
+                    return {
+                        "_error": True,
+                        "status": resp.status,
+                        "code": resp.status,
+                        "error_type": f"HTTP_{resp.status}",
+                        "raw_error": err_text,
+                        "message": err_text,
+                    }
+    except Exception as e:
+        logger.warning(f"OpenAI-compatible API call failed: {e}")
+        return {
+            "_error": True,
+            "status": 500,
+            "code": 500,
+            "error_type": type(e).__name__,
+            "raw_error": str(e),
+            "message": str(e),
+        }
+
+
 async def call_gemini_api(
     payload: Dict[str, Any],
     model: Optional[str] = None,
     api_key: Optional[str] = None,
     timeout_seconds: float = 30.0,
 ) -> Optional[Dict[str, Any]]:
-    """Execute REST API POST call to Google Gemini endpoint."""
+    """Execute REST API POST call to Google Gemini endpoint or configured MOUTH_BACKEND."""
+    backend = (os.environ.get("MOUTH_BACKEND") or os.environ.get("GOLEM_MOUTH_BACKEND") or "gemini").lower().strip()
+    if backend in ("openai", "openai-compatible", "openrouter", "groq", "ollama", "deepseek"):
+        return await call_openai_compatible_api(
+            payload=payload,
+            model=model,
+            api_key=api_key,
+            timeout_seconds=timeout_seconds,
+        )
+
     key = api_key or get_gemini_api_key()
     if not key:
         return None
     model_name = model or get_mouth_model()
     url = GEMINI_API_URL.format(model=model_name, key=key)
     timeout = aiohttp.ClientTimeout(total=timeout_seconds)
+
+    headers = {"Content-Type": "application/json"}
+    user_project = (
+        os.environ.get("GOOGLE_CLOUD_PROJECT")
+        or os.environ.get("GCP_PROJECT")
+        or os.environ.get("VERTEX_PROJECT")
+    )
+    if user_project:
+        headers["x-goog-user-project"] = user_project.strip()
+
     try:
         async with aiohttp.ClientSession(timeout=timeout) as http_session:
-            async with http_session.post(url, json=payload, headers={"Content-Type": "application/json"}) as resp:
+            async with http_session.post(url, json=payload, headers=headers) as resp:
                 if resp.status == 200:
                     return await resp.json()
                 else:
@@ -353,173 +536,8 @@ class BackstageExecutionAccumulator:
         return summary
 
 
-async def download_slack_file(
-    url: str,
-    token: str,
-    max_size_bytes: int = DEFAULT_MAX_FILE_SIZE_BYTES,
-    timeout_seconds: float = 30.0,
-) -> Optional[bytes]:
-    """
-    Download private file bytes from Slack using bot token authentication.
-    Follows redirects to Amazon S3 WITHOUT the Authorization header to prevent
-    AWS S3 HTTP 400 Bad Request errors. Enforces max_size_bytes limit before
-    and during byte streaming.
-    """
-    if not url:
-        return None
-    token = token or os.environ.get("SLACK_BOT_TOKEN", "")
-    headers = {"Authorization": f"Bearer {token}"} if token else {}
-    timeout = aiohttp.ClientTimeout(total=timeout_seconds)
-
-    try:
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.get(url, headers=headers, allow_redirects=False) as resp:
-                if resp.status in (301, 302, 303, 307, 308):
-                    redirect_url = resp.headers.get("Location")
-                    if not redirect_url:
-                        logger.error(f"Redirect status {resp.status} with no Location header for {url}")
-                        return None
-                    # Follow redirect URL WITHOUT Authorization header to prevent S3 HTTP 400
-                    async with session.get(redirect_url, allow_redirects=True) as redirect_resp:
-                        if redirect_resp.status != 200:
-                            logger.error(
-                                f"Redirect download failed for {url} -> {redirect_url} with status {redirect_resp.status}"
-                            )
-                            return None
-                        cl = redirect_resp.headers.get("Content-Length")
-                        if cl and cl.isdigit() and int(cl) > max_size_bytes:
-                            logger.warning(
-                                f"File at {redirect_url} Content-Length {cl} exceeds max size {max_size_bytes} bytes; aborted."
-                            )
-                            return None
-
-                        if hasattr(redirect_resp, "content") and hasattr(redirect_resp.content, "iter_chunked"):
-                            chunks = []
-                            total_bytes = 0
-                            async for chunk in redirect_resp.content.iter_chunked(32768):
-                                total_bytes += len(chunk)
-                                if total_bytes > max_size_bytes:
-                                    proto = getattr(redirect_resp, "_protocol", None)
-                                    trans = getattr(proto, "transport", None)
-                                    if trans and hasattr(trans, "abort"):
-                                        try:
-                                            trans.abort()
-                                        except Exception:
-                                            pass
-                                    redirect_resp.close()
-                                    if hasattr(session, "close"):
-                                        await session.close()
-                                    logger.warning(
-                                        f"File download from {redirect_url} exceeded max size {max_size_bytes} bytes during stream; aborted."
-                                    )
-                                    return None
-                                chunks.append(chunk)
-                            return b"".join(chunks)
-                        else:
-                            data = await redirect_resp.read()
-                            if len(data) > max_size_bytes:
-                                logger.warning(
-                                    f"File download from {redirect_url} exceeded max size {max_size_bytes} bytes; aborted."
-                                )
-                                return None
-                            return data
-
-                elif resp.status == 200:
-                    cl = resp.headers.get("Content-Length")
-                    if cl and cl.isdigit() and int(cl) > max_size_bytes:
-                        logger.warning(
-                            f"File at {url} Content-Length {cl} exceeds max size {max_size_bytes} bytes; aborted."
-                        )
-                        return None
-
-                    if hasattr(resp, "content") and hasattr(resp.content, "iter_chunked"):
-                        chunks = []
-                        total_bytes = 0
-                        async for chunk in resp.content.iter_chunked(32768):
-                            total_bytes += len(chunk)
-                            if total_bytes > max_size_bytes:
-                                proto = getattr(resp, "_protocol", None)
-                                trans = getattr(proto, "transport", None)
-                                if trans and hasattr(trans, "abort"):
-                                    try:
-                                        trans.abort()
-                                    except Exception:
-                                        pass
-                                resp.close()
-                                if hasattr(session, "close"):
-                                    await session.close()
-                                logger.warning(
-                                    f"File download from {url} exceeded max size {max_size_bytes} bytes during stream; aborted."
-                                )
-                                return None
-                            chunks.append(chunk)
-                        return b"".join(chunks)
-                    else:
-                        data = await resp.read()
-                        if len(data) > max_size_bytes:
-                            logger.warning(
-                                f"File download from {url} exceeded max size {max_size_bytes} bytes; aborted."
-                            )
-                            return None
-                        return data
-                else:
-                    logger.error(f"Failed to download Slack file from {url}: status {resp.status}")
-                    return None
-    except Exception as e:
-        logger.error(f"Exception downloading Slack file from {url}: {e}")
-        return None
-
-
-def sanitize_filename(filename: str) -> str:
-    """Sanitize filename to prevent path traversal and strip forbidden characters."""
-    raw = filename or ""
-    # Normalize backslashes so basename strips both / and \
-    normalized = raw.replace("\\", "/")
-    base_name = os.path.basename(normalized).strip()
-    safe_name = re.sub(r"[\x00/\\:*?\"<>|]", "_", base_name).strip()
-    safe_name = safe_name.lstrip(".")
-    if not safe_name:
-        safe_name = f"upload_{int(time.time())}"
-    return safe_name
-
-
-def save_staged_file(
-    file_bytes: bytes,
-    filename: str,
-    target_cwd: str,
-    timestamp: Optional[Union[int, float, str]] = None,
-) -> Optional[str]:
-    """
-    Save downloaded file bytes into {target_cwd}/slack_transfers/{timestamp}_{filename}.
-    Returns absolute path of the staged file, or None on failure.
-    Uses collision-resistant prefix naming when timestamp is omitted, and resolves
-    any on-disk collisions safely.
-    """
-    if timestamp is None:
-        timestamp_prefix = f"{int(time.time())}_{uuid.uuid4().hex[:6]}"
-    else:
-        timestamp_prefix = str(timestamp)
-    safe_name = sanitize_filename(filename)
-    transfers_dir = os.path.abspath(os.path.join(target_cwd, TRANSFERS_DIR_NAME))
-    try:
-        os.makedirs(transfers_dir, exist_ok=True)
-        dest_path = os.path.abspath(os.path.join(transfers_dir, f"{timestamp_prefix}_{safe_name}"))
-        if not dest_path.startswith(transfers_dir):
-            logger.error(f"Path traversal detected: {dest_path} is outside {transfers_dir}")
-            return None
-        if os.path.exists(dest_path):
-            nonce = uuid.uuid4().hex[:6]
-            dest_path = os.path.abspath(os.path.join(transfers_dir, f"{timestamp_prefix}_{nonce}_{safe_name}"))
-            if not dest_path.startswith(transfers_dir):
-                logger.error(f"Path traversal detected: {dest_path} is outside {transfers_dir}")
-                return None
-        with open(dest_path, "wb") as f:
-            f.write(file_bytes)
-        logger.info(f"Saved uploaded Slack file to: {dest_path} ({len(file_bytes)} bytes)")
-        return dest_path
-    except Exception as e:
-        logger.error(f"Failed to save uploaded file '{safe_name}' to {transfers_dir}: {e}")
-        return None
+# Inbound & outbound file transfer helpers (download_slack_file, sanitize_filename,
+# save_staged_file, upload_directive_files) are consolidated into golem.transport.file_transfer.
 
 
 IGNORABLE_REACTION_ERRORS = {
@@ -641,6 +659,144 @@ def strip_flushed_chunks(full_text: str, flushed_chunks: List[str]) -> str:
 
 
 
+def _format_hand_event_for_webui(event_item: Any) -> Optional[str]:
+    """
+    Format internal backstage AgentEvents into rich ANSI terminal output
+    for live streaming into the WebUI xterm.js hand agent card.
+    Captures reasoning/thoughts, tool invocations, command outputs, and status updates.
+    """
+    ev_type = getattr(event_item, "event_type", None) or (
+        event_item.get("event_type") if isinstance(event_item, dict) else None
+    )
+
+    if ev_type in ("thought_delta", "thought"):
+        thought = (
+            getattr(event_item, "thought", "")
+            or getattr(event_item, "text", "")
+            or (event_item.get("thought", "") if isinstance(event_item, dict) else "")
+        )
+        if thought and thought.strip():
+            lines = thought.strip().splitlines()
+            if len(lines) == 1:
+                return f"\x1b[38;5;141m▸ [THOUGHT]\x1b[0m \x1b[38;5;252m{lines[0]}\x1b[0m\n"
+            else:
+                formatted = [f"\x1b[38;5;141m▸ [THOUGHT]\x1b[0m \x1b[38;5;252m{lines[0]}\x1b[0m"]
+                for l in lines[1:]:
+                    formatted.append(f"  \x1b[38;5;240m│\x1b[0m \x1b[38;5;250m{l}\x1b[0m")
+                return "\n".join(formatted) + "\n"
+        return None
+
+    elif ev_type == "tool_start":
+        tool_name = getattr(event_item, "tool_name", "") or (
+            event_item.get("tool_name", "") if isinstance(event_item, dict) else ""
+        )
+        params = getattr(event_item, "parameters", {}) or (
+            event_item.get("parameters", {}) if isinstance(event_item, dict) else {}
+        )
+        if not isinstance(params, dict):
+            params = {}
+
+        if tool_name in ("run_command", "bash", "cmd", "herdr_pane_run"):
+            cmd = params.get("CommandLine") or params.get("command") or params.get("cmd") or ""
+            cwd = params.get("Cwd") or params.get("cwd") or ""
+            cwd_str = f" \x1b[90m(in {cwd})\x1b[0m" if cwd else ""
+            return f"\x1b[36m● [TOOL START]\x1b[0m \x1b[1;37m{tool_name}\x1b[0m{cwd_str}\n  \x1b[33m$\x1b[0m \x1b[1;37m{cmd}\x1b[0m\n"
+
+        elif tool_name in ("view_file", "read_file", "view"):
+            path = params.get("AbsolutePath") or params.get("path") or params.get("TargetFile") or ""
+            lines_str = ""
+            if "StartLine" in params or "EndLine" in params:
+                lines_str = f" \x1b[90m(lines {params.get('StartLine', 1)}-{params.get('EndLine', 'end')})\x1b[0m"
+            return f"\x1b[36m● [TOOL START]\x1b[0m \x1b[1;37m{tool_name}\x1b[0m \x1b[32m{path}\x1b[0m{lines_str}\n"
+
+        elif tool_name in ("write_to_file", "replace_file_content", "multi_replace_file_content"):
+            path = params.get("TargetFile") or params.get("path") or ""
+            desc = params.get("Description") or ""
+            desc_str = f" \x1b[90m— {desc}\x1b[0m" if desc else ""
+            return f"\x1b[36m● [TOOL START]\x1b[0m \x1b[1;37m{tool_name}\x1b[0m \x1b[32m{path}\x1b[0m{desc_str}\n"
+
+        elif tool_name in ("grep_search", "search", "find"):
+            query = params.get("Query") or params.get("query") or ""
+            path = params.get("SearchPath") or params.get("path") or ""
+            return f"\x1b[36m● [TOOL START]\x1b[0m \x1b[1;37m{tool_name}\x1b[0m query=\x1b[33m'{query}'\x1b[0m in \x1b[32m{path}\x1b[0m\n"
+
+        else:
+            param_items = [
+                f"{k}={v!r}" for k, v in list(params.items())[:3]
+                if k not in ("ArtifactMetadata",)
+            ]
+            param_str = ", ".join(param_items)
+            if len(param_str) > 100:
+                param_str = param_str[:97] + "..."
+            return f"\x1b[36m● [TOOL START]\x1b[0m \x1b[1;37m{tool_name}\x1b[0m\x1b[90m({param_str})\x1b[0m\n"
+
+    elif ev_type == "tool_end":
+        tool_name = getattr(event_item, "tool_name", "") or (
+            event_item.get("tool_name", "") if isinstance(event_item, dict) else ""
+        )
+        output = getattr(event_item, "output", "") or (
+            event_item.get("output", "") if isinstance(event_item, dict) else ""
+        )
+        duration = getattr(event_item, "duration_seconds", None)
+        is_error = getattr(event_item, "is_error", False)
+        dur_str = f" \x1b[90m({duration:.2f}s)\x1b[0m" if isinstance(duration, (int, float)) else ""
+
+        if is_error:
+            header = f"\x1b[31m✖ [TOOL ERROR]\x1b[0m \x1b[1;31m{tool_name}\x1b[0m{dur_str}\n"
+        else:
+            header = f"\x1b[32m✔ [TOOL END]\x1b[0m \x1b[1;32m{tool_name}\x1b[0m{dur_str}\n"
+
+        out_str = str(output).strip() if output is not None else ""
+        if out_str:
+            lines = out_str.splitlines()
+            if len(lines) > 50:
+                display_lines = lines[:35] + [f"... [{len(lines) - 45} lines truncated] ..."] + lines[-10:]
+            else:
+                display_lines = lines
+            body = "\n".join(f"  \x1b[90m│\x1b[0m {l}" for l in display_lines) + "\n"
+            return header + body
+        return header
+
+    elif ev_type == "status_update":
+        status = getattr(event_item, "status", "") or (
+            event_item.get("status", "") if isinstance(event_item, dict) else ""
+        )
+        detail = getattr(event_item, "detail", "") or (
+            event_item.get("detail", "") if isinstance(event_item, dict) else ""
+        )
+        if status == "model_fallback":
+            return f"\x1b[33m⚡ [MODEL FALLBACK]\x1b[0m \x1b[1;33m{detail}\x1b[0m\n"
+        elif detail:
+            return f"\x1b[33m▸ [STATUS]\x1b[0m \x1b[90m{detail}\x1b[0m\n"
+        elif status and status != "working":
+            return f"\x1b[33m▸ [STATUS]\x1b[0m \x1b[90m{status}\x1b[0m\n"
+        return None
+
+    elif ev_type == "text_delta":
+        delta = (
+            getattr(event_item, "text_delta", "")
+            or getattr(event_item, "text", "")
+            or (event_item.get("text_delta", "") if isinstance(event_item, dict) else "")
+        )
+        return delta or None
+
+    elif ev_type == "awaiting_input":
+        prompt = getattr(event_item, "prompt", "") or (
+            event_item.get("prompt", "") if isinstance(event_item, dict) else ""
+        )
+        return f"\x1b[33m⚠️ [AWAITING INPUT]\x1b[0m \x1b[1;33m{prompt}\x1b[0m\n"
+
+    elif ev_type == "finish":
+        status = getattr(event_item, "status", "SUCCESS")
+        if status == "SUCCESS":
+            return "\n\x1b[32m✔ [TASK COMPLETE]\x1b[0m \x1b[90mExecution finished successfully.\x1b[0m\n"
+        else:
+            err = getattr(event_item, "error", "") or "Execution encountered an error."
+            return f"\n\x1b[31m✖ [TASK FAILED]\x1b[0m \x1b[1;31m{err}\x1b[0m\n"
+
+    return None
+
+
 class IngressGateway:
     """
     Ingress gateway routing incoming chat events to warm SessionHandles.
@@ -738,7 +894,7 @@ class IngressGateway:
                 content = blocker_data.get("content") or blocker_data.get("prompt") or blocker_data.get("blocker_prompt", "")
                 card = f"⚠️ *Confirmation Required:* Runner is waiting for input:\n> `{content}`"
 
-            if not is_imessage and thread_ts:
+            if thread_ts:
                 await swap_reaction(client, channel, thread_ts, "gear", "warning")
             await self._post_response(client, channel, thread_ts, card, is_imessage)
 
@@ -904,65 +1060,121 @@ class IngressGateway:
                 "status": "exceeded_size",
             }
 
-        # Resolve download URL
-        download_url = f.get("url_private_download") or f.get("url_private") or f.get("url")
-        if not download_url and file_id and client and hasattr(client, "files_info"):
+        # Resolve download URL or direct local file read
+        local_path = f.get("local_path")
+        if local_path and os.path.isfile(local_path):
             try:
-                res = client.files_info(file=file_id)
-                if inspect.isawaitable(res):
-                    resp = await res
-                else:
-                    resp = res
-                if isinstance(resp, dict):
-                    info = resp.get("file", {})
-                elif hasattr(resp, "data") and isinstance(resp.data, dict):
-                    info = resp.data.get("file", {})
-                else:
-                    info = getattr(resp, "file", {}) or {}
-                download_url = info.get("url_private_download") or info.get("url_private")
-                if not raw_name:
-                    raw_name = info.get("name") or info.get("title") or ""
-                    safe_name = sanitize_filename(raw_name) if raw_name else safe_name
-                if declared_size is None:
-                    declared_size = info.get("size")
-                    if declared_size and declared_size > self.max_file_size_bytes:
-                        logger.warning(
-                            f"Inbound file '{safe_name}' ({file_id}) size {declared_size} exceeds max {self.max_file_size_bytes} bytes; rejecting."
-                        )
-                        return {
-                            "id": file_id,
-                            "name": safe_name,
-                            "path": None,
-                            "size": declared_size,
-                            "status": "exceeded_size",
-                        }
+                with open(local_path, "rb") as lf:
+                    file_bytes = lf.read()
+                if len(file_bytes) > self.max_file_size_bytes:
+                    logger.warning(
+                        f"Inbound file '{safe_name}' ({file_id}) size {len(file_bytes)} exceeds max {self.max_file_size_bytes} bytes; rejecting."
+                    )
+                    return {
+                        "id": file_id,
+                        "name": safe_name,
+                        "path": None,
+                        "size": len(file_bytes),
+                        "status": "exceeded_size",
+                    }
+                saved_path = save_staged_file(file_bytes, safe_name, target_cwd)
+                if saved_path:
+                    if file_id:
+                        self._cache_staged_file(file_id, saved_path)
+                    return {
+                        "id": file_id,
+                        "name": safe_name,
+                        "path": saved_path,
+                        "size": len(file_bytes),
+                        "status": "staged",
+                    }
             except Exception as e:
-                logger.error(f"Failed to query files_info for {file_id}: {e}")
+                logger.warning(f"Failed to read local attachment path {local_path}: {e}")
 
-        if not download_url:
-            logger.warning(f"No download URL available for file '{safe_name}' ({file_id})")
+        # If client provides native attachment download (e.g. BlueBubblesClient), attempt it
+        file_bytes = None
+        if bool(f.get("is_imessage")) and file_id and client and hasattr(client, "download_attachment"):
+            try:
+                res = client.download_attachment(file_id)
+                if inspect.isawaitable(res):
+                    res = await res
+                if isinstance(res, (bytes, bytearray)):
+                    file_bytes = res
+            except Exception as e:
+                logger.warning(f"Failed to download attachment via client.download_attachment for {file_id}: {e}")
+
+        if file_bytes and len(file_bytes) > self.max_file_size_bytes:
+            logger.warning(
+                f"Inbound file '{safe_name}' ({file_id}) size {len(file_bytes)} exceeds max {self.max_file_size_bytes} bytes; rejecting."
+            )
             return {
                 "id": file_id,
                 "name": safe_name,
                 "path": None,
-                "size": declared_size or 0,
-                "status": "failed",
+                "size": len(file_bytes),
+                "status": "exceeded_size",
             }
 
-        # Download file bytes
-        file_bytes = await download_slack_file(
-            download_url,
-            token=token,
-            max_size_bytes=self.max_file_size_bytes,
-        )
         if not file_bytes:
-            return {
-                "id": file_id,
-                "name": safe_name,
-                "path": None,
-                "size": declared_size or 0,
-                "status": "failed",
-            }
+            download_url = f.get("url_private_download") or f.get("url_private") or f.get("url")
+            if not download_url and file_id and client and hasattr(client, "files_info"):
+                try:
+                    res = client.files_info(file=file_id)
+                    if inspect.isawaitable(res):
+                        resp = await res
+                    else:
+                        resp = res
+                    if isinstance(resp, dict):
+                        info = resp.get("file", {})
+                    elif hasattr(resp, "data") and isinstance(resp.data, dict):
+                        info = resp.data.get("file", {})
+                    else:
+                        info = getattr(resp, "file", {}) or {}
+                    download_url = info.get("url_private_download") or info.get("url_private")
+                    if not raw_name:
+                        raw_name = info.get("name") or info.get("title") or ""
+                        safe_name = sanitize_filename(raw_name) if raw_name else safe_name
+                    if declared_size is None:
+                        declared_size = info.get("size")
+                        if declared_size and declared_size > self.max_file_size_bytes:
+                            logger.warning(
+                                f"Inbound file '{safe_name}' ({file_id}) size {declared_size} exceeds max {self.max_file_size_bytes} bytes; rejecting."
+                            )
+                            return {
+                                "id": file_id,
+                                "name": safe_name,
+                                "path": None,
+                                "size": declared_size,
+                                "status": "exceeded_size",
+                            }
+                except Exception as e:
+                    logger.error(f"Failed to query files_info for {file_id}: {e}")
+
+            if not download_url:
+                logger.warning(f"No download URL available for file '{safe_name}' ({file_id})")
+                return {
+                    "id": file_id,
+                    "name": safe_name,
+                    "path": None,
+                    "size": declared_size or 0,
+                    "status": "failed",
+                }
+
+            # Download file bytes
+            effective_token = "" if f.get("is_imessage") else token
+            file_bytes = await download_slack_file(
+                download_url,
+                token=effective_token,
+                max_size_bytes=self.max_file_size_bytes,
+            )
+            if not file_bytes:
+                return {
+                    "id": file_id,
+                    "name": safe_name,
+                    "path": None,
+                    "size": declared_size or 0,
+                    "status": "failed",
+                }
 
         # Save to disk
         saved_path = save_staged_file(file_bytes, safe_name, target_cwd)
@@ -1084,12 +1296,14 @@ class IngressGateway:
         thread_ts: str,
         exclude_ts: Optional[str] = None,
         limit: int = 15,
+        is_imessage: bool = False,
     ) -> str:
-        """Fetch previous messages in the Slack thread to provide continuity when rehydrating a session."""
-        if not hasattr(client, "conversations_replies") or not channel or not thread_ts:
+        """Fetch previous messages in the Slack thread or iMessage chat to provide continuity when rehydrating a session."""
+        effective_thread_ts = thread_ts or (channel if is_imessage else None)
+        if not hasattr(client, "conversations_replies") or not channel or not effective_thread_ts:
             return ""
         try:
-            res = client.conversations_replies(channel=channel, ts=thread_ts, limit=limit)
+            res = client.conversations_replies(channel=channel, ts=effective_thread_ts, limit=limit)
             if inspect.isawaitable(res):
                 resp = await res
             else:
@@ -1105,6 +1319,7 @@ class IngressGateway:
 
             context_lines = []
             bot_id = self.bot_user_id
+            max_char_len = 1200 if is_imessage else 300
             for msg in messages:
                 msg_ts = msg.get("ts")
                 if exclude_ts and msg_ts == exclude_ts:
@@ -1118,20 +1333,22 @@ class IngressGateway:
                     or bool(msg.get("bot_id"))
                     or bool(msg.get("bot_profile"))
                 )
-                sender = "AGY" if is_bot else "User"
+                sender = "Hermes" if (is_imessage and is_bot) else ("AGY" if is_bot else "User")
                 clean_msg = strip_bot_mentions(text, bot_id)
-                if len(clean_msg) > 300:
-                    clean_msg = clean_msg[:300] + "..."
+                if len(clean_msg) > max_char_len:
+                    clean_msg = clean_msg[:max_char_len] + "..."
                 context_lines.append(f"{sender}: {clean_msg}")
 
             if not context_lines:
                 return ""
 
             recent_lines = context_lines[-10:]
-            formatted_context = "[Previous Slack Thread Context:\n" + "\n".join(recent_lines) + "\n]"
+            header = "[Previous iMessage Conversation Context:" if is_imessage else "[Previous Slack Thread Context:"
+            formatted_context = f"{header}\n" + "\n".join(recent_lines) + "\n]"
             return formatted_context
         except Exception as e:
-            logger.warning(f"Could not fetch Slack thread history for {channel}:{thread_ts}: {e}")
+            platform_str = "iMessage" if is_imessage else "Slack"
+            logger.warning(f"Could not fetch {platform_str} conversation history for {channel}:{thread_ts}: {e}")
             return ""
 
     async def handle_message(self, event: Dict[str, Any], client: Any) -> None:
@@ -1173,12 +1390,14 @@ class IngressGateway:
 
         # 2. Strip bot mentions
         clean_text = strip_bot_mentions(raw_text, self.bot_user_id)
+        if clean_text.strip().lower() in ("(attachment)", "(attachment: )"):
+            clean_text = ""
         if not clean_text and not has_files:
             return
 
         # 3. Non-verbal ingress acknowledgment (<200ms)
         # ZERO canned greeting announcements are posted
-        if not is_imessage and ts:
+        if ts:
             await add_reaction(client, channel, ts, "gear")
             if thread_ts:
                 await set_assistant_status(client, channel, thread_ts, "Thinking...")
@@ -1190,7 +1409,7 @@ class IngressGateway:
             if cmd_token in ("/wrapup", "!wrapup"):
                 await self.router.teardown(channel, thread_ts, reason="wrapup")
                 msg = "🧹 *Wrapup:* Housekeeping complete. Working directories clean."
-                if not is_imessage and ts:
+                if ts:
                     await swap_reaction(client, channel, ts, "gear", "white_check_mark")
                 await self._post_response(client, channel, thread_ts, msg, is_imessage)
                 return
@@ -1198,7 +1417,17 @@ class IngressGateway:
             elif cmd_token in ("/archive", "!archive"):
                 await self.router.teardown(channel, thread_ts, reason="archive")
                 msg = "📦 *Archive:* Session archived and torn down."
-                if not is_imessage and ts:
+                if ts:
+                    await swap_reaction(client, channel, ts, "gear", "white_check_mark")
+                await self._post_response(client, channel, thread_ts, msg, is_imessage)
+                return
+
+            elif cmd_token in ("/new", "!new", "/reset", "!reset", "/clear", "!clear"):
+                await self.router.teardown(channel, thread_ts, reason="reset")
+                if is_imessage and hasattr(client, "clear_history"):
+                    client.clear_history()
+                msg = "✨ *New Session:* Context cleared. What are we working on next?"
+                if ts:
                     await swap_reaction(client, channel, ts, "gear", "white_check_mark")
                 await self._post_response(client, channel, thread_ts, msg, is_imessage)
                 return
@@ -1249,7 +1478,7 @@ class IngressGateway:
                     bullets = [f"• *{node}* ({role}): [Fleet Sentinel Unavailable]" for node, role in labels]
 
                 msg = "🧭 *Fleet Bearings & Status Digest:*\n" + "\n".join(bullets)
-                if not is_imessage and ts:
+                if ts:
                     await swap_reaction(client, channel, ts, "gear", "white_check_mark")
                 await self._post_response(client, channel, thread_ts, msg, is_imessage)
                 return
@@ -1267,7 +1496,7 @@ class IngressGateway:
                     msg = f"⚓ *Ahoy:* Session active with {active_count} executing hand(s):\n" + "\n".join(desc_list)
                 else:
                     msg = "⚓ *Ahoy:* Session standby. 0 background execution tasks running."
-                if not is_imessage and ts:
+                if ts:
                     await swap_reaction(client, channel, ts, "gear", "white_check_mark")
                 await self._post_response(client, channel, thread_ts, msg, is_imessage)
                 return
@@ -1275,7 +1504,7 @@ class IngressGateway:
             elif cmd_token in ("/learn", "!learn"):
                 user_notes = clean_text[len(cmd_token):].strip()
                 msg = f"🧠 *Operational Lesson Crystallized:* {user_notes or 'Lesson codified into operational memory.'}"
-                if not is_imessage and ts:
+                if ts:
                     await swap_reaction(client, channel, ts, "gear", "white_check_mark")
                 await self._post_response(client, channel, thread_ts, msg, is_imessage)
                 return
@@ -1287,14 +1516,16 @@ class IngressGateway:
                 active_count = len(active_hands)
                 if active_count > 0:
                     msg = f"⚠️ *Update Aborted:* Fleet active with {active_count} executing task(s). Wait for completion before reloading."
-                    if not is_imessage and ts:
+                    if ts:
                         await swap_reaction(client, channel, ts, "gear", "warning")
                     await self._post_response(client, channel, thread_ts, msg, is_imessage)
                     return
 
-                msg = "🚀 *Update:* Verifying test suite before reloading daemon..."
-                if not is_imessage and ts:
+                msg = "🚀 *Update:* Verifying core test suite and fleet AGY binaries..."
+                if ts:
                     await swap_reaction(client, channel, ts, "gear", "eyes")
+                if thread_ts:
+                    await set_assistant_status(client, channel, thread_ts, "Verifying core test suite...")
                 await self._post_response(client, channel, thread_ts, msg, is_imessage)
 
                 async def _do_ingress_reload() -> None:
@@ -1305,6 +1536,7 @@ class IngressGateway:
                         try:
                             proc = await asyncio.create_subprocess_exec(
                                 script,
+                                "--verify-only",
                                 stdout=asyncio.subprocess.PIPE,
                                 stderr=asyncio.subprocess.PIPE,
                             )
@@ -1312,17 +1544,42 @@ class IngressGateway:
                             if proc.returncode != 0:
                                 err_snip = (stderr or stdout).decode("utf-8", errors="replace")[-500:]
                                 fail_msg = f"❌ *Update Aborted:* Test verification failed (exit {proc.returncode}):\n```{err_snip}```"
-                                if not is_imessage and ts:
+                                if ts:
                                     await swap_reaction(client, channel, ts, "eyes", "x")
+                                if thread_ts:
+                                    await set_assistant_status(client, channel, thread_ts, "")
                                 await self._post_response(client, channel, thread_ts, fail_msg, is_imessage)
                                 return
-                            succ_msg = "🚀 *Update:* Verification passed cleanly. Daemon reloaded."
-                            if not is_imessage and ts:
-                                await swap_reaction(client, channel, ts, "eyes", "white_check_mark")
-                            await self._post_response(client, channel, thread_ts, succ_msg, is_imessage)
-                            return
                         except Exception as e:
                             logger.warning(f"safe_update.sh invocation failed: {e}")
+
+                    # Step 2: Check & update agy CLI across fleet
+                    if thread_ts:
+                        await set_assistant_status(client, channel, thread_ts, "Updating fleet AGY binaries...")
+                    fleet_bullets = []
+                    try:
+                        from herdr_fleet import HerdrFleet
+                        fleet_obj = HerdrFleet()
+                        agy_results = await fleet_obj.update_fleet_agy()
+                        for r in agy_results:
+                            n = r.get("node", "unknown")
+                            st = r.get("status", "unknown")
+                            fleet_bullets.append(f"• *{n}:* {st}")
+                    except Exception as e:
+                        fleet_bullets.append(f"• Fleet AGY update error: {e}")
+
+                    fleet_section = ""
+                    if fleet_bullets:
+                        fleet_section = "\n\n*Fleet AGY Binary Status:*\n" + "\n".join(fleet_bullets)
+
+                    succ_msg = f"🚀 *Update:* Verification passed cleanly. Daemon reloaded.{fleet_section}"
+                    if ts:
+                        await swap_reaction(client, channel, ts, "eyes", "white_check_mark")
+                    if thread_ts:
+                        await set_assistant_status(client, channel, thread_ts, "")
+                    await self._post_response(client, channel, thread_ts, succ_msg, is_imessage)
+                    await asyncio.sleep(0.5)
+
                     try:
                         uid = os.getuid()
                         labels = {get_daemon_label(), "com.user.first-mate", "com.user.golem"}
@@ -1331,8 +1588,6 @@ class IngressGateway:
                                 "launchctl", "kickstart", "-k", "-p", f"gui/{uid}/{lbl}"
                             )
                             await proc.communicate()
-                        if not is_imessage and ts:
-                            await swap_reaction(client, channel, ts, "eyes", "white_check_mark")
                     except Exception as e:
                         logger.warning(f"launchctl kickstart failed: {e}")
 
@@ -1373,7 +1628,7 @@ class IngressGateway:
                         f"• Root disk: {n_free} GB free | Docker: {n_cnt} containers running | Tailscale: {'online' if n_online else 'offline'}"
                     )
                     target_reaction = "white_check_mark"
-                if not is_imessage and ts:
+                if ts:
                     await swap_reaction(client, channel, ts, "gear", target_reaction)
                 await self._post_response(client, channel, thread_ts, msg, is_imessage)
                 return
@@ -1425,7 +1680,7 @@ class IngressGateway:
                     msg = f"👀 *Runner Observer:* Runner is currently *{e_state}*. Buffer is clear."
                     target_reaction = "white_check_mark"
 
-                if not is_imessage and ts:
+                if ts:
                     await swap_reaction(client, channel, ts, "gear", target_reaction)
                 await self._post_response(client, channel, thread_ts, msg, is_imessage)
                 return
@@ -1445,13 +1700,18 @@ class IngressGateway:
                 name = sf.get("name") or "file"
                 status = sf.get("status")
                 path = sf.get("path")
+                platform_label = "iMessage" if is_imessage else "Slack"
+                ext = os.path.splitext(name)[1].lower()
+                is_image = ext in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff", ".heic")
+                type_label = f"{platform_label} Image" if is_image else f"{platform_label} File"
+
                 if status in ("staged", "cached") and path:
-                    attachment_tags.append(f"[Attached Slack File: {name} saved to {path}]")
+                    attachment_tags.append(f"[Attached {type_label}: {name} saved to {path}]")
                     staged_names.append(name)
                 elif status == "exceeded_size":
-                    attachment_tags.append(f"[Attached Slack File: {name} exceeded size limit of 100MB; skipped]")
+                    attachment_tags.append(f"[Attached {type_label}: {name} exceeded size limit of 100MB; skipped]")
                 else:
-                    attachment_tags.append(f"[Attached Slack File: {name} download failed]")
+                    attachment_tags.append(f"[Attached {type_label}: {name} download failed]")
 
             # Fallback prompt if user uploaded a file without accompanying text
             if not clean_text and staged_names:
@@ -1462,15 +1722,17 @@ class IngressGateway:
                 clean_text = "I've uploaded a file to the workspace. Please inspect or process this file."
             elif not clean_text and not attachment_tags:
                 logger.debug(f"Dropping event ts={ts} with empty text and no staged file attachments.")
-                if not is_imessage and ts:
+                if ts:
                     await remove_reaction(client, channel, ts, "gear")
                 return
 
-            # Rehydrate thread history if message is a reply in an active Slack thread
+            # Rehydrate thread history if message is in an active thread
             thread_context = ""
             is_in_thread = bool(thread_ts and thread_ts != ts)
-            if not is_imessage and is_in_thread:
-                thread_context = await self._fetch_thread_context(client, channel, thread_ts, exclude_ts=ts)
+            if is_in_thread:
+                thread_context = await self._fetch_thread_context(
+                    client, channel, thread_ts, exclude_ts=ts, is_imessage=is_imessage
+                )
 
             # Prepend thread context and attachment tags to prompt sent to LLM without mutating clean_text
             prompt_to_send = clean_text
@@ -1639,13 +1901,13 @@ class IngressGateway:
 
             # 6. Egress Delivery & Reaction Swapping
             if has_awaiting_input:
-                if not is_imessage and ts:
+                if ts:
                     await swap_reaction(client, channel, ts, "gear", "warning")
                 prompt_msg = awaiting_input_prompt or "⚠️ *Confirmation Required:* Please provide input to continue."
                 await self._post_response(client, channel, thread_ts, prompt_msg, is_imessage)
 
             elif turn_status == "ERROR":
-                if not is_imessage and ts:
+                if ts:
                     await swap_reaction(client, channel, ts, "gear", "x")
                 err_msg = f"❌ *Error:* {error_message or 'Operation failed.'}"
                 await self._post_response(client, channel, thread_ts, err_msg, is_imessage)
@@ -1667,7 +1929,7 @@ class IngressGateway:
                 if clean_output:
                     await self._post_response(client, channel, thread_ts, clean_output, is_imessage)
 
-                if file_targets and not is_imessage:
+                if file_targets:
                     fleet_mesh = (
                         getattr(self.router.harness, "mesh", None)
                         if hasattr(self.router, "harness") and self.router.harness
@@ -1682,11 +1944,11 @@ class IngressGateway:
                         fleet_mesh=fleet_mesh,
                     )
 
-                if not is_imessage and ts:
+                if ts:
                     await swap_reaction(client, channel, ts, "gear", "white_check_mark")
         except Exception as e:
             logger.error(f"Unhandled exception in handle_message for ts={ts}: {e}", exc_info=True)
-            if not is_imessage and ts:
+            if ts:
                 await swap_reaction(client, channel, ts, "gear", "boom")
             err_msg = f"💥 *System Error:* An unexpected error occurred while processing message:\n```{type(e).__name__}: {e}```"
             try:
@@ -1695,7 +1957,7 @@ class IngressGateway:
                 pass
             raise
         finally:
-            if not is_imessage and thread_ts:
+            if thread_ts:
                 await set_assistant_status(client, channel, thread_ts, "")
 
     async def _post_response(
@@ -1719,7 +1981,7 @@ class IngressGateway:
             if not chunk:
                 continue
 
-            if idx == 0 and update_ts and not is_imessage and hasattr(client, "chat_update"):
+            if idx == 0 and update_ts and hasattr(client, "chat_update"):
                 try:
                     res = client.chat_update(channel=channel, ts=update_ts, text=chunk)
                     if inspect.isawaitable(res):
@@ -1730,10 +1992,7 @@ class IngressGateway:
                 except Exception as exc:
                     logger.debug(f"chat_update failed for ts={update_ts}, falling back to postMessage: {exc}")
 
-            if is_imessage:
-                res = client.chat_postMessage(channel=channel, text=chunk)
-            else:
-                res = client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=chunk)
+            res = client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=chunk)
             if inspect.isawaitable(res):
                 res = await res
             if first_resp is None:
@@ -1752,7 +2011,7 @@ class IngressGateway:
     ) -> None:
         """Handle out-of-band cancellation without acquiring session lock."""
         await session.cancel_execution()
-        if not is_imessage and ts:
+        if ts:
             await swap_reaction(client, channel, ts, "gear", "x")
         msg = "🛑 *Execution Cancelled:* Stopped active command in runner pane."
         await self._post_response(client, channel, thread_ts, msg, is_imessage)
@@ -1812,7 +2071,7 @@ class IngressGateway:
             if b_list and isinstance(b_list, list):
                 blocker = b_list[0]
 
-        if not is_imessage and ts:
+        if ts:
             if "Mouth Generation Error" in msg or "Error:" in msg:
                 await swap_reaction(client, channel, ts, "gear", "x")
             elif blocker and blocker.get("type") in ("oauth", "prompt"):
@@ -1862,145 +2121,6 @@ class IngressGateway:
         except Exception as exc:
             logger.debug(f"EyesTaskObserver attach warning: {exc}")
             return None
-
-
-def _format_hand_event_for_webui(event_item: Any) -> Optional[str]:
-    """
-    Format internal backstage AgentEvents into rich ANSI terminal output
-    for live streaming into the WebUI xterm.js hand agent card.
-    Captures reasoning/thoughts, tool invocations, command outputs, and status updates.
-    """
-    ev_type = getattr(event_item, "event_type", None) or (
-        event_item.get("event_type") if isinstance(event_item, dict) else None
-    )
-
-    if ev_type in ("thought_delta", "thought"):
-        thought = (
-            getattr(event_item, "thought", "")
-            or getattr(event_item, "text", "")
-            or (event_item.get("thought", "") if isinstance(event_item, dict) else "")
-        )
-        if thought and thought.strip():
-            lines = thought.strip().splitlines()
-            if len(lines) == 1:
-                return f"\x1b[38;5;141m▸ [THOUGHT]\x1b[0m \x1b[38;5;252m{lines[0]}\x1b[0m\n"
-            else:
-                formatted = [f"\x1b[38;5;141m▸ [THOUGHT]\x1b[0m \x1b[38;5;252m{lines[0]}\x1b[0m"]
-                for l in lines[1:]:
-                    formatted.append(f"  \x1b[38;5;240m│\x1b[0m \x1b[38;5;250m{l}\x1b[0m")
-                return "\n".join(formatted) + "\n"
-        return None
-
-    elif ev_type == "tool_start":
-        tool_name = getattr(event_item, "tool_name", "") or (
-            event_item.get("tool_name", "") if isinstance(event_item, dict) else ""
-        )
-        params = getattr(event_item, "parameters", {}) or (
-            event_item.get("parameters", {}) if isinstance(event_item, dict) else {}
-        )
-        if not isinstance(params, dict):
-            params = {}
-
-        if tool_name in ("run_command", "bash", "cmd", "herdr_pane_run"):
-            cmd = params.get("CommandLine") or params.get("command") or params.get("cmd") or ""
-            cwd = params.get("Cwd") or params.get("cwd") or ""
-            cwd_str = f" \x1b[90m(in {cwd})\x1b[0m" if cwd else ""
-            return f"\x1b[36m● [TOOL START]\x1b[0m \x1b[1;37m{tool_name}\x1b[0m{cwd_str}\n  \x1b[33m$\x1b[0m \x1b[1;37m{cmd}\x1b[0m\n"
-
-        elif tool_name in ("view_file", "read_file", "view"):
-            path = params.get("AbsolutePath") or params.get("path") or params.get("TargetFile") or ""
-            lines_str = ""
-            if "StartLine" in params or "EndLine" in params:
-                lines_str = f" \x1b[90m(lines {params.get('StartLine', 1)}-{params.get('EndLine', 'end')})\x1b[0m"
-            return f"\x1b[36m● [TOOL START]\x1b[0m \x1b[1;37m{tool_name}\x1b[0m \x1b[32m{path}\x1b[0m{lines_str}\n"
-
-        elif tool_name in ("write_to_file", "replace_file_content", "multi_replace_file_content"):
-            path = params.get("TargetFile") or params.get("path") or ""
-            desc = params.get("Description") or ""
-            desc_str = f" \x1b[90m— {desc}\x1b[0m" if desc else ""
-            return f"\x1b[36m● [TOOL START]\x1b[0m \x1b[1;37m{tool_name}\x1b[0m \x1b[32m{path}\x1b[0m{desc_str}\n"
-
-        elif tool_name in ("grep_search", "search", "find"):
-            query = params.get("Query") or params.get("query") or ""
-            path = params.get("SearchPath") or params.get("path") or ""
-            return f"\x1b[36m● [TOOL START]\x1b[0m \x1b[1;37m{tool_name}\x1b[0m query=\x1b[33m'{query}'\x1b[0m in \x1b[32m{path}\x1b[0m\n"
-
-        else:
-            param_items = [
-                f"{k}={v!r}" for k, v in list(params.items())[:3]
-                if k not in ("ArtifactMetadata",)
-            ]
-            param_str = ", ".join(param_items)
-            if len(param_str) > 100:
-                param_str = param_str[:97] + "..."
-            return f"\x1b[36m● [TOOL START]\x1b[0m \x1b[1;37m{tool_name}\x1b[0m\x1b[90m({param_str})\x1b[0m\n"
-
-    elif ev_type == "tool_end":
-        tool_name = getattr(event_item, "tool_name", "") or (
-            event_item.get("tool_name", "") if isinstance(event_item, dict) else ""
-        )
-        output = getattr(event_item, "output", "") or (
-            event_item.get("output", "") if isinstance(event_item, dict) else ""
-        )
-        duration = getattr(event_item, "duration_seconds", None)
-        is_error = getattr(event_item, "is_error", False)
-        dur_str = f" \x1b[90m({duration:.2f}s)\x1b[0m" if isinstance(duration, (int, float)) else ""
-
-        if is_error:
-            header = f"\x1b[31m✖ [TOOL ERROR]\x1b[0m \x1b[1;31m{tool_name}\x1b[0m{dur_str}\n"
-        else:
-            header = f"\x1b[32m✔ [TOOL END]\x1b[0m \x1b[1;32m{tool_name}\x1b[0m{dur_str}\n"
-
-        out_str = str(output).strip() if output is not None else ""
-        if out_str:
-            lines = out_str.splitlines()
-            if len(lines) > 50:
-                display_lines = lines[:35] + [f"... [{len(lines) - 45} lines truncated] ..."] + lines[-10:]
-            else:
-                display_lines = lines
-            body = "\n".join(f"  \x1b[90m│\x1b[0m {l}" for l in display_lines) + "\n"
-            return header + body
-        return header
-
-    elif ev_type == "status_update":
-        status = getattr(event_item, "status", "") or (
-            event_item.get("status", "") if isinstance(event_item, dict) else ""
-        )
-        detail = getattr(event_item, "detail", "") or (
-            event_item.get("detail", "") if isinstance(event_item, dict) else ""
-        )
-        if status == "model_fallback":
-            return f"\x1b[33m⚡ [MODEL FALLBACK]\x1b[0m \x1b[1;33m{detail}\x1b[0m\n"
-        elif detail:
-            return f"\x1b[33m▸ [STATUS]\x1b[0m \x1b[90m{detail}\x1b[0m\n"
-        elif status and status != "working":
-            return f"\x1b[33m▸ [STATUS]\x1b[0m \x1b[90m{status}\x1b[0m\n"
-        return None
-
-    elif ev_type == "text_delta":
-        delta = (
-            getattr(event_item, "text_delta", "")
-            or getattr(event_item, "text", "")
-            or (event_item.get("text_delta", "") if isinstance(event_item, dict) else "")
-        )
-        return delta or None
-
-    elif ev_type == "awaiting_input":
-        prompt = getattr(event_item, "prompt", "") or (
-            event_item.get("prompt", "") if isinstance(event_item, dict) else ""
-        )
-        return f"\x1b[33m⚠️ [AWAITING INPUT]\x1b[0m \x1b[1;33m{prompt}\x1b[0m\n"
-
-    elif ev_type == "finish":
-        status = getattr(event_item, "status", "SUCCESS")
-        if status == "SUCCESS":
-            return "\n\x1b[32m✔ [TASK COMPLETE]\x1b[0m \x1b[90mExecution finished successfully.\x1b[0m\n"
-        else:
-            err = getattr(event_item, "error", "") or "Execution encountered an error."
-            return f"\n\x1b[31m✖ [TASK FAILED]\x1b[0m \x1b[1;31m{err}\x1b[0m\n"
-
-    return None
-
     async def _execute_backstage_task(
         self,
         task_desc: str,
@@ -2134,7 +2254,7 @@ def _format_hand_event_for_webui(event_item: Any) -> Optional[str]:
                                 )
                                 if msg_ts:
                                     accumulator.interim_message_ts = str(msg_ts)
-                        if not is_imessage and thread_ts:
+                        if thread_ts:
                             await set_assistant_status(
                                 client, channel, thread_ts, f"Running on {node_label} via {effective_worker}..."
                             )
@@ -2174,7 +2294,7 @@ def _format_hand_event_for_webui(event_item: Any) -> Optional[str]:
                                 else:
                                     content = blocker_data.get("content") or blocker_data.get("prompt") or blocker_data.get("blocker_prompt", "")
                                     card = f"⚠️ *Confirmation Required:* Runner is waiting for input:\n> `{content}`"
-                                if not is_imessage and ts and client:
+                                if ts and client:
                                     await swap_reaction(client, channel, ts, "gear", "warning")
                                     if thread_ts:
                                         await set_assistant_status(client, channel, thread_ts, "Awaiting input...")
@@ -2219,13 +2339,23 @@ def _format_hand_event_for_webui(event_item: Any) -> Optional[str]:
                     except Exception as exc:
                         logger.debug(f"WebUI hand_buffer broadcast warning: {exc}")
 
-                if accumulator.has_awaiting_input:
-                    break
-
                 ev_type = getattr(event_item, "event_type", None) or (
                     event_item.get("event_type") if isinstance(event_item, dict) else None
                 )
+
+                if ev_type == "tool_start" and thread_ts:
+                    tool_name = getattr(event_item, "tool_name", "") or (
+                        event_item.get("tool_name", "") if isinstance(event_item, dict) else ""
+                    )
+                    if tool_name:
+                        await set_assistant_status(client, channel, thread_ts, f"Running {tool_name} on {node_label}...")
+
+                if accumulator.has_awaiting_input:
+                    break
+
                 if ev_type == "finish":
+                    if thread_ts:
+                        await set_assistant_status(client, channel, thread_ts, "Synthesizing executive briefing...")
                     break
 
         finally:
@@ -2480,6 +2610,10 @@ def _format_hand_event_for_webui(event_item: Any) -> Optional[str]:
             "   - By default, leave worker as 'agy' and target_node as 'localhost'.\n"
             "   - Only specify worker='hermes' or target_node='homelab-ops' if Carl explicitly asks for homelab or Hermes.\n"
             "   - Only specify worker='opencode' if Carl explicitly asks for OpenCode.\n"
+            "   - IMAGE GENERATION & VISUAL ASSETS: Antigravity has native built-in image generation (`generate_image`). "
+            "When Carl asks to generate, render, or create images, diagrams, or visual designs (e.g. 'nano banana', UI mockups, logos, illustrations), "
+            "dispatch to 'agy' on 'localhost' with task_description explicitly instructing to use built-in `generate_image`. "
+            "Never route image generation to hermes or search external script catalogs.\n"
             "4. SLACK FORMATTING: Always use single asterisks *bold*, inline `code`, multiline ```diff```, "
             "and clean bullet lists. Never use markdown ATX hashes (###) or double asterisks (**).\n"
             "5. OUTCOMES OVER MACHINERY: Direct, grounded, quiet competence. No filler greetings."
@@ -2534,13 +2668,13 @@ def _format_hand_event_for_webui(event_item: Any) -> Optional[str]:
                 )
                 await self._post_response(client, channel, thread_ts, err_briefing, is_imessage)
                 await self._broadcast_mouth_briefing(err_briefing, model)
-                if not is_imessage and ts:
+                if ts:
                     await swap_reaction(client, channel, ts, "gear", "warning")
                 return
             clean_reply, _ = extract_and_strip_file_directives(reply_text)
             await self._post_response(client, channel, thread_ts, clean_reply, is_imessage)
             await self._broadcast_mouth_briefing(clean_reply, model)
-            if not is_imessage and ts:
+            if ts:
                 await swap_reaction(client, channel, ts, "gear", "white_check_mark")
             return
 
@@ -2587,18 +2721,18 @@ def _format_hand_event_for_webui(event_item: Any) -> Optional[str]:
             # Unpack accumulator result (handles both accumulator instance and mock dict return)
             if isinstance(accumulator, dict):
                 acc_status = accumulator.get("status", "SUCCESS")
-                acc_output = accumulator.get("output", "")
-                has_awaiting_input = False
-                awaiting_prompt = ""
+                acc_output = accumulator.get("output") or accumulator.get("output_tail") or ""
+                has_awaiting_input = bool(accumulator.get("has_awaiting_input", False))
+                awaiting_prompt = str(accumulator.get("awaiting_input_prompt", ""))
                 acc_summary = {
                     "status": acc_status,
                     "output_tail": acc_output[-8000:] if acc_output else "",
-                    "duration_seconds": 1.0,
-                    "tools_executed_count": 1,
-                    "tool_summary": [],
-                    "has_awaiting_input": False,
-                    "awaiting_input_prompt": "",
-                    "error": "",
+                    "duration_seconds": accumulator.get("duration_seconds", 1.0),
+                    "tools_executed_count": accumulator.get("tools_executed_count", 1),
+                    "tool_summary": accumulator.get("tool_summary", []),
+                    "has_awaiting_input": has_awaiting_input,
+                    "awaiting_input_prompt": awaiting_prompt,
+                    "error": accumulator.get("error", ""),
                 }
                 turn_status = acc_status
                 error_msg = ""
@@ -2616,14 +2750,14 @@ def _format_hand_event_for_webui(event_item: Any) -> Optional[str]:
 
             # Handle awaiting input
             if has_awaiting_input:
-                if not is_imessage and ts:
+                if ts:
                     await swap_reaction(client, channel, ts, "gear", "warning")
                 prompt_msg = awaiting_prompt or "⚠️ *Confirmation Required:* Please provide input."
                 await self._post_response(client, channel, thread_ts, prompt_msg, is_imessage)
                 return
 
         # Step 2: Synthesize Executive Briefing via functionResponse
-        if not is_imessage and thread_ts:
+        if thread_ts:
             await set_assistant_status(client, channel, thread_ts, "Synthesizing executive briefing...")
 
         briefing_text, error_info = await self._execute_step2_synthesis(
@@ -2653,8 +2787,25 @@ def _format_hand_event_for_webui(event_item: Any) -> Optional[str]:
             )
             try:
                 await self._post_response(client, channel, thread_ts, fail_briefing, is_imessage)
+                # Attempt fallback delivery if tool output generated files or directives
+                out_tail = str(tool_result.get("output_tail", ""))
+                _, fallback_file_targets = extract_and_strip_file_directives(out_tail)
+                if fallback_file_targets:
+                    fleet_mesh = (
+                        getattr(self.router.harness, "mesh", None)
+                        if hasattr(self.router, "harness") and self.router.harness
+                        else getattr(self.router, "fleet_mesh", None)
+                    )
+                    await upload_directive_files(
+                        client=client,
+                        channel=channel,
+                        thread_ts=thread_ts,
+                        targets=fallback_file_targets,
+                        active_cwd=session.target_cwd if hasattr(session, "target_cwd") else os.getcwd(),
+                        fleet_mesh=fleet_mesh,
+                    )
             finally:
-                if not is_imessage and ts:
+                if ts:
                     await swap_reaction(client, channel, ts, "gear", "boom")
             return
 
@@ -2682,7 +2833,7 @@ def _format_hand_event_for_webui(event_item: Any) -> Optional[str]:
         await self._broadcast_mouth_briefing(clean_briefing, model)
 
         # Handle file directives
-        if file_targets and not is_imessage:
+        if file_targets:
             fleet_mesh = (
                 getattr(self.router.harness, "mesh", None)
                 if hasattr(self.router, "harness") and self.router.harness
@@ -2697,7 +2848,7 @@ def _format_hand_event_for_webui(event_item: Any) -> Optional[str]:
                 fleet_mesh=fleet_mesh,
             )
 
-        if not is_imessage and ts:
+        if ts:
             await swap_reaction(client, channel, ts, "gear", target_reaction)
 
     async def _execute_step2_synthesis(
@@ -2727,10 +2878,18 @@ def _format_hand_event_for_webui(event_item: Any) -> Optional[str]:
             "1. Always directly address and answer Carl's original prompt/question in your briefing.\n"
             "2. If Carl asked a conversational or factual question (e.g. asking which machine is which), "
             "answer his question directly using your knowledge and provide the tool result in proper context.\n"
-            "3. Never ignore Carl's question in favor of dumping raw sensory metrics alone."
+            "3. Never ignore Carl's question in favor of dumping raw sensory metrics alone.\n"
+            "4. If an image, artifact, or generated file path was produced in the tool result (e.g. Saved File Path: ...), "
+            "always include the directive `[SEND_FILE: <path>]` in your briefing so the file is automatically uploaded to Slack."
         )
 
         tools_decl = tools if tools is not None else get_mouth_tools_declaration()
+
+        tool_result_payload = dict(tool_result) if isinstance(tool_result, dict) else {"result": tool_result}
+        tool_result_payload["instruction"] = (
+            "Backstage task execution is now finished. Synthesize your final executive briefing directly to Carl in plain text now. "
+            "Do not call any functions or tools."
+        )
 
         briefing_payload = {
             "systemInstruction": {"parts": [{"text": synthesis_sys_prompt}]},
@@ -2751,7 +2910,7 @@ def _format_hand_event_for_webui(event_item: Any) -> Optional[str]:
                                 "name": fn_name,
                                 "response": {
                                     "name": fn_name,
-                                    "content": tool_result,
+                                    "content": tool_result_payload,
                                 },
                             }
                         }
@@ -2759,6 +2918,9 @@ def _format_hand_event_for_webui(event_item: Any) -> Optional[str]:
                 },
             ],
             "tools": tools_decl,
+            "toolConfig": {
+                "functionCallingConfig": {"mode": "NONE"}
+            },
             "generationConfig": {
                 "temperature": 0.2,
             },
@@ -2800,6 +2962,58 @@ def _format_hand_event_for_webui(event_item: Any) -> Optional[str]:
         b_cand = candidates[0]
         b_parts = b_cand.get("content", {}).get("parts", [])
         briefing_text = "".join(p.get("text", "") for p in b_parts if "text" in p).strip()
+        if not briefing_text:
+            logger.warning(
+                "Step 2 synthesis returned empty text or tool call; attempting direct text-only fallback synthesis."
+            )
+            out_tail = str(tool_result.get("output_tail") or tool_result.get("output") or "").strip()
+            if out_tail:
+                direct_prompt = (
+                    f"Carl's request: {prompt}\n\n"
+                    f"Backstage Task Output:\n{out_tail}\n\n"
+                    "Synthesize a concise, high-signal executive briefing for Carl in plain text. "
+                    "Output ONLY the executive briefing text in clean Slack mrkdwn format. Do not call functions or output raw JSON."
+                )
+                direct_payload = {
+                    "systemInstruction": {"parts": [{"text": synthesis_sys_prompt}]},
+                    "contents": [
+                        {
+                            "role": "user",
+                            "parts": [{"text": direct_prompt}],
+                        }
+                    ],
+                    "generationConfig": {
+                        "temperature": 0.2,
+                    },
+                }
+                try:
+                    fallback_resp = await self._call_gemini_api(payload=direct_payload, model=model, api_key=api_key)
+                    if fallback_resp and not fallback_resp.get("_error"):
+                        fb_candidates = fallback_resp.get("candidates", [])
+                        if fb_candidates:
+                            fb_parts = fb_candidates[0].get("content", {}).get("parts", [])
+                            briefing_text = "".join(p.get("text", "") for p in fb_parts if "text" in p).strip()
+                except Exception as e:
+                    logger.debug(f"Direct fallback synthesis failed: {e}")
+
+                if not briefing_text:
+                    logger.info("Using runner output_tail directly after empty candidate text")
+                    briefing_text = out_tail
+
+        if not briefing_text:
+            finish_reason = b_cand.get("finishReason", "UNKNOWN")
+            fn_calls = [p["functionCall"] for p in b_parts if "functionCall" in p]
+            if fn_calls:
+                msg = f"Model attempted tool call '{fn_calls[0].get('name')}' during executive synthesis instead of generating text."
+            else:
+                msg = f"Synthesis failed with empty candidate text (finishReason={finish_reason})"
+            return "", {
+                "status": 500,
+                "code": 500,
+                "error_type": "SynthesisError",
+                "raw_error": msg,
+                "message": msg,
+            }
         return briefing_text, None
 
     async def _call_gemini_api(
@@ -2836,7 +3050,7 @@ def _format_hand_event_for_webui(event_item: Any) -> Optional[str]:
             if isinstance(accumulator, BackstageExecutionAccumulator)
             else accumulator.get("output", "")
         )
-        clean_output, _ = extract_and_strip_file_directives(output)
+        clean_output, file_targets = extract_and_strip_file_directives(output)
         status = (
             accumulator.turn_status
             if isinstance(accumulator, BackstageExecutionAccumulator)
@@ -2847,7 +3061,21 @@ def _format_hand_event_for_webui(event_item: Any) -> Optional[str]:
         if clean_output:
             await self._post_response(client, channel, thread_ts, clean_output, is_imessage, update_ts=interim_ts)
             await self._broadcast_mouth_briefing(clean_output, None)
-        if not is_imessage and ts:
+        if file_targets:
+            fleet_mesh = (
+                getattr(self.router.harness, "mesh", None)
+                if hasattr(self.router, "harness") and self.router.harness
+                else getattr(self.router, "fleet_mesh", None)
+            )
+            await upload_directive_files(
+                client=client,
+                channel=channel,
+                thread_ts=thread_ts,
+                targets=file_targets,
+                active_cwd=session.target_cwd if hasattr(session, "target_cwd") else os.getcwd(),
+                fleet_mesh=fleet_mesh,
+            )
+        if ts:
             await swap_reaction(client, channel, ts, "gear", target_reaction)
 
 

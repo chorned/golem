@@ -42,6 +42,7 @@ workers:
     rules:
       - "You are a guest worker in this repository. Unless explicitly instructed to manage infrastructure, NEVER modify `*.plist` files, service definitions, `.env` files, or git configuration. Keep prototypes, test servers, and standalone scripts strictly self-contained within the designated sandbox folder."
       - "When asked to create a script, test page, or server, create a NEW standalone file. NEVER modify existing project entrypoints (`app.py`, `main.py`, `index.js`) unless explicitly instructed to refactor them."
+      - "Never perform image generation or invoke image catalogs. Image generation is exclusively handled by Antigravity Chief of Staff using built-in generate_image."
     protected_paths:
       - "com.user.antigravity-slack.plist"
       - "*.plist"
@@ -61,6 +62,7 @@ workers:
     rules:
       - "You are a guest worker in this repository. Unless explicitly instructed to manage infrastructure, NEVER modify `*.plist` files, service definitions, `.env` files, or git configuration. Keep prototypes, test servers, and standalone scripts strictly self-contained within the designated sandbox folder."
       - "When asked to create a script, test page, or server, create a NEW standalone file. NEVER modify existing project entrypoints (`app.py`, `main.py`, `index.js`) unless explicitly instructed to refactor them."
+      - "Never perform image generation or invoke image catalogs. Image generation is exclusively handled by Antigravity Chief of Staff using built-in generate_image."
     protected_paths:
       - "com.user.antigravity-slack.plist"
       - "*.plist"

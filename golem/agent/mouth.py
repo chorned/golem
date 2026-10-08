@@ -298,8 +298,17 @@ async def generate_mouth_response(
         model_name = model or get_mouth_model()
         url = GEMINI_API_URL.format(model=model_name, key=key)
         timeout = aiohttp.ClientTimeout(total=timeout_seconds)
+        headers = {"Content-Type": "application/json"}
+        user_project = (
+            os.environ.get("GOOGLE_CLOUD_PROJECT")
+            or os.environ.get("GCP_PROJECT")
+            or os.environ.get("VERTEX_PROJECT")
+        )
+        if user_project:
+            headers["x-goog-user-project"] = user_project.strip()
+
         async with aiohttp.ClientSession(timeout=timeout) as client_session:
-            async with client_session.post(url, json=payload, headers={"Content-Type": "application/json"}) as resp:
+            async with client_session.post(url, json=payload, headers=headers) as resp:
                 if resp.status == 200:
                     data = await resp.json()
                     candidates = data.get("candidates", [])

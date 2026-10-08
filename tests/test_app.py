@@ -53,9 +53,12 @@ class TestThinIngressGateway(unittest.IsolatedAsyncioTestCase):
 
     def setUp(self):
         sessions.clear()
+        self.env_patcher = patch.dict(os.environ, {"DUAL_PANE_WORKSPACE": "0"})
+        self.env_patcher.start()
 
     def tearDown(self):
         sessions.clear()
+        self.env_patcher.stop()
 
     def test_target_directory_resolution_for_named_projects(self):
         """Verify prompt mentioning a specific project in ~/projects resolves to that directory."""

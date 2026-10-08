@@ -915,3 +915,81 @@ class HerdrFleet:
                 "online": False
             }
 
+    async def update_node_agy(self, node: str, timeout: float = 6.0) -> Dict[str, Any]:
+        """Check and apply agy CLI binary updates for a fleet node."""
+        if node in ("hermes", "localhost", "local"):
+            agy_bin = shutil.which("agy") or os.path.expanduser("~/.local/bin/agy")
+            if not os.path.exists(agy_bin):
+                return {"node": "localhost (hermes)", "status": "Binary not found", "version": "unknown", "updated": False}
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    agy_bin, "update",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+                out = (stdout or stderr).decode("utf-8", errors="replace").strip()
+                m = re.search(r"version\s+([0-9.]+)", out)
+                ver = m.group(1) if m else "1.3.1"
+                if "already on the latest" in out.lower():
+                    return {"node": "localhost (hermes)", "status": f"v{ver} (latest)", "version": ver, "updated": False}
+                elif "update successful" in out.lower() or "updated" in out.lower():
+                    return {"node": "localhost (hermes)", "status": f"v{ver} (updated)", "version": ver, "updated": True}
+                return {"node": "localhost (hermes)", "status": f"v{ver}", "version": ver, "updated": False}
+            except Exception as e:
+                return {"node": "localhost (hermes)", "status": f"[Error: {e}]", "version": "unknown", "updated": False}
+
+        ssh_target = node
+        cmd = 'export PATH="$HOME/.local/bin:$PATH"; agy update'
+        if node in ("desktop-pc", "compute-grid"):
+            cmd = 'agy update'
+
+        ssh_args = [
+            "ssh",
+            "-o", "BatchMode=yes",
+            "-o", "ConnectTimeout=3",
+            "-T",
+            ssh_target,
+            cmd
+        ]
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *ssh_args,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+            out = (stdout or stderr).decode("utf-8", errors="replace").strip()
+            if proc.returncode == 0:
+                m = re.search(r"version\s+([0-9.]+)", out)
+                ver = m.group(1) if m else "1.3.1"
+                if "already on the latest" in out.lower():
+                    return {"node": node, "status": f"v{ver} (latest)", "version": ver, "updated": False}
+                elif "update successful" in out.lower() or "updated" in out.lower():
+                    return {"node": node, "status": f"v{ver} (updated)", "version": ver, "updated": True}
+                return {"node": node, "status": f"v{ver}", "version": ver, "updated": False}
+            else:
+                return {"node": node, "status": f"[Failed: exit {proc.returncode}]", "version": "unknown", "updated": False}
+        except asyncio.TimeoutError:
+            return {"node": node, "status": "[Asleep / Offline]", "version": "unknown", "updated": False}
+        except Exception as e:
+            return {"node": node, "status": f"[Unreachable: {e}]", "version": "unknown", "updated": False}
+
+    async def update_fleet_agy(self, nodes: Optional[List[str]] = None, timeout: float = 6.0) -> List[Dict[str, Any]]:
+        """Concurrently check and update agy CLI binaries across all fleet nodes."""
+        target_nodes = nodes or ["hermes", "personal-laptop", "oci-machine", "desktop-pc"]
+        results = await asyncio.gather(
+            *[self.update_node_agy(node, timeout=timeout) for node in target_nodes],
+            return_exceptions=True
+        )
+        out = []
+        for i, res in enumerate(results):
+            if isinstance(res, dict):
+                out.append(res)
+            elif isinstance(res, Exception):
+                out.append({"node": target_nodes[i], "status": f"[Error: {res}]", "version": "unknown", "updated": False})
+            else:
+                out.append({"node": target_nodes[i], "status": "[Unknown]", "version": "unknown", "updated": False})
+        return out
+
+

@@ -32,6 +32,7 @@ These rules dictate how AGY (Chief of Staff) routes tasks across the fleet machi
 - **Intent Triggers:**
   * **All Software Development:** Git checkouts, branches, commits, pulls, pushes, code refactoring, test suites, bug fixes.
   * **Languages & Stacks:** Python, Flutter/Dart, React/TypeScript, Go, Rust, shell tooling.
+  * **Image Generation & Visual Assets:** Native multimodal image generation via built-in `generate_image` tool. Never search or delegate to Hermes.
   * **Orchestration:** Fleet status overview, cross-machine coordination, workspace switching, planning, and task synthesis.
 - **Worker:** Antigravity Chief of Staff (`chief-of-staff` / `agy`).
 - **Execution Mode:** Native local headless `agy` CLI binary or local workspace subshells (`/Users/hermes/projects`).
@@ -99,4 +100,15 @@ These rules dictate how AGY (Chief of Staff) routes tasks across the fleet machi
   1. Be dispatched to the background runner pane via `herdr_pane_run` or executed with `IsDaemon=true` / background task flags, NEVER blocking the synchronous liaison turn.
   2. Enforce strict bounded search limits (e.g. `find -maxdepth 3`).
 - **5-Second Rule:** Any command estimated to run for more than 5 seconds must be executed asynchronously in the background so the conversational session lock is not starved.
+
+---
+
+## 5. Image Generation Architecture (Built-In Tooling)
+
+- **Native Built-In Tool (`generate_image`):** Antigravity (`agy`) includes native multimodal image generation via the `generate_image` tool. All image generation requests (e.g. "nano banana", UI mockups, architecture diagrams, illustrations) MUST directly use `generate_image`.
+- **Zero Filesystem Wandering:** Never search the filesystem (`find`, `grep`, `ls`) for terms like "banana", "nano", "image", or model catalogs.
+- **Strict Hermes Tool Isolation:** NEVER inspect, import, or execute scripts from `/Users/hermes/.hermes/hermes-agent/tools/` (including `image_generation_catalog.py` and `image_generation_managed.py`). Hermes Butler is strictly a backstage homelab/Docker/storage butler; Antigravity owns all image generation directly.
+- **Immediate Execution:** Execute `generate_image` in a single tool call without intermediate subagent dispatch or exploratory scripts.
+- **Slack Exfiltration Directive:** The resulting image path saved in the artifact directory must be referenced with `[SEND_FILE: <path>]` in the briefing so Golem automatically uploads the rendered image to Slack.
+
 

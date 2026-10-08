@@ -140,3 +140,22 @@ Golem operates a decoupled, multi-sensory cognitive and execution architecture:
 
 4. **Out-of-Band Mid-Stream Sensory Grounding:**
    - When Carl inquires mid-stream while a long-running command executes in Pane 2, The Mouth answers in sub-second latency (<1s) by leveraging cached `eyes_status` and `nose_status` without blocking on the runner.
+
+---
+
+## 11. Image Generation & Visual Assets (Antigravity Built-In)
+
+- **Native Built-In Tooling (`generate_image`):** Antigravity (`agy`) includes native multimodal image generation via the `generate_image` tool. All image generation requests (e.g. "nano banana", UI mockups, architectural diagrams, illustrations, logos) MUST directly and exclusively invoke Antigravity's built-in `generate_image` tool.
+- **Zero Filesystem Wandering:** Never search the workspace or local disk (`find`, `grep`, `ls`) for terms like "banana", "nano", "image", or "fal".
+- **Strict Hermes Tool Isolation:** NEVER inspect, import, or execute scripts from `/Users/hermes/.hermes/hermes-agent/tools/` (including `image_generation_catalog.py` and `image_generation_managed.py`). Hermes Butler is strictly a backstage homelab/Docker/storage butler; Antigravity owns all image generation directly.
+- **Immediate Execution:** Execute `generate_image` in a single tool call without intermediate subagent dispatch or exploratory scripts.
+- **Slack Exfiltration Directive:** The resulting image path saved in the artifact directory must be referenced with `[SEND_FILE: <path>]` in the briefing so Golem automatically uploads the rendered image to Slack.
+
+---
+
+## 12. On-Demand Messaging to Carl (Slack & iMessage)
+
+- **Proactive Outreach:** Golem can message Carl on demand across Slack (`D0C2J1HKNN7`), iMessage (`iMessage;-;k.horned@gmail.com`), or both whenever human attention, approval, or an executive decision is required.
+- **Thread Continuity:** Outbound root messages are registered in Golem's session registry (`~/.gemini/first-mate/sessions_registry.json`) for Slack and conversation history (`~/.gemini/first-mate/imessage_history/`) for iMessage. When Carl replies in the thread, Golem continues the conversation with full context.
+- **Execution:** Dispatched via `scripts/message_carl.py` or `from golem.notify import send_on_demand_message`.
+

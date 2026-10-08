@@ -20,6 +20,7 @@ from . import execution
 from . import sensory
 from . import transport
 from . import webui
+from . import notify
 
 __all__ = [
     "__version__",
@@ -32,6 +33,7 @@ __all__ = [
     "sensory",
     "transport",
     "webui",
+    "notify",
 ]
 
 

@@ -11,13 +11,19 @@ from __future__ import annotations
 
 import os
 import re
+import time
+import uuid
 import tempfile
 import asyncio
 import logging
 import inspect
-from typing import Tuple, List, Optional, Dict, Any, Set
+from typing import Tuple, List, Optional, Dict, Any, Set, Union
+
+import aiohttp
 
 logger = logging.getLogger("Golem.Transport.FileTransfer")
+
+DEFAULT_MAX_FILE_SIZE_BYTES = 104_857_600  # 100MB
 
 # Directive extraction regex supporting [SEND_FILE: <path>], [UPLOAD_FILE: <path>], [ATTACH_FILE: <path>]
 # and optional surrounding quotes, backticks, asterisks (bold/italic), and flexible spacing.
@@ -459,3 +465,190 @@ async def upload_directive_files(
                     pass
 
     return results
+
+
+async def download_file(
+    url: str,
+    token: Optional[str] = None,
+    max_size_bytes: int = DEFAULT_MAX_FILE_SIZE_BYTES,
+    timeout_seconds: float = 30.0,
+) -> Optional[bytes]:
+    """
+    Download private or public file bytes using optional bearer token authentication.
+    Follows redirects to Amazon S3 WITHOUT the Authorization header to prevent
+    AWS S3 HTTP 400 Bad Request errors. Enforces max_size_bytes limit before
+    and during byte streaming.
+    """
+    if not url:
+        return None
+    token = token if token is not None else os.environ.get("SLACK_BOT_TOKEN", "")
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    timeout = aiohttp.ClientTimeout(total=timeout_seconds)
+
+    try:
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(url, headers=headers, allow_redirects=False) as resp:
+                if resp.status in (301, 302, 303, 307, 308):
+                    redirect_url = resp.headers.get("Location")
+                    if not redirect_url:
+                        logger.error(f"Redirect status {resp.status} with no Location header for {url}")
+                        return None
+                    # Follow redirect URL WITHOUT Authorization header to prevent S3 HTTP 400
+                    async with session.get(redirect_url, allow_redirects=True) as redirect_resp:
+                        if redirect_resp.status != 200:
+                            logger.error(
+                                f"Redirect download failed for {url} -> {redirect_url} with status {redirect_resp.status}"
+                            )
+                            return None
+                        cl = redirect_resp.headers.get("Content-Length")
+                        if cl and cl.isdigit() and int(cl) > max_size_bytes:
+                            logger.warning(
+                                f"File at {redirect_url} Content-Length {cl} exceeds max size {max_size_bytes} bytes; aborted."
+                            )
+                            return None
+
+                        if hasattr(redirect_resp, "content") and hasattr(redirect_resp.content, "iter_chunked"):
+                            chunks = []
+                            total_bytes = 0
+                            async for chunk in redirect_resp.content.iter_chunked(32768):
+                                total_bytes += len(chunk)
+                                if total_bytes > max_size_bytes:
+                                    proto = getattr(redirect_resp, "_protocol", None)
+                                    trans = getattr(proto, "transport", None)
+                                    if trans and hasattr(trans, "abort"):
+                                        try:
+                                            trans.abort()
+                                        except Exception:
+                                            pass
+                                    redirect_resp.close()
+                                    if hasattr(session, "close"):
+                                        await session.close()
+                                    logger.warning(
+                                        f"File download from {redirect_url} exceeded max size {max_size_bytes} bytes during stream; aborted."
+                                    )
+                                    return None
+                                chunks.append(chunk)
+                            return b"".join(chunks)
+                        else:
+                            data = await redirect_resp.read()
+                            if len(data) > max_size_bytes:
+                                logger.warning(
+                                    f"File download from {redirect_url} exceeded max size {max_size_bytes} bytes; aborted."
+                                )
+                                return None
+                            return data
+
+                elif resp.status == 200:
+                    cl = resp.headers.get("Content-Length")
+                    if cl and cl.isdigit() and int(cl) > max_size_bytes:
+                        logger.warning(
+                            f"File at {url} Content-Length {cl} exceeds max size {max_size_bytes} bytes; aborted."
+                        )
+                        return None
+
+                    if hasattr(resp, "content") and hasattr(resp.content, "iter_chunked"):
+                        chunks = []
+                        total_bytes = 0
+                        async for chunk in resp.content.iter_chunked(32768):
+                            total_bytes += len(chunk)
+                            if total_bytes > max_size_bytes:
+                                proto = getattr(resp, "_protocol", None)
+                                trans = getattr(proto, "transport", None)
+                                if trans and hasattr(trans, "abort"):
+                                    try:
+                                        trans.abort()
+                                    except Exception:
+                                        pass
+                                resp.close()
+                                if hasattr(session, "close"):
+                                    await session.close()
+                                logger.warning(
+                                    f"File download from {url} exceeded max size {max_size_bytes} bytes during stream; aborted."
+                                )
+                                return None
+                            chunks.append(chunk)
+                        return b"".join(chunks)
+                    else:
+                        data = await resp.read()
+                        if len(data) > max_size_bytes:
+                            logger.warning(
+                                f"File download from {url} exceeded max size {max_size_bytes} bytes; aborted."
+                            )
+                            return None
+                        return data
+                else:
+                    logger.error(f"Failed to download file from {url}: status {resp.status}")
+                    return None
+    except Exception as e:
+        logger.error(f"Exception downloading file from {url}: {e}")
+        return None
+
+
+# Backward compatibility alias for Slack file download
+download_slack_file = download_file
+
+
+def sanitize_filename(filename: str) -> str:
+    """Sanitize filename to prevent path traversal and strip forbidden characters."""
+    raw = filename or ""
+    # Normalize backslashes so basename strips both / and \
+    normalized = raw.replace("\\", "/")
+    base_name = os.path.basename(normalized).strip()
+    safe_name = re.sub(r"[\x00/\\:*?\"<>|]", "_", base_name).strip()
+    safe_name = safe_name.lstrip(".")
+    if not safe_name:
+        safe_name = f"upload_{int(time.time())}"
+    return safe_name
+
+
+def save_staged_file(
+    file_bytes: bytes,
+    filename: str,
+    target_cwd: str,
+    timestamp: Optional[Union[int, float, str]] = None,
+) -> Optional[str]:
+    """
+    Save downloaded file bytes into {target_cwd}/slack_transfers/{timestamp}_{filename}.
+    Returns absolute path of the staged file, or None on failure.
+    Uses collision-resistant prefix naming when timestamp is omitted, and resolves
+    any on-disk collisions safely.
+    """
+    if timestamp is None:
+        timestamp_prefix = f"{int(time.time())}_{uuid.uuid4().hex[:6]}"
+    else:
+        timestamp_prefix = str(timestamp)
+    safe_name = sanitize_filename(filename)
+    transfers_dir = os.path.abspath(os.path.join(target_cwd, TRANSFERS_DIR_NAME))
+    try:
+        os.makedirs(transfers_dir, exist_ok=True)
+        dest_path = os.path.abspath(os.path.join(transfers_dir, f"{timestamp_prefix}_{safe_name}"))
+        if not dest_path.startswith(transfers_dir):
+            logger.error(f"Path traversal detected: {dest_path} is outside {transfers_dir}")
+            return None
+        if os.path.exists(dest_path):
+            nonce = uuid.uuid4().hex[:6]
+            dest_path = os.path.abspath(os.path.join(transfers_dir, f"{timestamp_prefix}_{nonce}_{safe_name}"))
+            if not dest_path.startswith(transfers_dir):
+                logger.error(f"Path traversal detected: {dest_path} is outside {transfers_dir}")
+                return None
+        with open(dest_path, "wb") as f:
+            f.write(file_bytes)
+        logger.info(f"Saved uploaded file to: {dest_path} ({len(file_bytes)} bytes)")
+        return dest_path
+    except Exception as e:
+        logger.error(f"Failed to save uploaded file '{safe_name}' to {transfers_dir}: {e}")
+        return None
+
+
+__all__ = [
+    "TRANSFERS_DIR_NAME",
+    "DEFAULT_MAX_FILE_SIZE_BYTES",
+    "is_sensitive_target",
+    "extract_and_strip_file_directives",
+    "resolve_file_path",
+    "upload_directive_files",
+    "download_file",
+    "download_slack_file",
+    "sanitize_filename",
+    "save_staged_file",
+]

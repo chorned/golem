@@ -235,4 +235,7 @@ AGY operates across both Slack and native Apple iMessage via local BlueBubbles i
 - **Dynamic Registration:** Automatically registers webhook URL `http://127.0.0.1:8646/bluebubbles-webhook?password=...` on boot and deregisters on shutdown.
 - **Security & Whitelist:** Restricts message execution to handles listed in `BLUEBUBBLES_ALLOWED_HANDLES` (`k.horned@gmail.com`). Ignores tapback reactions and server self-echoes.
 - **Multi-Channel Parity:** Carl can send any command (`!bearings`, `!ahoy`, `!wrapup`, `!update`, `!learn`) or natural language request over iMessage. AGY will generate the Pre-Flight Alignment briefing, wait for `go` or 👍, execute headlessly on Herdr, chunk responses over 3,500 characters, and upload patches/files directly to the iMessage chat.
+- **Thread Lifecycle (Model A - Strict Slack Parity):**
+  - **Top-Level Message (Bottom Input Bar):** `threadOriginatorGuid` is empty. Every message sent in the general text field starts a brand-new conversation root (`thread_ts = ts`) with zero prior context.
+  - **Inline Thread Reply (Native Apple Messages "Reply"):** When Carl long-presses a message bubble and selects "Reply", BlueBubbles passes `threadOriginatorGuid`. Golem traverses the chain to the thread root via `resolve_thread_root()`, rehydrates the preceding messages from that thread branch, and resumes the warm session. Hermes posts replies inline directly under the message bubble via `selectedMessageGuid`.
 - **Testing:** Run `python -m unittest tests/test_bluebubbles_adapter.py`.

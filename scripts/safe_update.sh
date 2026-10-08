@@ -13,12 +13,18 @@ echo "=== First Mate Safe Update Pre-Flight Gate ==="
 
 # 1. Automated test verification gate
 echo "🧪 Running test suite verification..."
-if ! ./.venv/bin/python3 -m unittest tests/test_app.py tests/test_herdr_fleet.py tests/test_agent_stream_sync.py; then
+if ! env DUAL_PANE_WORKSPACE=0 ./.venv/bin/python3 -m unittest tests/test_app.py tests/test_herdr_fleet.py tests/test_agent_stream_sync.py; then
     echo "❌ TEST VERIFICATION FAILED! Aborting update to prevent regression."
     exit 1
 fi
 
 echo "✅ Core test verification passed cleanly."
+
+# If caller only requested test verification (e.g. gateway daemon handling its own reload), exit cleanly
+if [ "${1:-}" = "--verify-only" ] || [ "${1:-}" = "--no-reload" ]; then
+    echo "=== Verification Complete (No Reload Requested) ==="
+    exit 0
+fi
 
 # 2. Reload LaunchAgent daemon
 echo "🔄 Reloading launchd daemon: com.user.first-mate..."

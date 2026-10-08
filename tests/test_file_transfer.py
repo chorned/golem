@@ -782,7 +782,7 @@ class TestIngressGatewayDirectiveIntegration(unittest.IsolatedAsyncioTestCase):
             title="File: analysis_report.pdf",
         )
 
-    async def test_handle_message_skips_upload_for_imessage(self):
+    async def test_handle_message_uploads_files_for_imessage(self):
         test_file = os.path.join(self.temp_dir, "chart.png")
         with open(test_file, "w") as f:
             f.write("chart data")
@@ -817,8 +817,14 @@ class TestIngressGatewayDirectiveIntegration(unittest.IsolatedAsyncioTestCase):
         # Clean text delivered
         self.mock_client.chat_postMessage.assert_called_once()
         self.assertNotIn("[SEND_FILE:", self.mock_client.chat_postMessage.call_args.kwargs["text"])
-        # files_upload_v2 should NOT be called for iMessage
-        self.mock_client.files_upload_v2.assert_not_called()
+        # files_upload_v2 SHOULD be called for iMessage
+        self.mock_client.files_upload_v2.assert_called_once_with(
+            channel="imessage_guid",
+            thread_ts="2000.0001",
+            file=os.path.realpath(test_file),
+            filename="chart.png",
+            title="File: chart.png",
+        )
 
     async def test_handle_message_directive_only_message(self):
         # When model outputs ONLY [SEND_FILE: file.txt] with zero commentary

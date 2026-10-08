@@ -1,6 +1,8 @@
 """Herdr -> WebUI hand discovery, driven by a real `herdr pane list` capture.
 
 Run from the repo root:  python3 -m unittest golem.webui.tests.test_hand_discovery
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import asyncio
