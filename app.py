@@ -138,7 +138,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("AGY")
 
-HOST_DIR = (os.environ.get("GOLEM_HOST_DIR") or "").strip() or (os.environ.get("FIRST_MATE_HOST_DIR") or "").strip() or os.path.dirname(os.path.abspath(__file__))
+HOST_DIR = (os.environ.get("GOLEM_HOST_DIR") or "").strip() or os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = HOST_DIR
 DEFAULT_TARGET_REPO = os.environ.get("DEFAULT_TARGET_REPO", "/Users/hermes/projects/AGY").strip()
 DAEMON_LABEL = (os.environ.get("GOLEM_DAEMON_LABEL") or "").strip() or (os.environ.get("DAEMON_LABEL") or "").strip() or "com.user.golem"
@@ -515,7 +515,7 @@ def normalize_for_bluebubbles(text: str) -> str:
     return sanitize_for_imessage(cleaned)
 
 
-# split_message_boundary_aware is re-exported from first_mate.transport.chunker above
+# split_message_boundary_aware is re-exported from golem.chunker above
 
 
 # ------------------------------------------------------------------------------
@@ -1139,6 +1139,16 @@ async def handle_learn_request(
             channel=channel,
             thread_ts=thread_ts
         )
+        try:
+            from golem.wiki import GolemWiki
+            wiki = GolemWiki()
+            wiki.logbook_append(
+                entry=user_notes or "Operational lesson codified into memory.",
+                title="Operational Learning (/learn)",
+            )
+        except Exception as we:
+            logger.debug(f"Wiki logbook append note: {we}")
+
         msg = f"🧠 *Operational Lesson Crystallized:* {user_notes or 'Lesson codified into operational memory.'}"
         if react_ts and hasattr(client, "reactions_add"):
             await swap_reacji(client, channel, react_ts, "brain", "white_check_mark")
@@ -1223,7 +1233,7 @@ async def handle_update_request(channel: str, thread_ts: Optional[str] = None, m
 
         try:
             uid = os.getuid()
-            for label in ["com.user.first-mate", "com.user.golem"]:
+            for label in ["com.user.golem"]:
                 cmd = ["launchctl", "kickstart", "-k", "-p", f"gui/{uid}/{label}"]
                 proc = await asyncio.create_subprocess_exec(*cmd)
                 await proc.communicate()
@@ -1555,7 +1565,7 @@ async def should_process_ingress_event(event: Dict[str, Any], client: Any) -> bo
 # ------------------------------------------------------------------------------
 # Slack Event Listeners
 # ------------------------------------------------------------------------------
-USE_HEADLESS_GATEWAY = (os.environ.get("GOLEM_HEADLESS") or os.environ.get("FIRST_MATE_HEADLESS", "1")).lower() in ("1", "true", "yes")
+USE_HEADLESS_GATEWAY = (os.environ.get("GOLEM_HEADLESS", "1")).lower() in ("1", "true", "yes")
 
 @app.event("app_mention")
 async def handle_app_mention(event: Dict[str, Any], client: AsyncWebClient):
