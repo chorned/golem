@@ -72,12 +72,12 @@ class TestPEP621PackagingAdversarial(unittest.TestCase):
         # Scripts table
         scripts = project.get("scripts", {})
         self.assertIn("golem", scripts)
-        self.assertIn("first-mate", scripts)
+        self.assertIn("golem", scripts)
         self.assertEqual(scripts["golem"], "golem.cli:main")
-        self.assertEqual(scripts["first-mate"], "golem.cli:main")
+        self.assertEqual(scripts["golem"], "golem.cli:main")
 
     def test_package_inclusion_declarations(self):
-        """Verify package inclusion rules include golem* and first_mate*."""
+        """Verify package inclusion rules include golem* and golem*."""
         with open(self.pyproject_path, "rb") as f:
             data = tomllib.load(f)
 
@@ -89,7 +89,7 @@ class TestPEP621PackagingAdversarial(unittest.TestCase):
         )
         include_patterns = find_cfg.get("include", [])
         self.assertIn("golem*", include_patterns)
-        self.assertIn("first_mate*", include_patterns)
+        self.assertIn("golem*", include_patterns)
 
     def test_adversarial_root_module_inclusion_defect(self):
         """
@@ -105,7 +105,7 @@ class TestPEP621PackagingAdversarial(unittest.TestCase):
 
 
 class TestCLIEntrypointsAdversarial(unittest.TestCase):
-    """Adversarial stress tests for CLI entrypoints golem.cli:main and first-mate=golem.cli:main."""
+    """Adversarial stress tests for CLI entrypoints golem.cli:main and golem=golem.cli:main."""
 
     def test_entrypoint_callable_is_sync_or_async(self):
         """
@@ -128,18 +128,18 @@ class TestEnvPrecedenceAndEdgeCases(unittest.TestCase):
         self.cfg = cfg
 
     def test_default_hand_worker_precedence(self):
-        """Test GOLEM_DEFAULT_HAND_WORKER wins over GOLEM_ENGINE and FIRST_MATE_ENGINE."""
+        """Test GOLEM_DEFAULT_HAND_WORKER wins over GOLEM_ENGINE and GOLEM_ENGINE."""
         with patch.object(self.cfg, "_get_file_env", return_value={}):
             # Both set: GOLEM wins
             with patch.dict(os.environ, {
                 "GOLEM_DEFAULT_HAND_WORKER": "worker_golem",
-                "FIRST_MATE_ENGINE": "worker_legacy"
+                "GOLEM_ENGINE": "worker_legacy"
             }, clear=True):
                 self.assertEqual(self.cfg.get_default_hand_worker(), "worker_golem")
 
-            # Only FIRST_MATE set
+            # Only default set
             with patch.dict(os.environ, {
-                "FIRST_MATE_ENGINE": "worker_legacy"
+                "GOLEM_ENGINE": "worker_legacy"
             }, clear=True):
                 self.assertEqual(self.cfg.get_default_hand_worker(), "worker_legacy")
 
@@ -150,17 +150,17 @@ class TestEnvPrecedenceAndEdgeCases(unittest.TestCase):
     def test_default_hand_worker_empty_string_fallback(self):
         """Test empty string in GOLEM var falls back to legacy or default."""
         with patch.object(self.cfg, "_get_file_env", return_value={}):
-            # Empty GOLEM, populated FIRST_MATE -> falls back to FIRST_MATE
+            # Empty GOLEM, populated GOLEM -> falls back to default
             with patch.dict(os.environ, {
                 "GOLEM_DEFAULT_HAND_WORKER": "",
-                "FIRST_MATE_ENGINE": "worker_legacy"
+                "GOLEM_ENGINE": "worker_legacy"
             }, clear=True):
                 self.assertEqual(self.cfg.get_default_hand_worker(), "worker_legacy")
 
             # Both empty -> falls back to "agy"
             with patch.dict(os.environ, {
                 "GOLEM_DEFAULT_HAND_WORKER": "",
-                "FIRST_MATE_ENGINE": ""
+                "GOLEM_ENGINE": ""
             }, clear=True):
                 self.assertEqual(self.cfg.get_default_hand_worker(), "agy")
 
@@ -172,7 +172,7 @@ class TestEnvPrecedenceAndEdgeCases(unittest.TestCase):
         with patch.object(self.cfg, "_get_file_env", return_value={}):
             with patch.dict(os.environ, {
                 "GOLEM_DEFAULT_HAND_WORKER": "   ",
-                "FIRST_MATE_ENGINE": "worker_legacy"
+                "GOLEM_ENGINE": "worker_legacy"
             }, clear=True):
                 val = self.cfg.get_default_hand_worker()
                 self.assertEqual(val, "worker_legacy", "Whitespace string must fall back to legacy key")
@@ -245,7 +245,7 @@ class TestLaunchdPlists(unittest.TestCase):
         import shutil
         if not shutil.which("plutil"):
             self.skipTest("plutil not available on this platform")
-        for plist_name in ["com.user.golem.plist", "com.user.first-mate.plist"]:
+        for plist_name in ["com.user.golem.plist"]:
             path = PROJECT_ROOT / plist_name
             self.assertTrue(path.exists(), f"{plist_name} must exist")
             res = subprocess.run(
@@ -259,7 +259,7 @@ class TestLaunchdPlists(unittest.TestCase):
         """Parse plists with plistlib and verify property types match launchd schema."""
         for plist_name, expected_label in [
             ("com.user.golem.plist", "com.user.golem"),
-            ("com.user.first-mate.plist", "com.user.first-mate")
+            ("com.user.golem.plist", "com.user.golem")
         ]:
             path = PROJECT_ROOT / plist_name
             with open(path, "rb") as f:
@@ -291,13 +291,12 @@ class TestLaunchdPlists(unittest.TestCase):
 
 
 class TestLineageInvariantPresence(unittest.TestCase):
-    """Verify 100% lineage invariant string presence across every Python file in golem/ and first_mate/."""
+    """Verify 100% lineage invariant string presence across every Python file in golem/ and golem/."""
 
     def test_lineage_invariant_all_python_files(self):
-        """Every .py file in golem/ and first_mate/ must contain the exact lineage invariant string."""
+        """Every .py file in golem/ and golem/ must contain the exact lineage invariant string."""
         golem_files = list(PROJECT_ROOT.glob("golem/**/*.py"))
-        first_mate_files = list(PROJECT_ROOT.glob("first_mate/**/*.py"))
-        all_files = golem_files + first_mate_files
+        all_files = golem_files
 
         self.assertGreater(len(golem_files), 30, "golem/ must have >= 30 files")
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 tests/test_nose_sentinel_adversarial.py
-Empirical adversarial challenge suite for LogSniffer and NoseSentinel in first_mate/sensory/nose.py.
+Empirical adversarial challenge suite for LogSniffer and NoseSentinel in golem/sensory/nose.py.
 
 Stress dimensions tested:
 1. Rapid concurrent append bursts into bot.err (multi-threaded writers vs concurrent sniffer).
@@ -12,6 +12,8 @@ Stress dimensions tested:
 6. Multiline tracebacks with full frame capture and chained exceptions.
 7. Slice bounding resilience with severed multi-byte boundaries.
 8. Unhandled exception signature recognition (Fatal error, Exception ignored, etc.).
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import os
@@ -362,11 +364,11 @@ class TestLogSnifferAdversarial(unittest.IsolatedAsyncioTestCase):
         payload = (
             "2026-10-02 08:30:00 [INFO] System starting task...\n"
             "Traceback (most recent call last):\n"
-            '  File "/Users/hermes/projects/first-mate/first_mate/gateway/ingress.py", line 142, in handle_message\n'
+            '  File "/Users/hermes/projects/golem/golem/gateway/ingress.py", line 142, in handle_message\n'
             "    await session.process_turn(user_prompt)\n"
-            '  File "/Users/hermes/projects/first-mate/first_mate/gateway/session.py", line 88, in process_turn\n'
+            '  File "/Users/hermes/projects/golem/golem/gateway/session.py", line 88, in process_turn\n'
             "    res = await self.driver.send_turn(prompt)\n"
-            '  File "/Users/hermes/projects/first-mate/first_mate/agent/drivers/antigravity.py", line 210, in send_turn\n'
+            '  File "/Users/hermes/projects/golem/golem/agent/drivers/antigravity.py", line 210, in send_turn\n'
             "    raise ConnectionResetError('Liaison pipe broke during execution')\n"
             "ConnectionResetError: Liaison pipe broke during execution\n"
             "2026-10-02 08:30:05 [INFO] Gateway resumed listening on Socket Mode\n"

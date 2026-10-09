@@ -11,6 +11,8 @@ Validates:
 6. Special character robustness in session identifiers.
 7. Idempotency of teardown and close.
 8. Backward compatibility when harness is None.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import asyncio

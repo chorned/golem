@@ -6,6 +6,8 @@ Unit tests for Native Herdr Git Worktree Management:
 - `herdr worktree remove --workspace <id> --force`.
 - `herdr worktree list --cwd <path>`.
 - Attaching worker execution pane and workspace to the created worktree directory.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import os

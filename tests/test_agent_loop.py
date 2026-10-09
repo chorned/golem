@@ -6,6 +6,8 @@ Comprehensive unit tests for First Mate Agent-First Chief of Staff loop:
 - Turn 2: Approval ("go" / 👍) triggering spawn_agent with git branch isolation
 - Turn 3: In-flight inspection ("what's the URL?") triggering read_agent
 - Turn 4: Undo/Rollback ("abort" / "undo") triggering stop_agent with rollback
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import os
@@ -590,7 +592,7 @@ class TestAgentLoop(unittest.IsolatedAsyncioTestCase):
         from golem.gateway.router import SessionRouter
         from golem.gateway.ingress import IngressGateway
 
-        router = SessionRouter(default_target_cwd="/Users/hermes/projects/first-mate")
+        router = SessionRouter(default_target_cwd="/Users/hermes/projects/golem")
         gateway = IngressGateway(router=router)
 
         event = {
@@ -717,7 +719,7 @@ class TestAgentLoop(unittest.IsolatedAsyncioTestCase):
         from golem.gateway.router import SessionRouter
         from golem.gateway.ingress import IngressGateway
 
-        router = SessionRouter(default_target_cwd="/Users/hermes/projects/first-mate")
+        router = SessionRouter(default_target_cwd="/Users/hermes/projects/golem")
         gateway = IngressGateway(router=router)
 
         event = {
@@ -838,7 +840,7 @@ class TestAgentLoop(unittest.IsolatedAsyncioTestCase):
         from golem.gateway.router import SessionRouter
         from golem.gateway.ingress import IngressGateway
 
-        router = SessionRouter(default_target_cwd="/Users/hermes/projects/first-mate")
+        router = SessionRouter(default_target_cwd="/Users/hermes/projects/golem")
         gateway = IngressGateway(router=router)
 
         event = {
@@ -1039,7 +1041,7 @@ class TestAgentLoop(unittest.IsolatedAsyncioTestCase):
         from golem.gateway.router import SessionRouter
         from golem.gateway.ingress import IngressGateway
 
-        router = SessionRouter(default_target_cwd="/Users/hermes/projects/first-mate")
+        router = SessionRouter(default_target_cwd="/Users/hermes/projects/golem")
         gateway = IngressGateway(router=router)
 
         event = {

@@ -24,6 +24,8 @@ Empirically tests:
    - Resiliency when conversations_replies fails or raises
 4. Step 2 schema integrity:
    - Validates tools declaration schema structure and presence in Step 2 payload
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import os

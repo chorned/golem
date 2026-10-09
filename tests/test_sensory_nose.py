@@ -7,6 +7,8 @@ Unit tests verifying NoseSentinel and NoseTelemetryTracker telemetry deduplicati
   - Asserts listening port additions/closures generate log events.
   - Asserts anomalies (smells_off == True) are logged without repeated spam.
   - Asserts explicit health checks (/health, !nose) always log without deduplication.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 from __future__ import annotations

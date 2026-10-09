@@ -7,6 +7,8 @@ Unit tests verifying EyesTaskObserver instrumentation and ShoulderTapEventBus in
   - Asserts EyesTaskObserver emits `eye_inspection` with buffer delta lines.
   - Asserts deduplication of blocker events across ticks.
   - Verifies zero-token quiescent gating on identical buffer hashes.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 from __future__ import annotations

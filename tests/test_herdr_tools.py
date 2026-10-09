@@ -3,6 +3,8 @@
 tests/test_herdr_tools.py
 Unit tests for direct native Herdr Python tools (herdr_tools.py).
 Zero-MCP architecture verification: spawn_agent, read_agent, stop_agent.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import os

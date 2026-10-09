@@ -6,8 +6,8 @@ Package Namespace Migration & Lineage Invariant.
 
 Verifies:
 1. Direct import of `golem` and all 5 core subpackages + config.
-2. Exact object identity (assertIs) between `first_mate.*` and `golem.*` symbols and modules.
-3. Bidirectional unittest.mock.patch fidelity across `first_mate.*` and `golem.*`.
+2. Exact object identity (assertIs) between `golem.*` and `golem.*` symbols and modules.
+3. Bidirectional unittest.mock.patch fidelity across `golem.*` and `golem.*`.
 4. Lineage invariant enforcement across modules, docstrings, and manifests.
 5. Dual-key environment variable resolution in `golem.config` and `app`.
 6. Launchd plist configuration for `com.user.golem.plist`.
@@ -50,13 +50,6 @@ import golem.execution
 import golem.sensory
 import golem.transport
 
-import first_mate
-import first_mate.config
-import first_mate.gateway
-import first_mate.agent
-import first_mate.execution
-import first_mate.sensory
-import first_mate.transport
 
 EXPECTED_LINEAGE = "Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh."
 
@@ -120,10 +113,10 @@ class TestGolemNamespaceImports(unittest.TestCase):
 
 
 class TestDualLayerShimIdentity(unittest.TestCase):
-    """Verifies exact object identity (assertIs) between first_mate.* and golem.*."""
+    """Verifies exact object identity (assertIs) between golem.* and golem.*."""
 
     def test_module_identity_in_sys_modules(self):
-        """Verifies sys.modules entries for first_mate.* map to golem.* modules."""
+        """Verifies sys.modules entries for golem.* map to golem.* modules."""
         submodules = [
             "gateway",
             "gateway.router",
@@ -158,73 +151,73 @@ class TestDualLayerShimIdentity(unittest.TestCase):
         ]
         import importlib
         for sub in submodules:
-            fm_mod = importlib.import_module(f"first_mate.{sub}")
+            fm_mod = importlib.import_module(f"golem.{sub}")
             g_mod = importlib.import_module(f"golem.{sub}")
             self.assertIs(
                 fm_mod,
                 g_mod,
-                f"Module identity failed for first_mate.{sub} vs golem.{sub}"
+                f"Module identity failed for golem.{sub} vs golem.{sub}"
             )
             self.assertIs(
-                sys.modules[f"first_mate.{sub}"],
+                sys.modules[f"golem.{sub}"],
                 sys.modules[f"golem.{sub}"],
                 f"sys.modules identity failed for {sub}"
             )
 
     def test_class_and_function_symbol_identity(self):
         """Verifies key classes and functions share exact assertIs identity."""
-        from first_mate.gateway.router import SessionRouter as FM_SR
+        from golem.gateway.router import SessionRouter as FM_SR
         from golem.gateway.router import SessionRouter as G_SR
         self.assertIs(FM_SR, G_SR)
 
-        from first_mate.gateway.session import SessionHandle as FM_SH, SessionState as FM_SS
+        from golem.gateway.session import SessionHandle as FM_SH, SessionState as FM_SS
         from golem.gateway.session import SessionHandle as G_SH, SessionState as G_SS
         self.assertIs(FM_SH, G_SH)
         self.assertIs(FM_SS, G_SS)
 
-        from first_mate.gateway.ingress import IngressGateway as FM_IG
+        from golem.gateway.ingress import IngressGateway as FM_IG
         from golem.gateway.ingress import IngressGateway as G_IG
         self.assertIs(FM_IG, G_IG)
 
-        from first_mate.agent.adapter import HeadlessAgentAdapter as FM_HAA
+        from golem.agent.adapter import HeadlessAgentAdapter as FM_HAA
         from golem.agent.adapter import HeadlessAgentAdapter as G_HAA
         self.assertIs(FM_HAA, G_HAA)
 
-        from first_mate.agent.protocol import AgentEvent as FM_AE, TextDeltaEvent as FM_TDE
+        from golem.agent.protocol import AgentEvent as FM_AE, TextDeltaEvent as FM_TDE
         from golem.agent.protocol import AgentEvent as G_AE, TextDeltaEvent as G_TDE
         self.assertIs(FM_AE, G_AE)
         self.assertIs(FM_TDE, G_TDE)
 
-        from first_mate.agent.drivers.antigravity import AntigravityDriver as FM_AGD
+        from golem.agent.drivers.antigravity import AntigravityDriver as FM_AGD
         from golem.agent.drivers.antigravity import AntigravityDriver as G_AGD
         self.assertIs(FM_AGD, G_AGD)
 
-        from first_mate.execution.harness import DualPaneHarness as FM_DPH
+        from golem.execution.harness import DualPaneHarness as FM_DPH
         from golem.execution.harness import DualPaneHarness as G_DPH
         self.assertIs(FM_DPH, G_DPH)
 
-        from first_mate.execution.runner import RunnerExecutor as FM_RE, ExecutionHandle as FM_EH
+        from golem.execution.runner import RunnerExecutor as FM_RE, ExecutionHandle as FM_EH
         from golem.execution.runner import RunnerExecutor as G_RE, ExecutionHandle as G_EH
         self.assertIs(FM_RE, G_RE)
         self.assertIs(FM_EH, G_EH)
 
-        from first_mate.sensory.bus import ShoulderTapEventBus as FM_EB
+        from golem.sensory.bus import ShoulderTapEventBus as FM_EB
         from golem.sensory.bus import ShoulderTapEventBus as G_EB
         self.assertIs(FM_EB, G_EB)
 
-        from first_mate.sensory.eyes import EyesTaskObserver as FM_EO
+        from golem.sensory.eyes import EyesTaskObserver as FM_EO
         from golem.sensory.eyes import EyesTaskObserver as G_EO
         self.assertIs(FM_EO, G_EO)
 
-        from first_mate.sensory.nose import NoseSentinel as FM_NS
+        from golem.sensory.nose import NoseSentinel as FM_NS
         from golem.sensory.nose import NoseSentinel as G_NS
         self.assertIs(FM_NS, G_NS)
 
-        from first_mate.transport.normalizer import sanitize_for_slack as FM_SFS
+        from golem.transport.normalizer import sanitize_for_slack as FM_SFS
         from golem.transport.normalizer import sanitize_for_slack as G_SFS
         self.assertIs(FM_SFS, G_SFS)
 
-        from first_mate.transport.chunker import split_message_boundary_aware as FM_SMBA
+        from golem.transport.chunker import split_message_boundary_aware as FM_SMBA
         from golem.transport.chunker import split_message_boundary_aware as G_SMBA
         self.assertIs(FM_SMBA, G_SMBA)
 
@@ -232,25 +225,24 @@ class TestDualLayerShimIdentity(unittest.TestCase):
 class TestBidirectionalMockPatchFidelity(unittest.TestCase):
     """Verifies that unittest.mock.patch operates bidirectionally across namespaces."""
 
-    def test_patch_first_mate_intercepts_golem_execution(self):
-        """Verifies patching first_mate.gateway.ingress.call_gemini_api intercepts golem caller."""
+    def test_patch_flattened_ingress_intercepts_gateway_execution(self):
+        """Verifies patching golem.gateway.ingress.call_gemini_api intercepts golem caller."""
         import golem.gateway.ingress as gmi
-
-        mock_coro = AsyncMock(return_value={"text": "patched_via_first_mate"})
-        with patch("first_mate.gateway.ingress.call_gemini_api", new=mock_coro):
-            self.assertIs(gmi.call_gemini_api, mock_coro)
-
-    def test_patch_golem_intercepts_first_mate_execution(self):
-        """Verifies patching golem.gateway.ingress.call_gemini_api intercepts first_mate caller."""
-        import first_mate.gateway.ingress as fmi
 
         mock_coro = AsyncMock(return_value={"text": "patched_via_golem"})
         with patch("golem.gateway.ingress.call_gemini_api", new=mock_coro):
-            self.assertIs(fmi.call_gemini_api, mock_coro)
+            self.assertIs(gmi.call_gemini_api, mock_coro)
+
+    def test_patch_gateway_ingress_intercepts_flattened_execution(self):
+        """Verifies patching golem.gateway.ingress.call_gemini_api intercepts flattened caller."""
+        import golem.ingress as flat_i
+        mock_coro = AsyncMock(return_value={"text": "patched_via_gateway"})
+        with patch("golem.gateway.ingress.call_gemini_api", new=mock_coro):
+            self.assertIs(flat_i.call_gemini_api, mock_coro)
 
     def test_patch_runner_executor_bidirectional(self):
         """Verifies RunnerExecutor.run_command patch intercepts both namespaces."""
-        from first_mate.execution.runner import RunnerExecutor as FM_Runner
+        from golem.execution.runner import RunnerExecutor as FM_Runner
         from golem.execution.runner import RunnerExecutor as G_Runner
 
         mock_run = AsyncMock(return_value=MagicMock(status="completed", stdout="mock_out"))
@@ -268,15 +260,13 @@ class TestLineageInvariantEnforcement(unittest.TestCase):
     """Verifies the Lineage Invariant is present across packages and docstrings."""
 
     def test_package_constants(self):
-        """Verifies LINEAGE constant on golem and first_mate packages."""
+        """Verifies LINEAGE constant on golem and golem packages."""
         self.assertEqual(golem.LINEAGE, EXPECTED_LINEAGE)
-        self.assertEqual(first_mate.LINEAGE, EXPECTED_LINEAGE)
 
     def test_all_modules_contain_lineage_docstring(self):
-        """Verifies every .py file in golem/ and first_mate/ contains the Lineage Invariant."""
+        """Verifies every .py file in golem/ and golem/ contains the Lineage Invariant."""
         import glob
-        all_py = glob.glob(os.path.join(PROJECT_DIR, "golem", "**", "*.py"), recursive=True) + \
-                 glob.glob(os.path.join(PROJECT_DIR, "first_mate", "**", "*.py"), recursive=True)
+        all_py = glob.glob(os.path.join(PROJECT_DIR, "golem", "**", "*.py"), recursive=True)
         self.assertGreaterEqual(len(all_py), 30)
         for filepath in all_py:
             with open(filepath, "r", encoding="utf-8") as f:
@@ -299,12 +289,12 @@ class TestDualKeyEnvironmentVariableResolution(unittest.TestCase):
         os.environ.update(self.orig_env)
 
     def test_active_engine_dual_key(self):
-        """Verifies GOLEM_DEFAULT_HAND_WORKER -> GOLEM_ENGINE -> FIRST_MATE_ENGINE."""
+        """Verifies GOLEM_DEFAULT_HAND_WORKER -> GOLEM_ENGINE -> GOLEM_ENGINE."""
         os.environ.pop("GOLEM_DEFAULT_HAND_WORKER", None)
         os.environ.pop("GOLEM_ENGINE", None)
-        os.environ.pop("FIRST_MATE_ENGINE", None)
+        os.environ.pop("GOLEM_ENGINE", None)
 
-        os.environ["FIRST_MATE_ENGINE"] = "claude_code"
+        os.environ["GOLEM_ENGINE"] = "claude_code"
         self.assertEqual(golem.config.get_active_engine(), "claude_code")
 
         os.environ["GOLEM_ENGINE"] = "opencode"
@@ -317,11 +307,11 @@ class TestDualKeyEnvironmentVariableResolution(unittest.TestCase):
         """Verifies get_default_hand_worker defaults to 'agy'."""
         os.environ.pop("GOLEM_DEFAULT_HAND_WORKER", None)
         os.environ.pop("GOLEM_ENGINE", None)
-        os.environ.pop("FIRST_MATE_ENGINE", None)
+        os.environ.pop("GOLEM_ENGINE", None)
         self.assertIn(golem.config.get_default_hand_worker(), ["agy", "antigravity"])
 
     def test_model_resolution_dual_key(self):
-        """Verifies model resolution handles GOLEM_* and bare/FIRST_MATE keys."""
+        """Verifies model resolution handles GOLEM_* and bare/GOLEM keys."""
         os.environ.pop("GOLEM_MOUTH_MODEL", None)
         os.environ.pop("MOUTH_MODEL", None)
         os.environ.pop("GEMINI_MODEL", None)
@@ -348,7 +338,6 @@ class TestPackagingAndLaunchdService(unittest.TestCase):
         self.assertEqual(project.get("description"), EXPECTED_LINEAGE)
         scripts = project.get("scripts", {})
         self.assertEqual(scripts.get("golem"), "golem.cli:main")
-        self.assertEqual(scripts.get("first-mate"), "golem.cli:main")
 
     def test_setup_py_exists_and_parses(self):
         """Verifies setup.py exists and contains expected lineage description."""
@@ -358,7 +347,6 @@ class TestPackagingAndLaunchdService(unittest.TestCase):
             content = f.read()
         self.assertIn(EXPECTED_LINEAGE, content)
         self.assertIn('golem=golem.cli:main', content)
-        self.assertIn('first-mate=golem.cli:main', content)
 
     def test_com_user_golem_plist(self):
         """Verifies com.user.golem.plist exists, parses, and has valid configuration."""
@@ -372,23 +360,23 @@ class TestPackagingAndLaunchdService(unittest.TestCase):
         env = data.get("EnvironmentVariables", {})
         self.assertEqual(env.get("DAEMON_LABEL"), "com.user.golem")
         self.assertEqual(env.get("GOLEM_DAEMON_LABEL"), "com.user.golem")
-        self.assertEqual(env.get("PYTHONPATH"), "/Users/hermes/projects/first-mate")
+        self.assertEqual(env.get("PYTHONPATH"), "/Users/hermes/projects/golem")
 
 
 class TestMilestone1Remediations(unittest.TestCase):
     """Verifies remediations for Milestone 1 oppositional analysis findings."""
 
-    def test_first_mate_dynamic_attribute_lookup(self):
-        """Verifies dynamically attached attributes on golem resolve via first_mate.__getattr__."""
+    def test_golem_dynamic_attribute_lookup(self):
+        """Verifies dynamically attached attributes on golem resolve via golem.__getattr__."""
         golem.DYNAMIC_REMEDIATION_KEY = "verified_123"
         try:
-            self.assertEqual(first_mate.DYNAMIC_REMEDIATION_KEY, "verified_123")
+            self.assertEqual(golem.DYNAMIC_REMEDIATION_KEY, "verified_123")
         finally:
             if hasattr(golem, "DYNAMIC_REMEDIATION_KEY"):
                 delattr(golem, "DYNAMIC_REMEDIATION_KEY")
 
         with self.assertRaises(AttributeError):
-            _ = first_mate.NON_EXISTENT_DYNAMIC_ATTR_XYZ
+            _ = golem.NON_EXISTENT_DYNAMIC_ATTR_XYZ
 
     def test_synchronous_cli_entrypoints(self):
         """Verifies golem.cli.main and app.cli are synchronous functions."""
@@ -406,7 +394,7 @@ class TestMilestone1Remediations(unittest.TestCase):
         with patch.object(golem.config, "_get_file_env", return_value={}):
             with patch.dict(os.environ, {
                 "GOLEM_DEFAULT_HAND_WORKER": "   ",
-                "FIRST_MATE_ENGINE": "agy_fallback"
+                "GOLEM_ENGINE": "agy_fallback"
             }, clear=True):
                 self.assertEqual(golem.config.get_default_hand_worker(), "agy_fallback")
 

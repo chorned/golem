@@ -12,6 +12,8 @@ Covers Boundary Categories from TEST_INFRA.md and PROJECT.md:
 
 All tests follow opaque-box, requirement-driven test design derived from
 ORIGINAL_REQUEST.md, PROJECT.md, and TEST_INFRA.md.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 from __future__ import annotations
@@ -307,7 +309,7 @@ class TestTier2ConcurrentShimImports(unittest.TestCase):
     """
 
     def test_multithreaded_concurrent_shim_imports(self):
-        """B05: 20 threads simultaneously importing first_mate and golem experience zero race conditions."""
+        """B05: 20 threads simultaneously importing golem and golem experience zero race conditions."""
         errors: list[Exception] = []
         modules_retrieved: list[Any] = []
         lock = threading.Lock()
@@ -337,7 +339,7 @@ class TestTier2ConcurrentShimImports(unittest.TestCase):
         self.assertEqual(len(modules_retrieved), 20, "All 20 threads must complete successfully")
 
     def test_bidirectional_mock_patch_concurrency(self):
-        """B05: Concurrently reading through first_mate while mock patched maintains consistent behavior."""
+        """B05: Concurrently reading through golem while mock patched maintains consistent behavior."""
         try:
             from golem.config import get_mouth_model
         except (ImportError, AttributeError):

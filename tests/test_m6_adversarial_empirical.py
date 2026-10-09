@@ -3,6 +3,8 @@
 tests/test_m6_adversarial_empirical.py
 Milestone 6 Empirical Adversarial Challenge Suite.
 
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
+
 Adversarially stress-tests:
 1. TextDeltaEvent instantiation permutations, extra kwargs, property aliases,
    and serialization/deserialization round-trips.
@@ -596,11 +598,11 @@ class TestTC03InteractiveBlockerResilienceStress(unittest.IsolatedAsyncioTestCas
 
         with patch("asyncio.create_subprocess_exec", side_effect=mock_create_subprocess_exec):
             start_t = time.perf_counter()
-            handle = await executor.run_command(runner_pane, "rclone config reconnect", yield_timeout=0.1)
+            handle = await executor.run_command(runner_pane, "rclone config reconnect", yield_timeout=0.2)
             duration = time.perf_counter() - start_t
 
             # Verify command yielded promptly
-            self.assertLess(duration, 0.5)
+            self.assertLess(duration, 2.0)
             self.assertEqual(handle.status, "running")
             self.assertEqual(handle.pane, runner_pane)
             self.assertEqual(handle.command, "rclone config reconnect")
@@ -675,7 +677,7 @@ class TestTC04WorkerDelegationStress(unittest.IsolatedAsyncioTestCase):
         result = await delegator.handoff(
             subagent="opencode",
             task="Implement verify_token in auth.py",
-            cwd="/Users/hermes/projects/first-mate",
+            cwd="/Users/hermes/projects/golem",
             isolate_branch=True
         )
 

@@ -12,7 +12,7 @@
 | Task ID | Type | Risk Tier | Hand A (Primary Actor) Scope | Hand B (Adversarial Auditor) Invariant | Status |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | `M1-BUILD` | `build` | `medium` | `golem/`, `pyproject.toml`, `setup.py` | 1,326 unit tests pass, exact object identity (`assertIs`), zero broken imports | `[VERIFIED]` |
-| `M1-EXEC` | `execution` | `high` | `com.user.first-mate.plist`, `com.user.golem.plist`, shim verification | Launchd service syntax valid, dual-key env vars (`GOLEM_*` / `FIRST_MATE_*`) functional | `[VERIFIED]` |
+| `M1-EXEC` | `execution` | `high` | `com.user.golem.plist`, shim verification | Launchd service syntax valid, env vars (`GOLEM_*`) functional | `[VERIFIED]` |
 | `M2-BUILD` | `build` | `medium` | `golem/execution/`, `herdr_tools.py` | AGY CLI default worker, pluggable `opencode`/`hermes` routing via param and env var | `[VERIFIED]` |
 | `M2-EXEC` | `execution` | `medium` | Headless PTY worker subshell dispatch scripts | Zero PTY deadlocks under concurrent multi-pane subshells, exit code fidelity | `[VERIFIED]` |
 | `M3-BUILD` | `build` | `medium` | `golem/webui/`, `golem/sensory/`, dashboard assets | Async WebUI server initializes, Stitch styling with semantic HTML/CSS fallback, SSE feeds | `[VERIFIED]` |

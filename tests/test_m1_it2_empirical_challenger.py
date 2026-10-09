@@ -11,6 +11,8 @@ Empirically verifies resolution of all 4 defects:
 3. /health exception reports error with :warning: and NEVER says "Air is clean".
 4. /status exception reports error with :warning: and NEVER says "Runner is currently IDLE".
 Plus boundary, edge-case, and high-concurrency stress testing.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import os

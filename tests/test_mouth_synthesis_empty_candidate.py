@@ -3,6 +3,8 @@
 tests/test_mouth_synthesis_empty_candidate.py
 Verifies that Step 2 synthesis handles empty candidate text or tool-call attempts
 gracefully (as seen with gemini-3.8-flash) without dumping raw JSON sensory error data.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import asyncio
@@ -109,8 +111,8 @@ class TestMouthSynthesisEmptyCandidate(unittest.IsolatedAsyncioTestCase):
                 self.assertNotIn("⚠️ *Executive Synthesis Failed*", posted)
                 self.assertNotIn("Raw sensory data returned above", posted)
 
-    async def test_empty_candidate_recovers_via_output_tail_if_fallback_fails(self):
-        """If direct fallback also returns empty text, runner output_tail is used directly."""
+    async def test_empty_candidate_fails_loudly_if_fallback_fails(self):
+        """If direct fallback also returns empty text, synthesis fails loudly with raw sensory output."""
         turn1_dispatch = {
             "candidates": [
                 {
@@ -167,8 +169,8 @@ class TestMouthSynthesisEmptyCandidate(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(len(self.client.posted_messages) >= 1)
                 posted = self.client.posted_messages[-1]["text"]
                 self.assertIn("Runner inspected Chrome tabs", posted)
-                self.assertNotIn("⚠️ *Executive Synthesis Failed*", posted)
-                self.assertNotIn("Raw sensory data returned above", posted)
+                self.assertIn("⚠️ *Executive Synthesis Failed*", posted)
+                self.assertIn("Raw sensory data returned above", posted)
 
 
 if __name__ == "__main__":

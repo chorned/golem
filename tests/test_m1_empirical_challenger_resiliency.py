@@ -10,6 +10,8 @@ Evaluates:
   2. Zero occurrence of hardcoded fallbacks across ALL scenarios on Step 2 failure.
   3. Proper setting of reaction :boom: or :x: on simulated exceptions.
   4. System stability under adversarial load, malformed payloads, and edge cases.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import os

@@ -9,6 +9,8 @@ Mandatory Empirical Verification:
 3. Rapid telemetry bursts: simulated 100 rapid nose_telemetry ticks verifying zero terminal flooding and bounded memory.
 4. Sudden client disconnects and reconnects while hands are active.
 5. Edge cases: Unusual pane IDs, massive buffer deltas, and settlement race conditions.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 from __future__ import annotations

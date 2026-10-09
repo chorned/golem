@@ -30,6 +30,8 @@ Covers Boundary Categories from TEST_INFRA.md and PROJECT.md:
    - Formatting corner cases: triple asterisks (***text***), nested markdown quotes, mixed CRLF/LF line endings.
 
 Opaque-box, requirement-driven test design derived from ORIGINAL_REQUEST.md, PROJECT.md, and TEST_INFRA.md.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import os

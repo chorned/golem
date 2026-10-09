@@ -80,11 +80,11 @@ class TestWebUIConfiguration(unittest.TestCase):
             self.assertFalse(golem_cfg.is_webui_enabled())
 
     def test_dual_key_webui_enable_resolution(self):
-        """Verify GOLEM_WEBUI and FIRST_MATE_ENABLE_WEBUI fallback keys."""
+        """Verify GOLEM_WEBUI and GOLEM_ENABLE_WEBUI fallback keys."""
         with patch.dict(os.environ, {"GOLEM_WEBUI": "1"}, clear=True):
             self.assertTrue(golem_cfg.is_webui_enabled())
 
-        with patch.dict(os.environ, {"FIRST_MATE_ENABLE_WEBUI": "true"}, clear=True):
+        with patch.dict(os.environ, {"GOLEM_ENABLE_WEBUI": "true"}, clear=True):
             self.assertTrue(golem_cfg.is_webui_enabled())
 
         with patch.dict(os.environ, {"FIRSTMATE_ENABLE_WEBUI": "yes"}, clear=True):

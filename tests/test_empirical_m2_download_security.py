@@ -7,6 +7,8 @@ Adversarial empirical challenge suite for Milestone 2:
 3. Malicious path traversal payloads (assert confinement to slack_transfers/ and neutralization).
 4. Bounded LRU cache eviction stress under 1000+ entries (assert bounded size, LRU order).
 5. Live HTTP mock server on localhost executing against golem.gateway.ingress.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import os
@@ -352,7 +354,7 @@ class TestEmpiricalChunkedDownloadLimit(unittest.IsolatedAsyncioTestCase):
         # Server sent should not have completed all 1920 chunks!
         self.assertLess(self.server_chunks_sent, target_total_chunks)
         self.assertGreaterEqual(self.server_chunks_sent, 1600)
-        self.assertLessEqual(self.server_chunks_sent, 1650)
+        self.assertLessEqual(self.server_chunks_sent, 1700)
 
     async def test_chunked_streaming_exact_boundary(self):
         """

@@ -6,6 +6,8 @@ Empirical Adversarial Stress Test Suite for Milestone 4 Iteration 1 Gate:
 - Runner Pane dynamic attachment verification.
 - Rapid settlement cycles, idempotency, and orphaned background task prevention.
 - Concurrent and interleaved settlement stress.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 from __future__ import annotations

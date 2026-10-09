@@ -15,6 +15,8 @@ Usage examples:
 
   # Continue an existing Slack thread
   python scripts/message_carl.py -t slack --slack-thread-ts 1740000000.123456 -m "Build passed!"
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import argparse

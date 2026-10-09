@@ -15,6 +15,8 @@ Challenger 2 verification covering:
   - DualPaneHarness Lifecycle & Blocker Resilience:
     * Workspace provisioning, liaison/runner pane assignment, and tracking
     * Teardown idempotency and active workspace filtering
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import os
@@ -49,14 +51,14 @@ class TestWorkerDelegationEmpiricalTC04(unittest.IsolatedAsyncioTestCase):
         self.mock_client = AsyncMock()
         self.delegator = WorkerDelegator(
             herdr_client=self.mock_client,
-            base_repo="/Users/hermes/projects/first-mate"
+            base_repo="/Users/hermes/projects/golem"
         )
 
     async def test_handoff_branch_isolation_and_naming(self):
         """TC-04: Verifies branch naming follows task-<ts>-<subagent> and worktree is created."""
         mock_wt_resp = json.dumps({
             "result": {
-                "worktree": {"path": "/Users/hermes/projects/first-mate-wt-123"},
+                "worktree": {"path": "/Users/hermes/projects/golem-wt-123"},
                 "workspace": {"workspace_id": "ws-wt-123"}
             }
         })
@@ -72,7 +74,7 @@ class TestWorkerDelegationEmpiricalTC04(unittest.IsolatedAsyncioTestCase):
         res = await self.delegator.handoff(
             subagent="opencode",
             task="Refactor telemetry hooks",
-            cwd="/Users/hermes/projects/first-mate",
+            cwd="/Users/hermes/projects/golem",
             isolate_branch=True
         )
 
@@ -91,7 +93,7 @@ class TestWorkerDelegationEmpiricalTC04(unittest.IsolatedAsyncioTestCase):
         self.assertLessEqual(branch_ts, start_time + 5)
 
         # 3. Worktree path tracking
-        self.assertEqual(res["cwd"], "/Users/hermes/projects/first-mate-wt-123")
+        self.assertEqual(res["cwd"], "/Users/hermes/projects/golem-wt-123")
         self.assertEqual(res["workspace_id"], "ws-wt-123")
 
         # 4. Sanitized output delivered to caller
@@ -188,7 +190,7 @@ class TestSanitizeWorkerOutputAdversarial(unittest.TestCase):
             "└ Tip: Use --verbose for debug\n"
             "❯ git status\n"
             "❯ git diff --stat\n"
-            "hermes@desktop-pc:~/first-mate$\n"
+            "hermes@desktop-pc:~/golem$\n"
             ">\n"
             "> \n"
             "All 419 unit tests pass 100% green."
@@ -604,7 +606,7 @@ class TestEmpiricalRunnerAndBufferChallenges(unittest.IsolatedAsyncioTestCase):
 
         delegator = WorkerDelegator(
             herdr_client=mock_client,
-            base_repo="/Users/hermes/projects/first-mate"
+            base_repo="/Users/hermes/projects/golem"
         )
         res = await delegator.handoff(
             subagent="opencode",

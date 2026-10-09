@@ -184,9 +184,9 @@ class TestContributingGuidelines(unittest.TestCase):
         with open(self.contrib_path, "r", encoding="utf-8") as f:
             content = f.read()
 
-        self.assertIn("_FirstMateAliasFinder", content)
-        self.assertIn("sys.meta_path", content)
-        self.assertIn("first_mate", content)
+        self.assertIn("Module Flattening", content)
+        self.assertIn("Object Identity", content)
+        self.assertIn("Compatibility Facades", content)
         self.assertIn("golem", content)
         self.assertIn("assertIs", content)
 
@@ -373,7 +373,7 @@ class TestRepositorySecretScanning(unittest.TestCase):
 
         # Explicitly ensure both launchd plist definitions and key root configs are audited
         mandatory_targets = [
-            "com.user.first-mate.plist",
+            
             "com.user.golem.plist",
             "app.py",
             "setup.py",
@@ -394,7 +394,7 @@ class TestRepositorySecretScanning(unittest.TestCase):
 
         scan_dirs = [
             os.path.join(PROJECT_ROOT, "golem"),
-            os.path.join(PROJECT_ROOT, "first_mate"),
+            
             os.path.join(PROJECT_ROOT, ".github"),
         ]
         for d in scan_dirs:

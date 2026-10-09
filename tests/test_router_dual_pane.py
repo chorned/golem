@@ -4,6 +4,8 @@ tests/test_router_dual_pane.py
 Comprehensive unit tests verifying DualPaneHarness wiring into SessionRouter and SessionHandle,
 validating TC-01 dual-pane provisioning, multi-turn persistence, lifecycle teardown, reaper cleanup,
 and backward compatibility when harness=None.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import asyncio

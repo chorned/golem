@@ -7,19 +7,19 @@
     <string>com.user.golem</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/hermes/projects/first-mate/.venv/bin/python3</string>
-        <string>/Users/hermes/projects/first-mate/app.py</string>
+        <string>/Users/hermes/projects/golem/.venv/bin/python3</string>
+        <string>/Users/hermes/projects/golem/app.py</string>
     </array>
     <key>WorkingDirectory</key>
-    <string>/Users/hermes/projects/first-mate</string>
+    <string>/Users/hermes/projects/golem</string>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>/Users/hermes/projects/first-mate/bot.log</string>
+    <string>/Users/hermes/projects/golem/bot.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/hermes/projects/first-mate/bot.err</string>
+    <string>/Users/hermes/projects/golem/bot.err</string>
     <key>EnvironmentVariables</key>
     <dict>
         <key>PYTHONUNBUFFERED</key>
@@ -29,7 +29,7 @@
         <key>GOLEM_DAEMON_LABEL</key>
         <string>com.user.golem</string>
         <key>PYTHONPATH</key>
-        <string>/Users/hermes/projects/first-mate</string>
+        <string>/Users/hermes/projects/golem</string>
         <key>GOLEM_DEFAULT_HAND_WORKER</key>
         <string>agy</string>
         <key>AGY_BIN</key>
@@ -43,9 +43,7 @@
         <key>SLACK_SIGNING_SECRET</key>
         <string>YOUR_SLACK_SIGNING_SECRET</string>
         <key>GOLEM_HOST_DIR</key>
-        <string>/Users/hermes/projects/first-mate</string>
-        <key>FIRST_MATE_HOST_DIR</key>
-        <string>/Users/hermes/projects/first-mate</string>
+        <string>/Users/hermes/projects/golem</string>
         <key>DEFAULT_TARGET_REPO</key>
         <string>/Users/hermes/projects/AGY</string>
         <key>DEFAULT_WORKSPACE_PATH</key>

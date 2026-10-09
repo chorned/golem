@@ -9,6 +9,8 @@ Coordinates:
 3. Pre-Push Quality Gate: executes `no-mistakes axi run --intent "<task_intent>"`.
 4. Review Crucible: automatically re-prompts worker on lint/review/test issues (up to 2 iterations).
 5. Autonomous GitHub Management: generates PRs via `gh pr create` with review summaries.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import os
@@ -29,13 +31,13 @@ from memory_manager import MemoryManager
 
 logger = logging.getLogger("AGY.Supervisor")
 
-HOST_DIR = os.environ.get("FIRST_MATE_HOST_DIR", os.path.dirname(os.path.abspath(__file__)))
+HOST_DIR = os.environ.get("GOLEM_HOST_DIR", os.path.dirname(os.path.abspath(__file__)))
 PROJECT_ROOT = HOST_DIR
 DEFAULT_TARGET_REPO = os.environ.get("DEFAULT_TARGET_REPO", "/Users/hermes/projects/AGY")
 
 DEFAULT_PROTECTED_PATTERNS = [
     re.compile(r"^.*\.plist$", re.IGNORECASE),
-    re.compile(r"^com\.user\.(antigravity-slack|first-mate)\.plist$", re.IGNORECASE),
+    re.compile(r"^com\.user\.(antigravity-slack|golem)\.plist$", re.IGNORECASE),
     re.compile(r"^.*launchd.*", re.IGNORECASE),
     re.compile(r"^\.git(/|$)", re.IGNORECASE),
     re.compile(r"^\.env(\..*)?$", re.IGNORECASE),
@@ -726,7 +728,7 @@ class AgentSupervisor:
         if check_diff:
             diff_lines = check_diff.splitlines()
             for dline in diff_lines:
-                for target in ["com.user.antigravity-slack.plist", "com.user.first-mate.plist", ".plist", "launchd", ".env"]:
+                for target in ["com.user.antigravity-slack.plist", "com.user.golem.plist", ".plist", "launchd", ".env"]:
                     if target in dline.lower() and any(k in dline for k in ("diff --git", "--- ", "+++ ", "|", "rename from", "rename to")):
                         m = re.search(r'([a-zA-Z0-9_\-./]+\.(?:plist|env))', dline)
                         violation_name = m.group(1) if m else target

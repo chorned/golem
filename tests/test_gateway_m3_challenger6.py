@@ -24,6 +24,8 @@ Verifies Acceptance Criteria:
      - Concurrent close during turn without zombie state resurrection
      - Error turn handling (:x: reaction) and subsequent recovery turn
      - Slash commands direct handling
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 from __future__ import annotations
@@ -274,7 +276,7 @@ class TestGatewayM3Challenger6(unittest.IsolatedAsyncioTestCase):
 
         def subprocess_adapter_factory(cwd: str) -> HeadlessAgentAdapter:
             return HeadlessAgentAdapter(
-                cwd="/Users/hermes/projects/first-mate",
+                cwd="/Users/hermes/projects/golem",
                 agy_bin=mock_bin,
                 env={"MOCK_AGY_MODE": "normal"},
             )

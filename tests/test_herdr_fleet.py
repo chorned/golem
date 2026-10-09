@@ -2,6 +2,8 @@
 """
 tests/test_herdr_fleet.py
 Unit tests for HerdrFleet persistent topology, node probing, and machine routing.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import os

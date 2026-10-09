@@ -13,6 +13,8 @@ Comprehensive unit and integration tests for Milestone 3 (Slack Outbound File Up
 9. Sensitive file exfiltration protection (.env, id_rsa, credentials.json).
 10. client.files_upload_v2 parameter passing and error resilience.
 11. Full IngressGateway integration with directive stripping and threaded Slack upload.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 from __future__ import annotations

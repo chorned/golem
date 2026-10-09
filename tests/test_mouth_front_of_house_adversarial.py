@@ -8,6 +8,8 @@ Adversarial Stress Test Suite for First Mate Full Sensory Architecture:
   4. Directive Extraction ([SEND_FILE: ...]) Under Complex Formatting & Security Gates
   5. Out-of-Band Mid-Stream Message Handling (Status, Banter, Cancellation) During Active Execution
   6. Shoulder Tap Event Bus High-Concurrency Burst & Error Isolation
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import os
@@ -590,7 +592,7 @@ class TestAdversarialDirectiveExtraction(unittest.IsolatedAsyncioTestCase):
         Security Stress Test:
         Directive attempting to exfiltrate .env or private keys must be rejected by is_sensitive_target.
         """
-        self.assertTrue(is_sensitive_target("/Users/hermes/projects/first-mate/.env"))
+        self.assertTrue(is_sensitive_target("/Users/hermes/projects/golem/.env"))
         self.assertTrue(is_sensitive_target(".env"))
         self.assertTrue(is_sensitive_target("/home/user/.ssh/id_rsa"))
         self.assertTrue(is_sensitive_target("desktop-pc:C:\\secrets\\credentials.json"))

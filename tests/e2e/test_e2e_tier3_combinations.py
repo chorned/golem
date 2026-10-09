@@ -104,16 +104,16 @@ class TestTier3DualLayerShimNestedImports(unittest.TestCase):
     """
 
     def test_bidirectional_mock_patch_propagation(self):
-        """C02: Patching via first_mate directly mutates golem submodule and vice versa."""
+        """C02: Patching via golem directly mutates golem submodule and vice versa."""
         if not GOLEM_AVAILABLE:
             self.skipTest("Milestone M1 pending: dual-layer shim not yet active")
 
-        # Patch via first_mate namespace
+        # Patch via golem namespace
         try:
             with patch("golem.config.get_default_hand_worker", return_value="custom-worker"):
                 import golem.config
                 val = golem.config.get_default_hand_worker()
-                self.assertEqual(val, "custom-worker", "Patching first_mate must mutate golem object")
+                self.assertEqual(val, "custom-worker", "Patching golem must mutate golem object")
         except (ModuleNotFoundError, AttributeError):
             self.skipTest("Shim mock propagation pending M1 shim completion")
 
@@ -224,8 +224,8 @@ class TestTier3LaunchdEnvAndWorkerDelegation(unittest.TestCase):
             worker = cfg.get_default_hand_worker()
             self.assertEqual(worker, "opencode")
 
-        # Verify fallback to FIRST_MATE_ENGINE if GOLEM var is missing
-        with patch.dict(os.environ, {"FIRST_MATE_ENGINE": "hermes"}, clear=True):
+        # Verify fallback to GOLEM_ENGINE if GOLEM var is missing
+        with patch.dict(os.environ, {"GOLEM_ENGINE": "hermes"}, clear=True):
             worker = cfg.get_default_hand_worker()
             self.assertIn(worker, ["hermes", "agy", "antigravity"])
 

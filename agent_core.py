@@ -3,6 +3,8 @@
 agent_core.py
 First Mate Chief of Staff Brain & Agentic Turn Engine.
 Powered directly by Gemini 2.5 Flash with Native Tool Calling, Plan Pitching, and Zero-MCP Herdr dispatch.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import os
@@ -25,8 +27,8 @@ from herdr_tools import (
 
 logger = logging.getLogger("Golem.AgentCore")
 
-# Re-exports from golem.agent for compatibility
-from golem.agent import (
+# Re-exports from golem for compatibility
+from golem import (
     AgentEvent,
     AgentEventType,
     TextDeltaEvent,
@@ -48,11 +50,11 @@ from golem.agent import (
 
 from golem.config import get_mouth_model, get_default_hand_worker
 
-HOST_DIR = os.environ.get("GOLEM_HOST_DIR") or os.environ.get("FIRST_MATE_HOST_DIR", os.path.dirname(os.path.abspath(__file__)))
+HOST_DIR = os.environ.get("GOLEM_HOST_DIR", os.path.dirname(os.path.abspath(__file__)))
 PROJECT_ROOT = HOST_DIR
 DEFAULT_TARGET_REPO = os.environ.get("DEFAULT_TARGET_REPO", "/Users/hermes/projects/AGY")
 DEFAULT_GEMINI_MODEL = get_mouth_model()
-GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
+GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 
 
 def get_gemini_api_key() -> str:
@@ -297,7 +299,13 @@ class ChiefOfStaff:
         """
         # Append user message if not already the latest
         clean_user_msg = user_message.strip()
-        if not thread_history or thread_history[-1].get("role") != "user" or thread_history[-1].get("parts", [{}])[0].get("text") != clean_user_msg:
+        last_turn = thread_history[-1] if thread_history and isinstance(thread_history[-1], dict) else {}
+        last_parts = last_turn.get("parts") if isinstance(last_turn, dict) else None
+        last_text = ""
+        if isinstance(last_parts, list) and len(last_parts) > 0 and isinstance(last_parts[0], dict):
+            last_text = str(last_parts[0].get("text") or "")
+
+        if not thread_history or last_turn.get("role") != "user" or last_text != clean_user_msg:
             thread_history.append({
                 "role": "user",
                 "parts": [{"text": clean_user_msg}]
@@ -310,7 +318,21 @@ class ChiefOfStaff:
             logger.warning("No Gemini API key discovered; executing fallback turn")
             return self._fallback_turn(clean_user_msg, thread_history)
 
-        url = GEMINI_API_URL.format(model=self.model, key=api_key)
+        url = GEMINI_API_URL.format(model=self.model)
+        if "?key=" in url or "&key=" in url:
+            raise ValueError("Security violation: Gemini API keys must not be passed via URL query parameters; use 'x-goog-api-key' header.")
+
+        headers = {
+            "Content-Type": "application/json",
+            "x-goog-api-key": api_key,
+        }
+        user_project = (
+            os.environ.get("GOOGLE_CLOUD_PROJECT")
+            or os.environ.get("GCP_PROJECT")
+            or os.environ.get("VERTEX_PROJECT")
+        )
+        if user_project:
+            headers["x-goog-user-project"] = user_project.strip()
 
         for iteration in range(max_iterations):
             payload = {
@@ -324,24 +346,32 @@ class ChiefOfStaff:
             try:
                 timeout = aiohttp.ClientTimeout(total=20.0)
                 async with aiohttp.ClientSession(timeout=timeout) as session:
-                    async with session.post(url, json=payload, headers={"Content-Type": "application/json"}) as resp:
+                    async with session.post(url, json=payload, headers=headers) as resp:
                         if resp.status != 200:
                             err_body = await resp.text()
                             logger.error(f"Gemini API returned status {resp.status}: {err_body}")
                             return self._fallback_turn(clean_user_msg, thread_history)
 
                         data = await resp.json()
-                        candidates = data.get("candidates", [])
-                        if not candidates:
+                        candidates = data.get("candidates") if isinstance(data, dict) else None
+                        if not candidates or not isinstance(candidates, list):
                             return ("I didn't receive a response from the model. Standing by.", thread_history)
 
-                        cand = candidates[0]
-                        content = cand.get("content", {})
-                        parts = content.get("parts", [])
+                        cand = candidates[0] if isinstance(candidates[0], dict) else {}
+                        content = cand.get("content") if isinstance(cand, dict) else None
+                        parts = (content.get("parts") if isinstance(content, dict) else None) or []
+                        if not isinstance(parts, list):
+                            parts = []
 
                         # Check for functionCall
-                        function_calls = [p["functionCall"] for p in parts if "functionCall" in p]
-                        text_parts = [p["text"] for p in parts if "text" in p]
+                        function_calls = [
+                            p["functionCall"] for p in parts
+                            if isinstance(p, dict) and "functionCall" in p and isinstance(p["functionCall"], dict)
+                        ]
+                        text_parts = [
+                            str(p["text"]) for p in parts
+                            if isinstance(p, dict) and "text" in p and p.get("text")
+                        ]
 
                         if function_calls:
                             # Append model turn containing the functionCall(s)

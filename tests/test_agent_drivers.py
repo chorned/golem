@@ -4,12 +4,14 @@ tests/test_agent_drivers.py
 Comprehensive test suite for Phase 2: CLI Portability Driver Architecture.
 Tests cover:
   1. BaseAgentDriver ABC interface contracts, required properties, and compatibility shims.
-  2. first_mate/config.py declarative config, model lookup per engine, and zero-hardcoding.
+  2. golem/config.py declarative config, model lookup per engine, and zero-hardcoding.
   3. Driver registry and create_driver factory.
   4. AntigravityDriver model flag generation, subclassing, and event streaming.
   5. ClaudeCodeDriver and OpenCodeDriver pluggable stubs and typed event protocol.
   6. SessionHandle.driver property alias, turn execution, and lifecycle termination.
-  7. SessionRouter dynamic driver resolution, FIRST_MATE_ENGINE dispatch, and legacy adapter_factory preservation.
+  7. SessionRouter dynamic driver resolution, GOLEM_ENGINE dispatch, and legacy adapter_factory preservation.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import os
@@ -136,17 +138,17 @@ class TestBaseAgentDriverABC(unittest.TestCase):
 
 
 class TestConfigModule(unittest.TestCase):
-    """Test first_mate/config.py declarative environment resolution and zero-hardcoding."""
+    """Test golem/config.py declarative environment resolution and zero-hardcoding."""
 
     def test_get_active_engine_default(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
             self.assertEqual(get_active_engine(), "antigravity")
 
     def test_get_active_engine_custom_and_normalized(self) -> None:
-        with patch.dict(os.environ, {"FIRST_MATE_ENGINE": "  Claude_Code  "}):
+        with patch.dict(os.environ, {"GOLEM_ENGINE": "  Claude_Code  "}):
             self.assertEqual(get_active_engine(), "claude_code")
 
-        with patch.dict(os.environ, {"FIRST_MATE_ENGINE": "OPENCODE"}):
+        with patch.dict(os.environ, {"GOLEM_ENGINE": "OPENCODE"}):
             self.assertEqual(get_active_engine(), "opencode")
 
     def test_get_engine_model_mappings(self) -> None:
@@ -164,7 +166,7 @@ class TestConfigModule(unittest.TestCase):
 
     def test_get_engine_model_default_engine_lookup(self) -> None:
         env = {
-            "FIRST_MATE_ENGINE": "claude_code",
+            "GOLEM_ENGINE": "claude_code",
             "CLAUDE_CODE_MODEL": "claude-3-7-sonnet-latest",
         }
         with patch.dict(os.environ, env):
@@ -227,7 +229,7 @@ class TestDriverRegistryAndFactory(unittest.TestCase):
             get_driver_class("invalid_engine_name")
 
     def test_create_driver_default(self) -> None:
-        with patch.dict(os.environ, {"FIRST_MATE_ENGINE": "antigravity", "ANTIGRAVITY_MODEL": "gemini-3.8-flash-high"}):
+        with patch.dict(os.environ, {"GOLEM_ENGINE": "antigravity", "ANTIGRAVITY_MODEL": "gemini-3.8-flash-high"}):
             driver = create_driver(cwd="/tmp")
             self.assertIsInstance(driver, AntigravityDriver)
             self.assertEqual(driver.engine_name, "antigravity")
@@ -414,12 +416,12 @@ class TestSessionRouterDriverResolution(unittest.IsolatedAsyncioTestCase):
             await self.router.stop_reaper()
 
     async def test_router_default_engine_antigravity(self) -> None:
-        with patch.dict(os.environ, {"FIRST_MATE_ENGINE": "antigravity"}):
+        with patch.dict(os.environ, {"GOLEM_ENGINE": "antigravity"}):
             self.router = SessionRouter(default_target_cwd="/tmp")
             self.assertEqual(self.router.engine, "antigravity")
 
     async def test_router_dynamic_engine_resolution_claude_code(self) -> None:
-        with patch.dict(os.environ, {"FIRST_MATE_ENGINE": "claude_code", "CLAUDE_CODE_MODEL": "claude-3-7-sonnet-latest"}):
+        with patch.dict(os.environ, {"GOLEM_ENGINE": "claude_code", "CLAUDE_CODE_MODEL": "claude-3-7-sonnet-latest"}):
             self.router = SessionRouter(default_target_cwd="/tmp")
             self.assertEqual(self.router.engine, "claude_code")
             session, is_new = await self.router.get_or_create("C_CLAUDE", "T_CLAUDE")
@@ -429,7 +431,7 @@ class TestSessionRouterDriverResolution(unittest.IsolatedAsyncioTestCase):
             await self.router.teardown("C_CLAUDE", "T_CLAUDE")
 
     async def test_router_dynamic_engine_resolution_opencode(self) -> None:
-        with patch.dict(os.environ, {"FIRST_MATE_ENGINE": "opencode", "OPENCODE_MODEL": "deepseek/deepseek-chat"}):
+        with patch.dict(os.environ, {"GOLEM_ENGINE": "opencode", "OPENCODE_MODEL": "deepseek/deepseek-chat"}):
             self.router = SessionRouter(default_target_cwd="/tmp")
             self.assertEqual(self.router.engine, "opencode")
             session, is_new = await self.router.get_or_create("C_OPEN", "T_OPEN")
@@ -439,7 +441,7 @@ class TestSessionRouterDriverResolution(unittest.IsolatedAsyncioTestCase):
             await self.router.teardown("C_OPEN", "T_OPEN")
 
     async def test_router_explicit_engine_overrides_environment(self) -> None:
-        with patch.dict(os.environ, {"FIRST_MATE_ENGINE": "antigravity"}):
+        with patch.dict(os.environ, {"GOLEM_ENGINE": "antigravity"}):
             self.router = SessionRouter(default_target_cwd="/tmp", engine="opencode")
             self.assertEqual(self.router.engine, "opencode")
             session, _ = await self.router.get_or_create("C_OVR", "T_OVR")

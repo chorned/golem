@@ -11,6 +11,8 @@ Evaluates:
   3. Non-string message contents (None, int, dict, list, bytes).
   4. Missing session IDs, channel, thread_ts, and ts.
   5. Concurrent /status and /health requests under simulated socket disconnection.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import os

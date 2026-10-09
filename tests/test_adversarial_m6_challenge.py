@@ -6,6 +6,8 @@ Adversarial Stress Test Dimensions:
 1. Bare \\x1b escape characters mixed with multibyte UTF-8, null bytes, backspaces, and OSC/CSI sequences.
 2. CRLF and CR line endings embedded within multi-line fenced code blocks, unclosed code blocks, and markdown lists.
 3. Chunker behavior with massive outputs (>20,000 chars), pathological unclosed code blocks, tildes vs backticks, and extreme boundary cuts.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import signal

@@ -16,7 +16,7 @@ Target: CI matrix emulation, YAML validation, local secret scanning, git cleanli
 - Executed local automated secret scan across repository files:
   * Pattern checks for: Slack tokens (xoxb, xapp, xoxp, xoxr), GitHub tokens (ghp, gho, ghu, github_pat), AWS access keys (AKIA*), private keys (BEGIN RSA/OPENSSH/DSA/EC/PGP PRIVATE KEY), and OpenAI API keys (sk-*).
   * Validated synthetic leak positive control test (verified scanner actively detects test secrets).
-  * Verified zero unmasked credentials or tokens committed across golem/, first_mate/, .github/, root python scripts (app.py, setup.py, agent_core.py, herdr_fleet.py, herdr_tools.py), and docs (CONTRIBUTING.md, LICENSE, PROJECT.md, TASK_QUEUE.md).
+  * Verified zero unmasked credentials or tokens committed across golem/, golem/, .github/, root python scripts (app.py, setup.py, agent_core.py, herdr_fleet.py, herdr_tools.py), and docs (CONTRIBUTING.md, LICENSE, PROJECT.md, TASK_QUEUE.md).
   * Confirmed .env.example contains only non-sensitive placeholders.
 
 [PHASE 3: Git Hygiene & Ignored Files Verification]
@@ -55,7 +55,7 @@ Timestamp: 2026-10-03T06:38:00Z
 Target: Empirical verification of remediation items across plists, secret scanning, gitignore, packaging metadata, and regression suite.
 
 1. Plist Secret Verification:
-   - Evaluated com.user.first-mate.plist and com.user.golem.plist against slack_app, slack_bot, and gemini token regexes.
+   - Evaluated com.user.golem.plist and com.user.golem.plist against slack_app, slack_bot, and gemini token regexes.
    - Result: 0 live credentials remain; all replaced with clean placeholders.
 
 2. Comprehensive Tracked Secret Scan:

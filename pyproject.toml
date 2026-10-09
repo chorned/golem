@@ -49,12 +49,11 @@ dev = [
 
 [project.scripts]
 golem = "golem.cli:main"
-first-mate = "golem.cli:main"
 
 [tool.setuptools]
 py-modules = ["app"]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["golem*", "first_mate*"]
+include = ["golem*"]
 

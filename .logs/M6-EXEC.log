@@ -28,18 +28,18 @@ Lineage Invariant:
 [PHASE 3: Daemon Runtime Plists & CLI Entrypoint Validation]
 - Plist Linting:
   * plutil -lint com.user.golem.plist -> com.user.golem.plist: OK
-  * plutil -lint com.user.first-mate.plist -> com.user.first-mate.plist: OK
+  * plutil -lint com.user.golem.plist -> com.user.golem.plist: OK
 - CLI Entrypoint Validation:
   * ./.venv/bin/golem --help -> Exit Code 0, options: -h, --help, --webUI/--webui
-  * ./.venv/bin/first-mate --help -> Exit Code 0, options: -h, --help, --webUI/--webui
+  * ./.venv/bin/golem --help -> Exit Code 0, options: -h, --help, --webUI/--webui
   * python3 -m golem.cli --help -> Exit Code 0, options: -h, --help, --webUI/--webui
 
 [PHASE 4: Launchd Daemon Runtime Kickstart & Health Verification]
-- Service Target: gui/502/com.user.first-mate
+- Service Target: gui/502/com.user.golem
 - Pre-flight Check:
-  * launchctl print gui/502/com.user.first-mate: Active (running)
+  * launchctl print gui/502/com.user.golem: Active (running)
 - Kickstart Command:
-  * launchctl kickstart -k -p gui/$(id -u)/com.user.first-mate
+  * launchctl kickstart -k -p gui/$(id -u)/com.user.golem
   * Output: service spawned with pid: 87424
 - Post-flight Log Verification (bot.err / bot.log):
   * Clean teardown of prior session, BlueBubbles transport, and Slack app.

@@ -14,6 +14,8 @@ Wraps Herdr's official Socket and CLI primitives:
 - herdr agent wait <name|pane_id> --until done --until idle
 - herdr agent read <name|pane_id> --lines <N>
 Integrates FrugaLLM routing and declarative worker catalog (.agents/workers.yaml).
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import os
@@ -37,7 +39,7 @@ class InfrastructureError(RuntimeError):
     """Raised when underlying infrastructure (Herdr, worktree, agent process) fails."""
     pass
 
-HOST_DIR = os.environ.get("FIRST_MATE_HOST_DIR", os.path.dirname(os.path.abspath(__file__)))
+HOST_DIR = os.environ.get("GOLEM_HOST_DIR", os.path.dirname(os.path.abspath(__file__)))
 PROJECT_ROOT = HOST_DIR
 DEFAULT_TARGET_REPO = os.environ.get("DEFAULT_TARGET_REPO", "/Users/hermes/projects/AGY")
 DEFAULT_WORKERS_YAML = os.path.join(HOST_DIR, ".agents", "workers.yaml")

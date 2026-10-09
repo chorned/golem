@@ -11,6 +11,8 @@ Verifies:
    verify no blocking or deadlocks occur.
 3. Fuzz test AgentEvent.from_ndjson() with 1,000 malformed, non-dict, and truncated payloads.
 4. Stream-json pipe synchronization and unhashable event_type behavior.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import os
@@ -47,7 +49,7 @@ class TestAgentM2EmpiricalChallenge(unittest.IsolatedAsyncioTestCase):
         """
         mock_bin = os.path.abspath("tests/mock_agy_proc.py")
         adapter = HeadlessAgentAdapter(
-            cwd="/Users/hermes/projects/first-mate",
+            cwd="/Users/hermes/projects/golem",
             agy_bin=mock_bin,
             env={"MOCK_AGY_MODE": "normal"},
         )
@@ -154,7 +156,7 @@ while True:
         os.chmod(tmp_path, 0o755)
 
         adapter = HeadlessAgentAdapter(
-            cwd="/Users/hermes/projects/first-mate",
+            cwd="/Users/hermes/projects/golem",
             agy_bin=tmp_path,
         )
 
@@ -290,7 +292,7 @@ while True:
         """
         mock_bin = os.path.abspath("tests/mock_agy_proc.py")
         adapter = HeadlessAgentAdapter(
-            cwd="/Users/hermes/projects/first-mate",
+            cwd="/Users/hermes/projects/golem",
             agy_bin=mock_bin,
             env={"MOCK_AGY_MODE": "normal"},
         )

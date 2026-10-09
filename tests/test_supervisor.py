@@ -11,6 +11,8 @@ Comprehensive unit test suite for AgentSupervisor and Tiered Blast-Radius Safety
 - Tier 3 Mutating Production / Merging / Push Safety Gate:
   * Rejects simple `go` or 👍 reaction.
   * Strictly requires two-key explicit confirmation (`approve` or `do it`).
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import os

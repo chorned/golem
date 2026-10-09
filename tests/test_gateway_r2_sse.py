@@ -9,6 +9,8 @@ Validates the 5 Hand B Auditor Invariants:
   3. No Hanging Hands Invariant: Hands settled (hand_settle) and unregistered (unregister_active_hand) on success, error, and cancellation.
   4. Mouth Broadcast Invariant: mouth_briefing broadcasts exact {"briefing": clean_briefing, "model": model} upon Slack post.
   5. Thread Safety Invariant: Ingress and WebUI integration runs without event loop deadlock.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import os

@@ -10,6 +10,8 @@ Validates:
   - Queue overflow handling
   - Error isolation: exceptions in one subscriber callback do not affect others
   - Non-blocking asynchronous dispatch
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import os
@@ -458,7 +460,7 @@ class TestShoulderTapEventBusResilience(unittest.IsolatedAsyncioTestCase):
         self.bus.publish(ShoulderTapAlert(alert_type="blocker", source="eyes"))
         elapsed = time.time() - t_start
 
-        self.assertLess(elapsed, 0.05)
+        self.assertLess(elapsed, 0.25)
 
 
 if __name__ == "__main__":

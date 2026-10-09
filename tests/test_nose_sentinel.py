@@ -44,6 +44,8 @@ Test coverage:
      - Clean re-export of NoseSentinel and get_nose_model in golem.sensory.
      - app.nose_sentinel singleton existence and configuration.
      - app.py main() lifecycle start and stop hooks.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 from __future__ import annotations
@@ -528,7 +530,7 @@ class TestZeroRegexEvaluatorQuiescentGate(unittest.IsolatedAsyncioTestCase):
             category="crash_loop",
             summary="Gateway encountered unhandled RuntimeError crash loop",
             affected_nodes=["hermes"],
-            recommended_action="Restart launchd daemon com.user.first-mate",
+            recommended_action="Restart launchd daemon com.user.golem",
         )
 
         mock_llm = AsyncMock(return_value=expected_verdict)

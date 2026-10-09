@@ -8,7 +8,7 @@
 
 ## Hand A (Primary Actor) Scope
 - E2E Tests: Execute full 179 opaque-box test cases (`TEST_READY.md`).
-- Daemon Kickstart: `launchctl kickstart -k -p gui/$(id -u)/com.user.first-mate` (or `com.user.golem`).
+- Daemon Kickstart: `launchctl kickstart -k -p gui/$(id -u)/com.user.golem` (or `com.user.golem`).
 
 ## Hand B (Adversarial Auditor) Invariants
 1. 100% of 179 E2E tests pass under clean-room execution.

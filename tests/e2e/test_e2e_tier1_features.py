@@ -63,7 +63,7 @@ class TestTier1R1NamespaceAndLineage(unittest.TestCase):
             self.assertIsNotNone(mod, f"Submodule {mod_name} must be importable")
 
     def test_f02_dual_layer_compatibility_shim_identity(self):
-        """F02: first_mate shim imports resolve to golem modules with exact object identity."""
+        """F02: golem shim imports resolve to golem modules with exact object identity."""
         if not GOLEM_AVAILABLE:
             self.skipTest("Milestone M1 pending: dual-layer compatibility shim not yet active")
 
@@ -71,7 +71,7 @@ class TestTier1R1NamespaceAndLineage(unittest.TestCase):
         import golem
 
         # Test object identity across modules if shim is active
-        if hasattr(first_mate, "gateway") and hasattr(golem, "gateway"):
+        if hasattr(golem, "gateway") and hasattr(golem, "gateway"):
             import golem.gateway
             import golem.gateway
             self.assertIs(
@@ -101,13 +101,13 @@ class TestTier1R1NamespaceAndLineage(unittest.TestCase):
 
     def test_f04_launchd_dual_key_configuration(self):
         """F04: Launchd plist files exist and support dual-key service resolution."""
-        first_mate_plist = os.path.join(PROJECT_DIR, "com.user.first-mate.plist")
+        golem_plist = os.path.join(PROJECT_DIR, "com.user.golem.plist")
         golem_plist = os.path.join(PROJECT_DIR, "com.user.golem.plist")
 
-        # Legacy first-mate plist must exist
+        # Legacy golem plist must exist
         self.assertTrue(
-            os.path.exists(first_mate_plist),
-            "com.user.first-mate.plist must exist for backward compatibility"
+            os.path.exists(golem_plist),
+            "com.user.golem.plist must exist for backward compatibility"
         )
 
         # When M1 completes, com.user.golem.plist should also be provisioned
@@ -119,7 +119,7 @@ class TestTier1R1NamespaceAndLineage(unittest.TestCase):
         self.assertIn("com.user.golem", golem_content)
 
     def test_f05_packaging_entrypoints_and_metadata(self):
-        """F05: pyproject.toml or setup.py specifies golem and first-mate console scripts."""
+        """F05: pyproject.toml or setup.py specifies golem and golem console scripts."""
         pyproject_path = os.path.join(PROJECT_DIR, "pyproject.toml")
         setup_path = os.path.join(PROJECT_DIR, "setup.py")
 
@@ -165,7 +165,7 @@ class TestTier1R2PluggableHarness(unittest.TestCase):
 
         with patch.dict(os.environ, {}, clear=True):
             os.environ.pop("GOLEM_DEFAULT_HAND_WORKER", None)
-            os.environ.pop("FIRST_MATE_HAND_WORKER", None)
+            os.environ.pop("GOLEM_HAND_WORKER", None)
             worker = cfg.get_default_hand_worker()
             if worker == "antigravity":
                 self.skipTest("Milestone M2 pending: get_default_hand_worker() not yet standardized from legacy 'antigravity' to 'agy'")

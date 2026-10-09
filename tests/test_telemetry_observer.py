@@ -3,6 +3,8 @@
 tests/test_telemetry_observer.py
 Comprehensive unit tests for First Mate conversational milestone telemetry,
 process filtering, scrollback noise suppression, and zero-token status intercepts.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import os

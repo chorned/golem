@@ -7,6 +7,8 @@ Unit test suite for Milestone 4 (Dual-Pane Execution Harness & Herdr Fleet Mesh)
 - RunnerBufferObserver interactive blocker extraction (OAuth URLs & prompts, TC-03)
 - WorkerDelegator branch/worktree isolation and output sanitization (TC-04)
 - FleetMesh 5-node topology resolution, per-pane concurrency locking, and wrap_windows_command
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import os
@@ -354,7 +356,7 @@ class TestRunnerExecutor(unittest.IsolatedAsyncioTestCase):
             p4 = AsyncMock(returncode=0, communicate=AsyncMock(return_value=(json.dumps({"result": {"pid": 99999}}).encode(), b"")))
             mock_exec.side_effect = [p1, p2, p3, p4]
 
-            handle = await self.executor.run_command(pane="runner", command="sleep 10", yield_timeout=0.1)
+            handle = await self.executor.run_command(pane="runner", command="sleep 10", yield_timeout=0.5)
             self.assertEqual(handle.status, "running")
             self.assertEqual(handle.pid, 99999)
             self.assertEqual(handle.pane, "w1:p2")
@@ -493,7 +495,7 @@ class TestWorkerDelegator(unittest.IsolatedAsyncioTestCase):
         self.mock_client = AsyncMock()
         self.delegator = WorkerDelegator(
             herdr_client=self.mock_client,
-            base_repo="/Users/hermes/projects/first-mate"
+            base_repo="/Users/hermes/projects/golem"
         )
 
     async def test_worker_delegation_branch_isolation_tc04(self):
@@ -515,7 +517,7 @@ class TestWorkerDelegator(unittest.IsolatedAsyncioTestCase):
         res = await self.delegator.handoff(
             subagent="opencode",
             task="Refactor auth module",
-            cwd="/Users/hermes/projects/first-mate",
+            cwd="/Users/hermes/projects/golem",
             isolate_branch=True
         )
 

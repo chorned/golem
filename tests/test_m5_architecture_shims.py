@@ -9,6 +9,8 @@ Verifies:
 2. Root module compatibility shims and canonical identity preservation (assertIs).
 3. app.py dual-track architecture: production daemon components + all 32 legacy symbols.
 4. Launchd plist environment configuration and syntax.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import os
@@ -30,18 +32,18 @@ import herdr_client
 import supervisor
 import telemetry_observer
 import app
-import first_mate.execution
-import first_mate.transport.normalizer as canonical_norm
-import first_mate.transport.chunker as canonical_chunker
-from first_mate.gateway import SessionRouter, SessionHandle, SessionState
-from first_mate.gateway.ingress import IngressGateway
-from first_mate.execution.harness import DualPaneHarness
+import golem.execution
+import golem.transport.normalizer as canonical_norm
+import golem.transport.chunker as canonical_chunker
+from golem.gateway import SessionRouter, SessionHandle, SessionState
+from golem.gateway.ingress import IngressGateway
+from golem.execution.harness import DualPaneHarness
 
 
 class TestExecutionDecouplingAndCircularImports(unittest.TestCase):
-    """Verifies Task 1: Decoupling first_mate.execution and eliminating circular imports."""
+    """Verifies Task 1: Decoupling golem.execution and eliminating circular imports."""
 
-    def test_first_mate_execution_exports(self):
+    def test_golem_execution_exports(self):
         """Verifies canonical execution tools are properly exported."""
         expected_symbols = [
             "DualPaneHarness",
@@ -60,15 +62,15 @@ class TestExecutionDecouplingAndCircularImports(unittest.TestCase):
         ]
         for sym in expected_symbols:
             self.assertTrue(
-                hasattr(first_mate.execution, sym),
-                f"first_mate.execution missing required export: {sym}"
+                hasattr(golem.execution, sym),
+                f"golem.execution missing required export: {sym}"
             )
 
     def test_no_circular_import_between_execution_and_herdr_tools(self):
         """Verifies cross-import in isolated namespace triggers no circular import deadlock."""
         import importlib
-        # Re-importing first_mate.execution then herdr_tools
-        exec_mod = importlib.import_module("first_mate.execution")
+        # Re-importing golem.execution then herdr_tools
+        exec_mod = importlib.import_module("golem.execution")
         tools_mod = importlib.import_module("herdr_tools")
         self.assertIsNotNone(exec_mod)
         self.assertIsNotNone(tools_mod)
@@ -277,17 +279,17 @@ class TestAppArchitectureAndCompatibility(unittest.TestCase):
 
 
 class TestLaunchdSupervisionPlist(unittest.TestCase):
-    """Verifies Task 4: com.user.first-mate.plist environment configuration."""
+    """Verifies Task 4: com.user.golem.plist environment configuration."""
 
     def setUp(self):
-        self.plist_path = os.path.join(PROJECT_DIR, "com.user.first-mate.plist")
+        self.plist_path = os.path.join(PROJECT_DIR, "com.user.golem.plist")
 
     def test_plist_file_exists_and_parses(self):
         """Verifies plist is syntactically valid XML/plist."""
         self.assertTrue(os.path.isfile(self.plist_path))
         with open(self.plist_path, "rb") as f:
             data = plistlib.load(f)
-        self.assertEqual(data.get("Label"), "com.user.first-mate")
+        self.assertEqual(data.get("Label"), "com.user.golem")
         self.assertTrue(data.get("RunAtLoad"))
         self.assertTrue(data.get("KeepAlive"))
 
@@ -297,8 +299,8 @@ class TestLaunchdSupervisionPlist(unittest.TestCase):
             data = plistlib.load(f)
         env = data.get("EnvironmentVariables", {})
         self.assertEqual(env.get("PYTHONUNBUFFERED"), "1")
-        self.assertEqual(env.get("DAEMON_LABEL"), "com.user.first-mate")
-        self.assertEqual(env.get("PYTHONPATH"), "/Users/hermes/projects/first-mate")
+        self.assertEqual(env.get("DAEMON_LABEL"), "com.user.golem")
+        self.assertEqual(env.get("PYTHONPATH"), "/Users/hermes/projects/golem")
         self.assertEqual(env.get("AGY_BIN"), "/Users/hermes/.local/bin/agy")
         self.assertEqual(env.get("DUAL_PANE_WORKSPACE"), "1")
         self.assertEqual(env.get("DEFAULT_TARGET_REPO"), "/Users/hermes/projects/AGY")

@@ -24,6 +24,8 @@ Validates the 5 Core Requirements of Deliverable R4:
   5. Pane 1 and Non-Runner Pane Isolation:
      - Commands yielding in Pane 1 (liaison) or non-runner panes do NOT attach EyesTaskObserver
      - Strict pane discriminator distinguishes Pane 2 (runner) from other panes
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 from __future__ import annotations

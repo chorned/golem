@@ -57,9 +57,9 @@ python3 -m unittest tests/e2e/test_e2e_tier4_scenarios.py
 
 ### R1. Package Namespace Migration & Lineage Invariant
 - [x] **F01 (Canonical Namespace)**: `golem` package importable with `gateway`, `agent`, `execution`, `transport`, `sensory` (`test_f01_canonical_golem_namespace_structure`).
-- [x] **F02 (Dual-Layer Shim Identity)**: `first_mate` shim imports resolve to `golem` with `assertIs` object identity (`test_f02_dual_layer_compatibility_shim_identity`).
+- [x] **F02 (Facade Object Identity)**: Subpackage facade imports resolve to canonical `golem` with `assertIs` object identity (`test_f02_dual_layer_compatibility_shim_identity`).
 - [x] **F03 (Lineage Invariant Codification)**: Lineage Invariant cited across manifests and docstrings (`test_f03_lineage_invariant_codification`).
-- [x] **F04 (Launchd Dual-Key)**: Launchd plist definitions support both `com.user.golem` and `com.user.first-mate` (`test_f04_launchd_dual_key_configuration`).
+- [x] **F04 (Launchd Service Definition)**: Launchd plist definition supports `com.user.golem` (`test_f04_launchd_dual_key_configuration`).
 - [x] **F05 (Packaging Entrypoints)**: `pyproject.toml` / `setup.py` bundling entry points (`test_f05_packaging_entrypoints_and_metadata`).
 
 ### R2. Pluggable Hand Execution Harness (AGY Default)
@@ -97,7 +97,7 @@ python3 -m unittest tests/e2e/test_e2e_tier4_scenarios.py
 During boundary testing (Tier 2), the following defect was discovered in the existing codebase:
 
 - **Defect ID**: `DEFECT-CONFIG-01`
-- **Location**: `/Users/hermes/projects/first-mate/golem/config.py:get_default_hand_worker` (lines 68–80)
+- **Location**: `/Users/hermes/projects/golem/golem/config.py:get_default_hand_worker` (lines 68–80)
 - **Symptom**: When `GOLEM_DEFAULT_HAND_WORKER` is set to a whitespace-only string (e.g. `"   "`), the function returns an empty string `""` rather than falling back to default `"agy"`.
 - **Root Cause**: `val = os.environ.get(...)` evaluates a whitespace string as truthy, bypassing `if not val:`, and subsequently calls `(val or "agy").lower().strip()`, which strips to `""`.
 - **Escalation**: Recommended fix for M2 implementer:

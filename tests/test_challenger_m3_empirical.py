@@ -8,6 +8,8 @@ Covers:
 2. Status Delta Calculator (laptop sleep benign vs VPS critical, root disk pressure thresholds, container drops)
 3. Tailscale Probe Failures (corrupted JSON, non-zero exit code, timeout, state transitions)
 4. Shoulder Tap Bus & Ingress Gateway Handshake (publication, subscriber exception isolation, IngressGateway delivery)
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 from __future__ import annotations

@@ -7,6 +7,8 @@ Empirical stress tests for SessionRouter and DualPaneHarness provisioning under:
 3. Rapid creation/teardown cycles and concurrent teardown races.
 4. Active turn streaming during teardown/reaper sweeps.
 5. Workspace collisions, namespace isolation, and failed session replacement races.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import asyncio

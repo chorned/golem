@@ -28,12 +28,12 @@ Target Components: .github/workflows/ci.yml, LICENSE, CONTRIBUTING.md, .github/I
 [PHASE 3: Contribution Guidelines & Developer Onboarding]
 - Created CONTRIBUTING.md:
   * Step-by-step developer onboarding: virtual environment (.venv), pip editable install (pip install -e ".[dev]").
-  * Code layout breakdown across golem/, first_mate/, tests/, and .github/.
+  * Code layout breakdown across golem/, golem/, tests/, and .github/.
   * Dual-layer compatibility shim invariant maintenance rules:
     - _FirstMateAliasFinder on sys.meta_path.
-    - Object identity guarantee (sys.modules["first_mate.X"] is sys.modules["golem.X"]).
+    - Object identity guarantee (sys.modules["golem.X"] is sys.modules["golem.X"]).
     - Mock patch bidirectional fidelity.
-    - Mandatory static mirror files in first_mate/ for every golem/ module.
+    - Mandatory static mirror files in golem/ for every golem/ module.
   * Full testing instructions (unit tests, E2E tests, coverage).
   * Zero secrets and credentials policy.
   * PR guidelines, branch naming conventions, commit guidelines.
@@ -66,10 +66,10 @@ Transitioning M4-BUILD to [IN_AUDIT: Hand B].
 
 [ITERATION 2: REMEDIATION & HARMONIZATION]
 Timestamp: 2026-10-03T06:35:00Z
-Target Components: com.user.first-mate.plist, com.user.golem.plist, tests/test_ci_and_repo_hygiene.py, .gitignore, pyproject.toml, .github/workflows/ci.yml
+Target Components: com.user.golem.plist, com.user.golem.plist, tests/test_ci_and_repo_hygiene.py, .gitignore, pyproject.toml, .github/workflows/ci.yml
 
 1. Sanitized Live Credentials in Launchd Plists:
-   - Sanitized com.user.first-mate.plist and com.user.golem.plist: replaced all active unmasked credentials (SLACK_APP_TOKEN, SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET, GEMINI_API_KEY, BLUEBUBBLES_PASSWORD) with clean YOUR_* placeholders.
+   - Sanitized com.user.golem.plist and com.user.golem.plist: replaced all active unmasked credentials (SLACK_APP_TOKEN, SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET, GEMINI_API_KEY, BLUEBUBBLES_PASSWORD) with clean YOUR_* placeholders.
    - Embedded lineage invariant XML comments: "<!-- Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh. -->".
 
 2. Hardened Secret Scanner & Expanded Audit Scope:
@@ -77,7 +77,7 @@ Target Components: com.user.first-mate.plist, com.user.golem.plist, tests/test_c
      * slack_app_token: re.compile(r"xapp-[0-9A-Za-z-]{20,}")
      * gemini_api_key: re.compile(r"(?:AQ\.[0-9A-Za-z-_]{40,}|AIza[0-9A-Za-z-_]{35})")
      * private_key: re.compile(r"-----BEGIN (?:[A-Z0-9_-]+ )?PRIVATE KEY(?: BLOCK)?-----")
-   - Expanded scan_targets to audit all tracked git files (via git ls-files) and mandatory root targets (com.user.first-mate.plist, com.user.golem.plist, pyproject.toml, etc.).
+   - Expanded scan_targets to audit all tracked git files (via git ls-files) and mandatory root targets (com.user.golem.plist, com.user.golem.plist, pyproject.toml, etc.).
    - Added synthetic detection test cases covering xapp tokens, Gemini keys, encrypted private keys, OpenSSH keys, and PGP private key blocks.
 
 3. Broadened .gitignore Multi-Environment Secret Rules:

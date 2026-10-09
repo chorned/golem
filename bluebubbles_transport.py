@@ -264,7 +264,7 @@ class BlueBubblesClient:
     def __init__(self, transport: "BlueBubblesTransport", chat_guid: str, history_dir: Optional[str] = None):
         self.transport = transport
         self.chat_guid = chat_guid
-        self.history_dir = history_dir or os.environ.get("BLUEBUBBLES_HISTORY_DIR") or os.path.expanduser("~/.gemini/first-mate/imessage_history")
+        self.history_dir = history_dir or os.environ.get("BLUEBUBBLES_HISTORY_DIR") or os.path.expanduser("~/.gemini/golem/imessage_history")
         self.history: List[Dict[str, Any]] = []
         self.last_inbound_guid: Optional[str] = None
         self.last_dispatched_guid: Optional[str] = None

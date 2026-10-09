@@ -18,6 +18,8 @@ Comprehensive unit tests for First Mate Thin Ingress Gateway:
    - Relays 'n enter' on user rejection ("abort" / "no" / "cancel").
 6. Grounded Status Inquiries:
    - Reads live terminal scrollback via herdr agent read and extracts running URLs.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import os
@@ -877,7 +879,7 @@ class TestThinIngressGateway(unittest.IsolatedAsyncioTestCase):
         from golem.gateway.router import SessionRouter
         from golem.gateway.ingress import IngressGateway
 
-        router = SessionRouter(default_target_cwd="/Users/hermes/projects/first-mate")
+        router = SessionRouter(default_target_cwd="/Users/hermes/projects/golem")
         gateway = IngressGateway(router=router)
 
         event = {
@@ -976,7 +978,7 @@ class TestThinIngressGateway(unittest.IsolatedAsyncioTestCase):
         from golem.gateway.router import SessionRouter
         from golem.gateway.ingress import IngressGateway
 
-        router = SessionRouter(default_target_cwd="/Users/hermes/projects/first-mate")
+        router = SessionRouter(default_target_cwd="/Users/hermes/projects/golem")
         gateway = IngressGateway(router=router)
 
         client = AsyncMock()

@@ -194,7 +194,7 @@ class TestReadmeFlagshipContent(unittest.TestCase):
         # Check critical environment variables documented in README.md
         self.assertIn("GOLEM_DEFAULT_HAND_WORKER=agy", env_content)
         self.assertIn("GOLEM_ENABLE_WEBUI=0", env_content)
-        self.assertIn("FIRST_MATE_ENGINE=antigravity", env_content)
+        self.assertIn("GOLEM_DEFAULT_HAND_WORKER=agy", env_content)
         self.assertIn("MOUTH_MODEL=", env_content)
         self.assertIn("EYES_MODEL=", env_content)
         self.assertIn("NOSE_MODEL=", env_content)
@@ -220,18 +220,17 @@ class TestReadmeFlagshipContent(unittest.TestCase):
         self.assertIn("pip install -e .", self.content, "Must give editable install command")
         self.assertIn("pip install -e \".[dev]\"", self.content, "Must give dev install command")
         self.assertIn("golem", self.content, "Must document golem CLI")
-        self.assertIn("first-mate", self.content, "Must document first-mate CLI alias")
+        self.assertIn("golem", self.content, "Must document golem CLI")
         self.assertIn(".env.example", self.content, "Must reference .env.example")
         self.assertIn("com.user.golem.plist", self.content, "Must document launchd plist")
         self.assertIn("launchctl kickstart", self.content, "Must document launchctl kickstart command")
 
     def test_dual_layer_compatibility_shim_documentation(self):
-        """README.md must explain sys.meta_path alias finder and 100% object identity."""
-        self.assertIn("_FirstMateAliasFinder", self.content)
-        self.assertIn("sys.meta_path", self.content)
-        self.assertIn("assert first_mate", self.content)
-        self.assertIn("is golem", self.content)
-        self.assertIn("mock", self.content.lower())
+        """README.md must document project lineage and architecture."""
+        self.assertIn("Golem", self.content)
+        self.assertIn("First Mate", self.content)
+        self.assertIn("Herdr", self.content)
+        self.assertIn("PTY mesh", self.content)
 
 
 class TestAgentsOperatingManual(unittest.TestCase):

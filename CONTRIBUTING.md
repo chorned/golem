@@ -16,8 +16,8 @@ Golem requires **Python 3.11** or newer (fully tested on Python 3.11, 3.12, 3.13
 
 1. **Clone the Repository:**
    ```bash
-   git clone https://github.com/kunchenguid/first-mate.git
-   cd first-mate
+   git clone https://github.com/kunchenguid/golem.git
+   cd golem
    ```
 
 2. **Create and Activate a Virtual Environment:**
@@ -35,8 +35,6 @@ Golem requires **Python 3.11** or newer (fully tested on Python 3.11, 3.12, 3.13
 4. **Verify Installation:**
    ```bash
    golem --help
-   # Or using the backwards-compatible entrypoint:
-   first-mate --help
    ```
 
 ---
@@ -46,7 +44,7 @@ Golem requires **Python 3.11** or newer (fully tested on Python 3.11, 3.12, 3.13
 Golem follows a tripartite sensory and execution architecture:
 
 ```
-first-mate/
+golem/
 ├── golem/                    # Canonical implementation package
 │   ├── gateway/              # Ingress routing, session state, thread lifecycle
 │   │   ├── ingress.py        # Front-of-House Mouth router & Slack event handling
@@ -78,7 +76,6 @@ first-mate/
 │   ├── config.py             # Dual-key environment configuration
 │   └── cli.py                # Command-line interface entrypoint
 │
-├── first_mate/               # Dual-layer compatibility shim mirroring golem/
 ├── tests/                    # Comprehensive unit, adversarial, and stress tests
 ├── tests/e2e/                # Multi-tier end-to-end acceptance tests
 ├── .github/                  # CI/CD workflows and issue templates
@@ -88,19 +85,19 @@ first-mate/
 
 ---
 
-## 3. Dual-Layer Shim Invariant Maintenance
+## 3. Architecture & Compatibility Invariant Maintenance
 
-Golem preserves full backward compatibility with legacy `first_mate` installations, launchd supervisors (`com.user.first-mate.plist`), and external scripts.
+Golem preserves backward compatibility across flattened modules and subpackage facades.
 
 ### The Contract
-1. **Dynamic Alias Finder:**  
-   `_FirstMateAliasFinder` is registered in `sys.meta_path`. When any code imports `first_mate.<submodule>`, it dynamically resolves to and aliases `golem.<submodule>`.
+1. **Module Flattening:**  
+   Core modules reside directly under `golem/` (`golem.ingress`, `golem.mouth`, `golem.harness`, `golem.bus`, etc.).
 2. **Object Identity (`assertIs`):**  
-   `sys.modules["first_mate.<submodule>"] is sys.modules["golem.<submodule>"]` must hold 100% true across all modules.
+   `golem.ingress.IngressGateway is golem.gateway.ingress.IngressGateway` holds 100% true across all facade modules.
 3. **Mock Patch Fidelity:**  
-   Patching `first_mate.gateway.ingress.call_gemini_api` must mutate the exact same object in memory as `golem.gateway.ingress.call_gemini_api`.
-4. **Static Mirror Files:**  
-   Every new module or submodule created in `golem/` MUST have a corresponding static mirror file in `first_mate/` containing `from golem.<submodule> import *`. This ensures IDE auto-completion and static analysis tools resolve both namespaces without errors.
+   Patching `golem.gateway.ingress.call_gemini_api` mutates the exact same object in memory as `golem.ingress.call_gemini_api`.
+4. **Compatibility Facades:**  
+   Subpackage modules re-export from flattened modules to preserve backward compatibility for legacy imports.
 
 ---
 
@@ -160,7 +157,7 @@ All contributions must pass the test suite with zero failures and zero regressio
 3. **Pre-Submission Checklist:**
    - [ ] Created feature branch from `main`.
    - [ ] Added comprehensive unit tests covering new logic or bug fixes.
-   - [ ] Maintained dual-layer shim compatibility (added static mirror files in `first_mate/` if needed).
+   - [ ] Maintained module compatibility across facades.
    - [ ] Ran `python3 -m unittest discover tests` and verified 100% test pass rate.
    - [ ] Verified zero sensitive credentials or tokens in tracked files.
    - [ ] Embedded the lineage invariant in new module docstrings where applicable.

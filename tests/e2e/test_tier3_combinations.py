@@ -24,6 +24,8 @@ Covers Pairwise & Multi-Feature Interactions:
 
 All tests follow opaque-box, requirement-driven test design derived from ORIGINAL_REQUEST.md,
 PROJECT.md, and TEST_INFRA.md.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 from __future__ import annotations
@@ -470,8 +472,8 @@ class TestCombination2IngressDualPaneBufferObserver(unittest.IsolatedAsyncioTest
             (0, json.dumps({"result": {"pane": {"pane_id": "runner"}}}), ""),
         ]
 
-        harness = DualPaneHarness(herdr_client=mock_herdr, default_cwd="/Users/hermes/projects/first-mate")
-        liaison_agent, runner_pane = await harness.provision_dual_pane("sess-c2", "/Users/hermes/projects/first-mate")
+        harness = DualPaneHarness(herdr_client=mock_herdr, default_cwd="/Users/hermes/projects/golem")
+        liaison_agent, runner_pane = await harness.provision_dual_pane("sess-c2", "/Users/hermes/projects/golem")
 
         self.assertEqual(liaison_agent, "sess-c2-liaison")
         self.assertEqual(runner_pane, "runner")
@@ -817,7 +819,7 @@ class TestCombination4WorkerDelegationFleetMeshNormalizer(unittest.IsolatedAsync
             (0, "All refactoring tasks completed cleanly.\nTests passing 100%.", ""),
         ]
 
-        delegator = WorkerDelegator(herdr_client=mock_herdr, base_repo="/Users/hermes/projects/first-mate")
+        delegator = WorkerDelegator(herdr_client=mock_herdr, base_repo="/Users/hermes/projects/golem")
         res = await delegator.handoff(
             subagent="opencode",
             task="Refactor auth middleware to use JWT",
@@ -942,7 +944,7 @@ class TestCombination4WorkerDelegationFleetMeshNormalizer(unittest.IsolatedAsync
             "⠙ Test run completed.\n"
             "\x1b[32m✔ Successfully updated auth middleware.\x1b[0m\n"
             "❯ git status\n"
-            "Modified files: first_mate/gateway/ingress.py\n"
+            "Modified files: golem/gateway/ingress.py\n"
         )
 
         cleaned = sanitize_worker_output(raw_worker_buffer)
@@ -965,7 +967,7 @@ class TestCombination4WorkerDelegationFleetMeshNormalizer(unittest.IsolatedAsync
 
         # Verified genuine substantive summary preserved
         self.assertIn("Successfully updated auth middleware.", cleaned)
-        self.assertIn("Modified files: first_mate/gateway/ingress.py", cleaned)
+        self.assertIn("Modified files: golem/gateway/ingress.py", cleaned)
 
     async def test_worktree_isolation_failure_handled_gracefully(self):
         """
@@ -1083,7 +1085,7 @@ class TestCombination5DualTrackAppAndCompatibilityShims(unittest.IsolatedAsyncio
     def test_root_compatibility_shims_preserve_canonical_identities(self):
         """
         R5: Root compatibility shims preserve exact object identity (assertIs)
-        with their canonical first_mate implementations.
+        with their canonical golem implementations.
         """
         import golem.transport.normalizer as canon_norm
         import golem.transport.chunker as canon_chunk

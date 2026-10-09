@@ -2,6 +2,8 @@
 """
 tests/test_normalizer.py
 Unit tests for outbound normalizer (TUI debris stripping and CommonMark to Slack mrkdwn transpiler).
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import unittest

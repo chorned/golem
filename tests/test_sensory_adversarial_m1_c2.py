@@ -12,6 +12,8 @@ Adversarial Verification Suite for Milestone 1 (Challenger 2):
      without ANSI escape codes or CommonMark ATX headers (###).
   5. Reaction lifecycle swaps (:warning: for blockers/anomalies, :white_check_mark: for success).
   6. Sub-second out-of-band mid-stream latency (<1.0s) and fault tolerance under null/corrupted state.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 from __future__ import annotations
@@ -188,7 +190,7 @@ class TestSensoryAdversarialM1Challenger2(unittest.IsolatedAsyncioTestCase):
             self.gateway._call_gemini_api = fake_gemini_api
 
             mock_session = MagicMock()
-            mock_session.target_cwd = "/Users/hermes/projects/first-mate"
+            mock_session.target_cwd = "/Users/hermes/projects/golem"
 
             await self.gateway._handle_mouth_turn(
                 session=mock_session,
@@ -302,7 +304,7 @@ class TestSensoryAdversarialM1Challenger2(unittest.IsolatedAsyncioTestCase):
             self.gateway._call_gemini_api = fake_gemini_api
 
             mock_session = MagicMock()
-            mock_session.target_cwd = "/Users/hermes/projects/first-mate"
+            mock_session.target_cwd = "/Users/hermes/projects/golem"
             mock_session.get_runner_status = AsyncMock(return_value={
                 "status": "running",
                 "command": "npm test",

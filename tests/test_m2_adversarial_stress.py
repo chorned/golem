@@ -31,6 +31,8 @@ Adversarial Challenge Matrix:
    - Abrupt cancellation of backstage task while streaming deltas, verifying guaranteed settlement and cleanup.
    - High-velocity TextDeltaEvent streaming through _execute_backstage_task.
    - Edge-case payloads in _broadcast_mouth_briefing (empty, unicode, model=None).
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 from __future__ import annotations
@@ -356,7 +358,10 @@ class TestMultiThreadedEventBusPublishing(unittest.IsolatedAsyncioTestCase):
                 source="eyes",
             ))
 
-        await asyncio.sleep(0.1)
+        for _ in range(50):
+            if len(async_received) >= 10:
+                break
+            await asyncio.sleep(0.02)
         self.assertEqual(len(sync_received), 10)
         self.assertEqual(len(async_received), 10)
 

@@ -15,7 +15,7 @@ First Mate decomposes cognition and execution into four specialized organs:
    - **Autonomous Synthesis:** Transforms structured JSON tool outputs received via `functionResponse` into concise, high-signal executive briefings in Slack mrkdwn (`*bold*`, inline `code`, clean bullets). Zero regex gates, zero canned templates.
    - **Concurrency:** Remains available to converse mid-stream while commands execute backstage, grounding out-of-band responses in cached sensory state with sub-second latency (<1s).
 
-2. **The Hands (Worker Engine — `FIRST_MATE_ENGINE`):**
+2. **The Hands (Worker Engine — `GOLEM_ENGINE`):**
    - **Role:** Backstage execution engine running silently in Pane 2 (the runner).
    - **Tools & Mechanics:** Executes deterministic commands, shell scripts, builds, Git operations, and test suites across fleet nodes (`hermes`, `desktop-pc`, `personal-laptop`, `oci-machine`) via Herdr mesh.
    - **Silence:** Never emits raw stdout/stderr, terminal escape codes, ANSI colors, prompt echoes, or curses widgets directly to Slack.

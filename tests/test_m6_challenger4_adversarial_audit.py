@@ -9,6 +9,8 @@ Adversarially validates:
 - TC-03: Dual-pane runner execution yield <=3.0s, buffer scraping for OAuth URLs & prompts, liaison responsiveness.
 - TC-04: Isolated worker delegation in dedicated worktree/branch, base repo protection, scratchpad & chrome stripping.
 - TC-05: Wire normalization (0 ATX #, 0 **, 0 VT100, 0 ANSI, Slack <url|label>) & boundary-aware chunking preserving fences.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 from __future__ import annotations
@@ -354,7 +356,7 @@ class TestAdversarialTC04WorkerDelegation(unittest.IsolatedAsyncioTestCase):
             (0, raw_worker_terminal, ""),
         ]
 
-        delegator = WorkerDelegator(herdr_client=mock_herdr, base_repo="/Users/hermes/projects/first-mate")
+        delegator = WorkerDelegator(herdr_client=mock_herdr, base_repo="/Users/hermes/projects/golem")
         result = await delegator.handoff(
             subagent="opencode",
             task="Update router yield logic",

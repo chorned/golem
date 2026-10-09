@@ -4,6 +4,8 @@ tests/test_agent_drivers_adversarial.py
 Adversarial stress harness and empirical challenge suite for Milestone 2:
 CLI Portability Driver Architecture (BaseAgentDriver, AntigravityDriver,
 ClaudeCodeDriver, OpenCodeDriver, create_driver, config, and router integration).
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 from __future__ import annotations
@@ -525,11 +527,11 @@ class TestSessionRouterAndHandleIntegrationAdversarial(unittest.IsolatedAsyncioT
         router = SessionRouter(default_target_cwd="/tmp")
 
         # 1. Default -> antigravity
-        with patch.dict(os.environ, {"FIRST_MATE_ENGINE": "antigravity"}):
+        with patch.dict(os.environ, {"GOLEM_ENGINE": "antigravity"}):
             self.assertEqual(router.engine, "antigravity")
 
         # 2. Switch to claude_code
-        with patch.dict(os.environ, {"FIRST_MATE_ENGINE": "claude_code", "CLAUDE_CODE_MODEL": "claude-3-7-sonnet-latest"}):
+        with patch.dict(os.environ, {"GOLEM_ENGINE": "claude_code", "CLAUDE_CODE_MODEL": "claude-3-7-sonnet-latest"}):
             self.assertEqual(router.engine, "claude_code")
             s_claude, is_new = await router.get_or_create("C_CLAUDE", "T_CLAUDE")
             self.assertTrue(is_new)
@@ -537,7 +539,7 @@ class TestSessionRouterAndHandleIntegrationAdversarial(unittest.IsolatedAsyncioT
             await router.teardown("C_CLAUDE", "T_CLAUDE")
 
         # 3. Switch to opencode
-        with patch.dict(os.environ, {"FIRST_MATE_ENGINE": "opencode", "OPENCODE_MODEL": "deepseek/deepseek-chat"}):
+        with patch.dict(os.environ, {"GOLEM_ENGINE": "opencode", "OPENCODE_MODEL": "deepseek/deepseek-chat"}):
             self.assertEqual(router.engine, "opencode")
             s_open, is_new = await router.get_or_create("C_OPEN", "T_OPEN")
             self.assertTrue(is_new)

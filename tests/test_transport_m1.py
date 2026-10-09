@@ -34,6 +34,8 @@ Test coverage:
    - High-level SlackTransport façade (chunked sending, milestone factory)
 5. Compatibility Shim:
    - Root normalizer.py re-exports identical symbols to golem.transport.normalizer
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import asyncio
@@ -434,8 +436,11 @@ class TestMilestoneUpdater(unittest.IsolatedAsyncioTestCase):
         await updater.post_or_update(channel="C1", thread_ts="100.000", text="Rapid 2 (Final)")
         self.assertEqual(client.chat_update.call_count, 0)
 
-        # 4. Wait for debounce interval to flush trailing update
-        await asyncio.sleep(0.08)
+        # 4. Wait for debounce interval to flush trailing update (dynamic polling loop)
+        for _ in range(25):
+            if client.chat_update.call_count >= 1:
+                break
+            await asyncio.sleep(0.02)
         self.assertEqual(client.chat_update.call_count, 1)
         client.chat_update.assert_called_with(
             channel="C1",

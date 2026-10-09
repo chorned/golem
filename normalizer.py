@@ -4,10 +4,12 @@ Backwards-compatibility shim for golem.transport.normalizer.
 
 Legacy modules and tests importing directly from `normalizer` will receive
 identical functions and constants re-exported from `golem.transport.normalizer`.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
-from golem.transport.normalizer import *  # noqa: F401, F403
-from golem.transport.normalizer import (
+from golem.normalizer import *  # noqa: F401, F403
+from golem.normalizer import (
     sanitize_for_slack,
     transpile_markdown_to_mrkdwn,
     transpile_markdown_to_slack,

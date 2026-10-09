@@ -12,6 +12,8 @@ Covers Real-World Application Scenarios TC-01 through TC-05:
 
 All tests follow opaque-box, requirement-driven test design derived from
 ORIGINAL_REQUEST.md, PROJECT.md, and TEST_INFRA.md.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 from __future__ import annotations
@@ -270,7 +272,7 @@ class TestTier4TC01ConversationalInquiry(unittest.IsolatedAsyncioTestCase):
 
         def factory(cwd: str) -> HeadlessAgentAdapter:
             return HeadlessAgentAdapter(
-                cwd="/Users/hermes/projects/first-mate",
+                cwd="/Users/hermes/projects/golem",
                 agy_bin=mock_bin,
                 env={"MOCK_AGY_MODE": "normal"},
             )
@@ -432,7 +434,7 @@ class TestTier4TC02MultiTurnContinuity(unittest.IsolatedAsyncioTestCase):
 
         def factory(cwd: str) -> HeadlessAgentAdapter:
             return HeadlessAgentAdapter(
-                cwd="/Users/hermes/projects/first-mate",
+                cwd="/Users/hermes/projects/golem",
                 agy_bin=mock_bin,
                 env={"MOCK_AGY_MODE": "normal"},
             )
@@ -490,7 +492,7 @@ class TestTier4TC02MultiTurnContinuity(unittest.IsolatedAsyncioTestCase):
 
         def factory(cwd: str) -> HeadlessAgentAdapter:
             return HeadlessAgentAdapter(
-                cwd="/Users/hermes/projects/first-mate",
+                cwd="/Users/hermes/projects/golem",
                 agy_bin=mock_bin,
                 env={"MOCK_AGY_MODE": "normal"},
             )
@@ -782,7 +784,7 @@ class TestTier4TC04IsolatedWorkerDelegation(unittest.IsolatedAsyncioTestCase):
         self.mock_herdr = AsyncMock()
         self.delegator = WorkerDelegator(
             herdr_client=self.mock_herdr,
-            base_repo="/Users/hermes/projects/first-mate"
+            base_repo="/Users/hermes/projects/golem"
         )
 
     async def test_worker_delegation_isolated_worktree_and_branch(self) -> None:
@@ -804,7 +806,7 @@ class TestTier4TC04IsolatedWorkerDelegation(unittest.IsolatedAsyncioTestCase):
         res = await self.delegator.handoff(
             subagent="opencode",
             task="Refactor session router",
-            cwd="/Users/hermes/projects/first-mate",
+            cwd="/Users/hermes/projects/golem",
             isolate_branch=True
         )
 
@@ -831,7 +833,7 @@ class TestTier4TC04IsolatedWorkerDelegation(unittest.IsolatedAsyncioTestCase):
         res = await self.delegator.handoff(
             subagent="opencode",
             task="Task on broken worktree",
-            cwd="/Users/hermes/projects/first-mate",
+            cwd="/Users/hermes/projects/golem",
             isolate_branch=True
         )
 
@@ -844,7 +846,7 @@ class TestTier4TC04IsolatedWorkerDelegation(unittest.IsolatedAsyncioTestCase):
         """TC-04: Strips internal scratchpads, VT100 boxes, prompt echoes, braille spinners, and crumbs."""
         raw_worker_output = (
             "<scratchpad>\n"
-            "Analyzing AST differences in first_mate/gateway/router.py...\n"
+            "Analyzing AST differences in golem/gateway/router.py...\n"
             "Checking imports for session handles...\n"
             "</scratchpad>\n"
             "[scratchpad] calculating test coverage\n"
@@ -854,7 +856,7 @@ class TestTier4TC04IsolatedWorkerDelegation(unittest.IsolatedAsyncioTestCase):
             "│ Tests: 159 passing                           │\n"
             "╰──────────────────────────────────────────────╯\n"
             "⠋ Running test suite...\n"
-            "first_mate/transport/chunker.py...)\n"
+            "golem/transport/chunker.py...)\n"
             "42...)\n"
             "(ctrl+o to expand)\n"
             "❯ git status\n"
@@ -1116,7 +1118,7 @@ class TestTier4TC05WireNormalizationAndSanitization(unittest.TestCase):
             "│ Temperature: 42°C          │\n"
             "╰────────────────────────────╯\n"
             "⠋ Checking services...\n"
-            "first_mate/agent/adapter.py...)\n"
+            "golem/agent/adapter.py...)\n"
             "(ctrl+o to expand)\n"
             "❯ herdr fleet inspect\n"
             ">\n"

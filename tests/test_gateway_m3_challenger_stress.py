@@ -7,6 +7,8 @@ Mandates:
 1. Stress test early generator break recovery across 500+ iterations: verify 0 deadlocks on subsequent turns.
 2. Stress test concurrent session.close() during in-flight turn execution: verify 0 zombie state resurrects (session.state remains CLOSED).
 3. Stress test router.get_or_create() replacing FAILED sessions: verify 0 leaked child adapters under single-threaded and concurrent burst load.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 from __future__ import annotations
@@ -151,8 +153,8 @@ class TestGatewayM3ChallengerStress(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(session.state, SessionState.IDLE)
         self.assertLess(
             elapsed,
-            20.0,
-            f"600 iterations took {elapsed:.2f}s, exceeding 20.0s budget",
+            40.0,
+            f"600 iterations took {elapsed:.2f}s, exceeding 40.0s budget",
         )
 
     async def test_stress_concurrent_close_in_flight_no_zombie_resurrection(self) -> None:

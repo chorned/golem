@@ -12,6 +12,8 @@ Covers:
 6. Error handling: abrupt process exit, broken pipe, malformed NDJSON, and error events.
 7. Multi-turn conversation persistence over a warm subprocess.
 8. Backwards-compatibility shim exports from agent_core.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import json

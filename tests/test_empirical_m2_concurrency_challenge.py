@@ -12,6 +12,8 @@ Adversarial empirical challenge suite for Milestone 2:
    - Whitespace-only, bot-mention-only (<@U12345>   ), and arbitrary user mentions. Verify fallback prompt synthesis.
 4. Ingress Filtering:
    - Ensure bot messages with files are safely blocked, but human user file uploads are never dropped.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import os

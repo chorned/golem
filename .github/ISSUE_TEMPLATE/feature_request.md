@@ -24,7 +24,7 @@ Describe the solution you'd like to see implemented. Include interface contracts
 - **Front-of-House Mouth:** (Changes to conversation, tools, or briefing format)
 - **Backstage Hands:** (Changes to worker dispatch, subshell execution, or delegation)
 - **Sensory Plane (Eyes / Nose):** (Changes to buffer observation or health monitoring)
-- **Dual-Layer Shim Invariant:** (Impact on `first_mate` backward compatibility)
+- **Dual-Layer Shim Invariant:** (Impact on `golem` backward compatibility)
 
 ## Alternatives Considered
 A clear and concise description of any alternative solutions or features you've considered.

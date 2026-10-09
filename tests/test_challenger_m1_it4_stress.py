@@ -14,6 +14,8 @@ Adversarial Objectives:
    - Subprocess execution timeouts (>3.0s yield window)
    - Synchronous exceptions in stream initiation
    - Simulated socket drops and Slack API connection errors
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import os

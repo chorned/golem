@@ -3,6 +3,8 @@
 tests/test_no_mistakes.py
 Unit tests for no-mistakes automated review/testing gate,
 autonomous GitHub PR creation, and Tier 3 auto-merge execution.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import os

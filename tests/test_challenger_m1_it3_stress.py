@@ -20,6 +20,8 @@ Stress Test Coverage:
   4. Rapid Disconnects & Socket Resiliency (reactions_add, chat_postMessage, call_gemini_api)
   5. Terminal Reaction State Transitions (:white_check_mark:, :warning:, :x:, :boom:)
   6. High-Concurrency Stress Testing (50 concurrent tasks across 10 threads)
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import os

@@ -24,12 +24,12 @@ When Golem messages Carl on demand, Carl must be able to reply directly to the m
 
 1. **Slack Thread Continuation:**
    - When Golem sends a message, Slack returns a message timestamp (`ts`).
-   - Golem registers the session key `D0C2J1HKNN7:<ts>` in `~/.gemini/first-mate/sessions_registry.json`.
+   - Golem registers the session key `D0C2J1HKNN7:<ts>` in `~/.gemini/golem/sessions_registry.json`.
    - When Carl replies to the thread in Slack, Golem's `SessionRouter` matches `channel:thread_ts`, rehydrates the warm session, fetches previous thread context via `conversations_replies`, and answers within that exact thread.
 
 2. **iMessage Thread Continuation:**
    - When Golem sends an iMessage, BlueBubbles returns the message GUID.
-   - The message is recorded in Golem's local conversation history cache (`~/.gemini/first-mate/imessage_history/`).
+   - The message is recorded in Golem's local conversation history cache (`~/.gemini/golem/imessage_history/`).
    - When Carl replies (either using Apple's inline reply or in the 1:1 chat), Golem matches the history and provides `[Previous iMessage Conversation Context:]` to the Mouth LLM, maintaining full conversational grounding.
 
 ---

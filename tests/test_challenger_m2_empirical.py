@@ -7,6 +7,8 @@ Empirical Challenger Test Suite for Milestone 2:
 3. AST-based static string literal audit for model names in code.
 4. SessionRouter dynamic engine switching under concurrent requests.
 5. Adapter/Driver factory priority and SessionHandle driver/adapter dual-aliasing.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 from __future__ import annotations
@@ -120,7 +122,7 @@ class TestChallengerEnvironmentPrecedence(unittest.TestCase):
             "MOUTH_MODEL": "custom-mouth-model-v2",
             "EYES_MODEL": "custom-eyes-model-v2",
             "NOSE_MODEL": "custom-nose-model-v2",
-            "FIRST_MATE_ENGINE": "claude_code",
+            "GOLEM_ENGINE": "claude_code",
             "CLAUDE_CODE_MODEL": "claude-custom-opus",
             "ANTIGRAVITY_MODEL": "custom-agy-model",
             "OPENCODE_MODEL": "custom-deepseek-v3",
@@ -140,10 +142,10 @@ class TestChallengerEnvironmentPrecedence(unittest.TestCase):
         with patch.dict(os.environ, {"MOUTH_MODEL": "   gemini-custom-padded   \n"}):
             self.assertEqual(get_mouth_model(), "gemini-custom-padded")
 
-        with patch.dict(os.environ, {"FIRST_MATE_ENGINE": "   CLAUDE_CODE   "}):
+        with patch.dict(os.environ, {"GOLEM_ENGINE": "   CLAUDE_CODE   "}):
             self.assertEqual(get_active_engine(), "claude_code")
 
-        with patch.dict(os.environ, {"FIRST_MATE_ENGINE": "agy"}):
+        with patch.dict(os.environ, {"GOLEM_ENGINE": "agy"}):
             self.assertEqual(get_engine_model("agy"), get_engine_model("antigravity"))
 
     def test_legacy_gemini_model_fallback(self) -> None:
@@ -164,7 +166,7 @@ class TestChallengerASTStaticCodeAudit(unittest.TestCase):
         ]
 
         project_root = Path(__file__).resolve().parent.parent
-        targets = list((project_root / "first_mate").rglob("*.py"))
+        targets = list((project_root / "golem").rglob("*.py"))
         targets.append(project_root / "agent_core.py")
 
         violations: List[str] = []
@@ -205,26 +207,26 @@ class TestChallengerRouterDynamismAndConcurrency(unittest.IsolatedAsyncioTestCas
         self.tmp_dir.cleanup()
 
     async def test_dynamic_engine_switching(self) -> None:
-        """Verify new sessions reflect changes to FIRST_MATE_ENGINE in the environment."""
+        """Verify new sessions reflect changes to GOLEM_ENGINE in the environment."""
         router = SessionRouter(
             default_target_cwd="/tmp",
             registry_path=self.registry_file,
         )
 
         try:
-            with patch.dict(os.environ, {"FIRST_MATE_ENGINE": "antigravity"}):
+            with patch.dict(os.environ, {"GOLEM_ENGINE": "antigravity"}):
                 session1, is_new1 = await router.get_or_create("C1", "T1")
                 self.assertTrue(is_new1)
                 self.assertIsInstance(session1.driver, AntigravityDriver)
                 self.assertEqual(session1.driver.engine_name, "antigravity")
 
-            with patch.dict(os.environ, {"FIRST_MATE_ENGINE": "claude_code"}):
+            with patch.dict(os.environ, {"GOLEM_ENGINE": "claude_code"}):
                 session2, is_new2 = await router.get_or_create("C2", "T2")
                 self.assertTrue(is_new2)
                 self.assertIsInstance(session2.driver, ClaudeCodeDriver)
                 self.assertEqual(session2.driver.engine_name, "claude_code")
 
-            with patch.dict(os.environ, {"FIRST_MATE_ENGINE": "opencode"}):
+            with patch.dict(os.environ, {"GOLEM_ENGINE": "opencode"}):
                 session3, is_new3 = await router.get_or_create("C3", "T3")
                 self.assertTrue(is_new3)
                 self.assertIsInstance(session3.driver, OpenCodeDriver)
@@ -276,7 +278,7 @@ class TestChallengerRouterDynamismAndConcurrency(unittest.IsolatedAsyncioTestCas
 
             async def worker(idx: int):
                 chosen_engine = engines[idx % len(engines)]
-                with patch.dict(os.environ, {"FIRST_MATE_ENGINE": chosen_engine}):
+                with patch.dict(os.environ, {"GOLEM_ENGINE": chosen_engine}):
                     sess, is_new = await router.get_or_create(f"C_{idx}", f"T_{idx}")
                     return sess, is_new, chosen_engine
 
@@ -304,7 +306,7 @@ class TestChallengerRouterDynamismAndConcurrency(unittest.IsolatedAsyncioTestCas
         )
 
         try:
-            with patch.dict(os.environ, {"FIRST_MATE_ENGINE": "antigravity"}):
+            with patch.dict(os.environ, {"GOLEM_ENGINE": "antigravity"}):
                 sess, is_new = await router.get_or_create("C_AF", "T_AF")
                 self.assertIs(sess.driver, mock_adapter)
                 self.assertIs(sess.adapter, mock_adapter)

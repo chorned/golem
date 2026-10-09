@@ -12,6 +12,8 @@ Covers Feature Inventory:
 
 All tests follow opaque-box, requirement-driven test design derived from ORIGINAL_REQUEST.md,
 PROJECT.md, and TEST_INFRA.md.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import os

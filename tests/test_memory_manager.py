@@ -5,6 +5,8 @@ Unit tests for MemoryManager:
 - Verify log_event appends valid JSONL.
 - Verify get_recent_events retrieves tail in chronological order.
 - Verify get_latest_task_state consolidates milestones and retrieves correct status.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import os

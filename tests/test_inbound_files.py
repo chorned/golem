@@ -10,6 +10,8 @@ Unit tests for Milestone 2: Slack Inbound File Receipt & Staging:
 6. Fallback prompt synthesis for comment-less file uploads.
 7. Dual delivery deduplication between file_shared and message.file_share events.
 8. @app.event("file_shared") routing and empty-text ingress pass-through.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import os

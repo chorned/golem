@@ -6,6 +6,8 @@ Adversarial empirical test harness for Milestone 3 (file_transfer.py):
 2. Directives inside complex Markdown (tables, bullet lists, blockquotes, code blocks).
 3. Text stripping for word concatenation bugs and markdown whitespace preservation.
 4. Multiple directives (e.g. 5 directives in one turn).
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import os

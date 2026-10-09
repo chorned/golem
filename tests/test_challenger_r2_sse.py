@@ -13,6 +13,8 @@ verifying the 5 Hand B Auditor Invariants + Specs under hostile conditions:
   4. Mouth Broadcast Invariant: Exact payload schema, Slack mrkdwn fidelity, model fallback across all ingress paths.
   5. Thread Safety Invariant: High-concurrency multi-threaded publishing into SSE streams without deadlocks or race conditions.
   6. Dual Sync/Async & Immediate Handshake: Polymorphic protocol, multi-client concurrent connection state synchronization.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 from __future__ import annotations

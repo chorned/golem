@@ -9,6 +9,8 @@ Exhaustively probes:
 3. App.py all 32 legacy symbols functional sanity and intent classifiers.
 4. Chunker extreme boundaries (exact 3800, 3801, massive single tokens, repeated code fences).
 5. Normalizer code block preservation with nested markdown characters.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 from __future__ import annotations

@@ -4,6 +4,8 @@ tests/test_workspace_layout.py
 Unit tests for Dual-Pane Workspace architecture:
 1. Workspace lifecycle spawns both liaison (Pane 1) and runner (Pane 2) panes.
 2. Runner command execution via mesh executes commands in runner pane without blocking liaison.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import os

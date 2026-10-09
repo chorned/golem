@@ -10,16 +10,16 @@ Golem is structured into a decoupled tripartite architecture separating cognitiv
    - **The Eyes** (`EyesTaskObserver`): Non-blocking coroutine observing terminal buffers every 15–30s with buffer change hashing (0 tokens when unchanged). Emits blocker/completion alerts over `ShoulderTapEventBus`.
    - **The Nose** (`NoseSentinel`): 24/7 background watchdog sniffing `bot.err` and fleet telemetry across nodes. Emits anomaly alerts over `ShoulderTapEventBus`.
 4. **Real-Time Observability WebUI**: Embedded `aiohttp.web.AppRunner` on `http://127.0.0.1:8765` (`--webUI` / `GOLEM_ENABLE_WEBUI=1`). Streams live logs and sensory telemetry via Server-Sent Events (`/events`) and REST (`/api/status`). Renders a 4-pane dark-mode dashboard (Eye, Nose, Mouth, Hand 0-9 Grid) with Google Stitch MCP design and resilient vanilla HTML/CSS/JS fallback.
-5. **Compatibility & Packaging Layer**: Canonical `golem/` package accompanied by a Dual-Layer Compatibility Shim in `first_mate/` (`sys.meta_path` alias finder + static mirror files) guaranteeing 100% object identity and bidirectional `unittest.mock.patch` fidelity. Bundled via PEP 621 `pyproject.toml` and `setup.py`.
+5. **Compatibility & Packaging Layer**: Canonical `golem/` package accompanied by compatibility facades in subpackages guaranteeing 100% object identity and bidirectional `unittest.mock.patch` fidelity. Bundled via PEP 621 `pyproject.toml` and `setup.py`.
 
 ## Feature Inventory
 Every feature from the Survey phase and user requirements is inventoried below with its assigned milestone:
 | # | Feature | Description | Milestone | Source |
 |---|---------|-------------|-----------|--------|
-| 1 | Canonical `golem/` Package | Migrate 34 files from `first_mate/` to `golem/` with internal imports updated to `golem.*` | M1 | R1 |
-| 2 | Dual-Layer Compatibility Shim | `_FirstMateAliasFinder` on `sys.meta_path` + static mirror files in `first_mate/` ensuring `assertIs` identity and mock patch fidelity | M1 | R1 |
-| 3 | PEP 621 Packaging & Entrypoints | Author `pyproject.toml` and `setup.py` bundling `golem*`, `first_mate*`, and `app.py` with console scripts `golem=golem.cli:main` and `first-mate=golem.cli:main` | M1 | R1 |
-| 4 | Launchd Dual-Key Compatibility | Dual-key resolution (`GOLEM_*` / `FIRST_MATE_*`) in `config.py` and `app.py`, adding `com.user.golem.plist` while preserving `com.user.first-mate.plist` | M1 | R1 |
+| 1 | Canonical `golem/` Package | Migrate modules to canonical `golem/` with internal imports updated to `golem.*` | M1 | R1 |
+| 2 | Compatibility Facades | Subpackage facades in `golem/` ensuring `assertIs` identity and mock patch fidelity | M1 | R1 |
+| 3 | PEP 621 Packaging & Entrypoints | Author `pyproject.toml` and `setup.py` bundling `golem*` and `app.py` with console script `golem=golem.cli:main` | M1 | R1 |
+| 4 | Launchd Configuration | Canonical configuration in `config.py` and `app.py`, adding `com.user.golem.plist` | M1 | R1 |
 | 5 | Lineage Invariant Codification | Embed lineage invariant banner and docstrings across packages, manifests, and CLI banners | M1 | R1 |
 | 6 | AGY Hand Default Standardization | Standardize `get_default_hand_worker()` to return `os.environ.get("GOLEM_DEFAULT_HAND_WORKER") or "agy"` in `golem/config.py` | M2 | R2 |
 | 7 | Pluggable Worker Signatures | Update `herdr_spawn`, `herdr_handoff`, and `WorkerDelegator.handoff` with `worker: str = "agy"`, supporting legacy `subagent` parameter | M2 | R2 |
@@ -40,7 +40,7 @@ Every feature from the Survey phase and user requirements is inventoried below w
 | # | Name | Scope | Dependencies | Status |
 |---|------|-------|-------------|--------|
 | E2E | E2E Testing Track | Test infra (`tests/e2e/`), test cases (Tiers 1-4), publish `TEST_READY.md` | none | DONE |
-| M1 | Package Namespace Migration & Lineage Invariant | Canonical `golem/` package, dual-layer shims in `first_mate/`, `pyproject.toml`, `setup.py`, launchd compatibility, lineage invariant | none | DONE |
+| M1 | Package Namespace Migration & Lineage Invariant | Canonical `golem/` package, subpackage compatibility facades, `pyproject.toml`, `setup.py`, launchd compatibility, lineage invariant | none | DONE |
 | M2 | Pluggable Hand Execution Harness | `golem/execution/`, `herdr_tools.py`, AGY default worker (`worker: str = "agy"`, `GOLEM_DEFAULT_HAND_WORKER=agy`), on-demand delegation to `opencode`/`hermes` | M1 | DONE |
 | M3 | Real-Time Observability WebUI | `golem/webui/`, `--webUI` / `GOLEM_ENABLE_WEBUI=1`, port 8765, SSE/REST, 4-pane dark-mode UI with Hand 0-9 dynamic grid, Stitch MCP + fallback | M1 | DONE |
 | M4 | CI/CD Release Pipeline & Repository Hygiene | `.github/workflows/ci.yml` (Python 3.11, 3.12, 3.13), `LICENSE` (Apache-2.0), `CONTRIBUTING.md`, templates, `.gitignore` | M1 | DONE |
@@ -48,12 +48,12 @@ Every feature from the Survey phase and user requirements is inventoried below w
 | M6 | Final Milestone: 100% E2E Pass & Adversarial Hardening | Phase 1: Pass 100% E2E tests (Tiers 1-4). Phase 2: Adversarial coverage hardening (Tier 5 challenger loop). Verify clean daemon kickstart. | E2E, M1, M2, M3, M4, M5 | DONE |
 
 ## Interface Contracts
-### `first_mate` ↔ `golem` (Dual-Layer Shim Contract)
-- `_FirstMateAliasFinder` on `sys.meta_path`:
-  - When `fullname.startswith("first_mate")`, loads corresponding `golem.<submodule>`.
-  - Guarantees `sys.modules["first_mate.<submodule>"] is sys.modules["golem.<submodule>"]`.
-  - Bidirectional mock patching: `patch('first_mate.gateway.ingress.call_gemini_api')` directly mutates `golem.gateway.ingress.call_gemini_api`.
-- Static mirror files: `from golem.<submodule> import *` in every corresponding `first_mate/<submodule>.py` for static analyzers.
+### `golem` Architecture (Compatibility Contract)
+- Canonical flattened modules in `golem/` (`golem.ingress`, `golem.mouth`, `golem.harness`, `golem.bus`, etc.).
+- Compatibility facades in subpackages (`golem.gateway.*`, `golem.agent.*`, `golem.execution.*`, `golem.sensory.*`, `golem.transport.*`):
+  - Guarantees `golem.ingress.IngressGateway is golem.gateway.ingress.IngressGateway`.
+  - Bidirectional mock patching: `patch('golem.gateway.ingress.call_gemini_api')` directly mutates `golem.ingress.call_gemini_api`.
+  - Facades re-export all symbols for backward compatibility.
 
 ### `golem.execution` ↔ Hand Workers Contract
 - Default worker resolution: `get_default_hand_worker() -> str` in `golem.config` returns `os.environ.get("GOLEM_DEFAULT_HAND_WORKER", "agy")`.
@@ -79,10 +79,9 @@ Every feature from the Survey phase and user requirements is inventoried below w
   - `transport/`: `chunker.py`, `normalizer.py`, `file_transfer.py`, `slack_client.py`
   - `webui/`: `server.py`, `templates/`, `static/`
   - `config.py`, `__init__.py`
-- `first_mate/`: Dual-layer compatibility shim mirroring `golem/`
 - `tests/`: 71+ test files, 1,263+ unit tests + new tests for shims, webui, agy default
 - `tests/e2e/`: Opaque-box E2E test suite (Tiers 1-4)
 - `.github/workflows/ci.yml`: Multi-version CI workflow
 - `pyproject.toml`, `setup.py`: Packaging definitions
-- `com.user.golem.plist`, `com.user.first-mate.plist`: Launchd service definitions
+- `com.user.golem.plist`: Launchd service definition
 - `README.md`, `AGENTS.md`, `LICENSE`, `CONTRIBUTING.md`: Documentation and repo hygiene

@@ -1,6 +1,11 @@
 # Golem: Autonomous Fleet Chief of Staff
 
-> **"Golem is the open-source evolution of First Mate, built on Herdr's distributed PTY mesh."**
+[![CI](https://github.com/kunchenguid/firstmate/actions/workflows/ci.yml/badge.svg)](https://github.com/kunchenguid/firstmate/actions)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue.svg)](https://www.python.org/)
+[![License](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
+[![Lineage](https://img.shields.io/badge/lineage-first--mate-purple.svg)](#project-lineage)
+
+> **"Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh."**
 
 **Golem** is an open-source coordinator and personal Chief of Staff designed to run across multiple machines. It pairs a conversational liaison (accessible via Slack and BlueBubbles) with a headless, distributed pseudo-terminal (PTY) execution grid that spans local machines, homelab servers, GPU workstations, and cloud VPS instances.
 
@@ -26,19 +31,19 @@ In real-world multi-node workflows, directly scraping interactive PTYs introduce
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 1. Buffer Polling Desynchronization
+### 1. Visual Buffer Scraping Desynchronization
 Polling a rendered character matrix at arbitrary intervals frequently misses transient output from fast-moving commands (compilers, test runners, or build scripts). The agent ends up evaluating stale snapshots rather than the actual sequence of events or specific exit transitions.
 
-### 2. ANSI Control Codes and Escape Noise
+### 2. ANSI Color and VT100 Control Code Corruption
 Interactive terminal applications emit raw ANSI color sequences (`\x1b[38;2;...m`), cursor repositioning instructions (`\x1b[H`, `\x1b[2J`), alternate screen buffer triggers (`smcup`/`rmcup`), and box-drawing glyphs. Feeding this uncleaned stream to an LLM adds unnecessary token overhead, degrades attention, and can interfere with strict JSON parsing during tool calls.
 
-### 3. Artificial Screen Wrapping
+### 3. Artificial Screen Line Wrapping Artifacts
 Fixed-width virtual terminals (typically 80 or 120 columns) force trailing line breaks on long strings. URLs, base64 strings, file paths, and compiler flags get split across lines with trailing whitespace or wrapping markers, making reliable path extraction and link resolution harder than it needs to be.
 
-### 4. Interactive Input and Subshell Blocking
+### 4. Blocking Subshell Race Conditions
 When a CLI tool prompts for input (`[y/N]`, a confirmation prompt, or an OAuth flow), an agent blocked on synchronous pipe reads will stall the entire runloop. If the main thread is tied up waiting for stdout, inbound user messages (like checking status or requesting a cancel) get delayed or dropped.
 
-### 5. Context Window Bloat
+### 5. Catastrophic LLM Token Starvation
 Re-ingesting full visual terminal screens (around 2,000 characters per standard 24×80 frame) on every turn inflates conversational history with static headers, curses borders, and shell prompts, steadily eating into available reasoning context over long sessions.
 
 ---
@@ -88,9 +93,9 @@ To solve these constraints, Golem separates high-level conversational flow from 
 
 1. **Front-of-House Mouth (Liaison):** Runs in Pane 1 (`{session_id}-liaison`). Communicates directly with the user via Slack or BlueBubbles. Because it does not run terminal processes in its own thread, questions asked while long jobs are running are answered promptly.
 2. **Backstage Hands (Worker Grid):** Operates in Pane 2 (`runner`) and dedicated subagent sandboxes. Runs commands headlessly—using the local AGY CLI by default (`GOLEM_DEFAULT_HAND_WORKER=agy`)—and yields execution handles after 3 seconds so the main conversation remains interactive. Output is normalized and stripped of ANSI noise before logging or handoff.
-3. **Sensory Observers (Eyes & Nose):**
+3. **Sensory Plane (The Eyes & The Nose):**
    - **The Eyes (`EyesTaskObserver`):** Checks running terminal buffers on a 15–30 second interval. It uses SHA-256 delta hashing to skip LLM calls entirely if output is unchanged, pinging the Mouth only when user action is required (such as an auth prompt) or when a task finishes.
-   - **The Nose (`NoseSentinel`):** A lightweight background check that runs every 15 minutes to review error logs, container status, and machine reachability, alerting the Mouth if an anomaly is detected.
+   - **The Nose (`NoseSentinel`):** A lightweight background check that runs every 15 minutes to review error logs, container status, and machine reachability, alerting the Mouth via the `ShoulderTapEventBus` if an anomaly is detected.
 
 ---
 
@@ -172,28 +177,28 @@ Golem includes a local dashboard built on `aiohttp.web` running on port `8765`:
 
 ---
 
-## Backwards Compatibility: First Mate Migration Shim
+## Backwards Compatibility: Subpackage Facades
 
-To support existing automation scripts, test suites, and workflows developed for First Mate, Golem provides an in-memory compatibility shim:
+To support existing automation scripts, test suites, and workflows, Golem provides compatibility facades in subpackages:
 
 ```python
-# Both import paths resolve to the exact same module:
+# Both import paths resolve to the exact same class object:
+import golem.ingress
 import golem.gateway.ingress
-import first_mate.gateway.ingress
 
-assert first_mate.gateway.ingress is golem.gateway.ingress
+assert golem.ingress.IngressGateway is golem.gateway.ingress.IngressGateway
 ```
 
-1. **Meta-Path Finder (`_FirstMateAliasFinder`):** Configured on `sys.meta_path` in `golem/__init__.py`. Intercepts `import first_mate.*` calls and routes them directly to `golem.*`, registering both namespaces under the same module instance in `sys.modules`.
-2. **Mock Redirection:** Tests patching paths such as `unittest.mock.patch("first_mate.gateway.ingress.call_gemini_api")` correctly update the underlying `golem` module.
-3. **Static Mirror Files:** Mirror files in `first_mate/` re-export symbols using `from golem.<module> import *`, ensuring type checkers (mypy, pyright) and editor autocompletion work without configuration changes.
+1. **Flattened Modules:** Core modules reside directly under `golem/` (`golem.ingress`, `golem.mouth`, `golem.harness`, `golem.bus`, etc.).
+2. **Mock Redirection:** Tests patching paths such as `unittest.mock.patch("golem.gateway.ingress.call_gemini_api")` correctly update the underlying `golem` module.
+3. **Compatibility Facades:** Facades in subpackages re-export symbols using `from golem.<module> import *`, ensuring type checkers (mypy, pyright) and editor autocompletion work without configuration changes.
 
 ---
 
 ## Quickstart Guide
 
 ### Prerequisites
-- **Python:** Version 3.11, 3.12, or 3.13.
+- **Python:** Python 3.11, 3.12, or 3.13 (Python 3.11+ required).
 - **Herdr:** Daemon installed and running (`herdr daemon status`).
 - **Tailscale:** Active connection between fleet machines.
 
@@ -203,7 +208,7 @@ Clone the repository and install Golem in editable mode:
 ```bash
 # Clone the repository
 git clone https://github.com/kunchenguid/firstmate.git
-cd first-mate
+cd golem
 
 # Set up a virtual environment
 python3 -m venv .venv
@@ -218,7 +223,6 @@ pip install -e ".[dev]"
 
 Installed entrypoints:
 - `golem`: Primary CLI binary (`golem --help`, `golem --webUI`)
-- `first-mate`: Compatibility alias
 
 ### 2. Configuration
 Copy the template configuration file:
@@ -243,7 +247,7 @@ EYES_MODEL=gemini-flash-lite-latest
 NOSE_MODEL=gemini-flash-lite-latest
 
 # Worker Execution
-FIRST_MATE_ENGINE=antigravity
+GOLEM_ENGINE=antigravity
 GOLEM_DEFAULT_HAND_WORKER=agy
 ANTIGRAVITY_MODEL=gemini-3.8-flash-high
 ```

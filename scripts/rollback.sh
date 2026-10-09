@@ -23,7 +23,7 @@ if ! git rev-parse --verify "${TARGET_REF}" >/dev/null 2>&1; then
 fi
 
 CURRENT_SHA=$(git rev-parse HEAD)
-echo "${CURRENT_SHA}" > "/tmp/first_mate_pre_rollback_sha"
+echo "${CURRENT_SHA}" > "/tmp/golem_pre_rollback_sha"
 echo "Saved pre-rollback commit: ${CURRENT_SHA}"
 
 # 2. Stash any uncommitted work safely
@@ -42,9 +42,9 @@ echo "Running smoke tests..."
 
 # 5. Kickstart LaunchAgent daemon
 echo "Restarting background daemon..."
-launchctl kickstart -k -p "gui/$(id -u)/com.user.first-mate"
+launchctl kickstart -k -p "gui/$(id -u)/com.user.golem"
 sleep 1
 
-DAEMON_PID=$(pgrep -f "python.*first-mate/app.py" || true)
-echo "✅ Rollback successful. First Mate is active on ${TARGET_REF} (PID ${DAEMON_PID:-unknown})."
-echo "To revert this rollback: git checkout main && launchctl kickstart -k -p gui/\$(id -u)/com.user.first-mate"
+DAEMON_PID=$(pgrep -f "python.*app.py" || true)
+echo "✅ Rollback successful. Golem is active on ${TARGET_REF} (PID ${DAEMON_PID:-unknown})."
+echo "To revert this rollback: git checkout main && launchctl kickstart -k -p gui/\$(id -u)/com.user.golem"

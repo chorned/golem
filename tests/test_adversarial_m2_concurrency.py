@@ -22,6 +22,8 @@ Mandatory Oppositional Analysis Areas:
    - 20+ parallel WorkerDelegator.handoff calls across workers (agy, opencode, hermes).
    - Zero state pollution or cross-talk between concurrent execution handles.
    - 50 parallel high-velocity invocations without event loop starvation.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import os

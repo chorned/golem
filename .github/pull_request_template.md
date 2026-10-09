@@ -14,7 +14,7 @@ Provide a brief summary of the changes made and the motivation behind them.
 - [ ] Repository hygiene / CI improvement
 
 ## Architecture & Contract Checklist
-- [ ] **Dual-Layer Shim Invariant Maintained:** Any new `golem/` modules have matching static mirrors in `first_mate/`.
+- [ ] **Dual-Layer Shim Invariant Maintained:** Any new `golem/` modules have matching static mirrors in `golem/`.
 - [ ] **Lineage Invariant:** New module headers and docstrings embed the lineage invariant: *"Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh."*
 - [ ] **Tests Added / Updated:** Comprehensive unit tests covering changed behavior.
 - [ ] **Test Suite Green:** All tests pass locally (`python3 -m unittest discover tests`).

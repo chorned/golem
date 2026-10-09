@@ -4,6 +4,8 @@ tests/test_mouth_llm.py
 Unit tests for the dynamic Mouth LLM reactor and out-of-band conversational engine.
 Verifies that the Liaison Mouth in Slack behaves like a real human:
 always responsive, able to converse mid-stream without hardcoded regex gates.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import os

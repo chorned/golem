@@ -14,6 +14,8 @@ Stress tests:
 7. Concurrent turn preemption (overlapping send_turn calls) verifying clean generator closure, zero deadlock, and fresh response.
 8. Concurrent burst execution: 10 concurrent send_turn calls via asyncio.gather verify zero deadlock and clean recovery.
 9. Process resilience after abrupt subprocess exit and auto-recovery on subsequent turn.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 from __future__ import annotations
@@ -55,7 +57,7 @@ class TestAgentM1EmpiricalAdversarial(unittest.IsolatedAsyncioTestCase):
         Assert that Turn 6 receives 'Echo: Turn 6' and has ZERO phase shift from turns 1-5.
         """
         adapter = HeadlessAgentAdapter(
-            cwd="/Users/hermes/projects/first-mate",
+            cwd="/Users/hermes/projects/golem",
             agy_bin=self.mock_bin,
             env={"MOCK_AGY_MODE": "normal"},
         )
@@ -96,7 +98,7 @@ class TestAgentM1EmpiricalAdversarial(unittest.IsolatedAsyncioTestCase):
         Every full turn must strictly match its own prompt.
         """
         adapter = HeadlessAgentAdapter(
-            cwd="/Users/hermes/projects/first-mate",
+            cwd="/Users/hermes/projects/golem",
             agy_bin=self.mock_bin,
             env={"MOCK_AGY_MODE": "normal"},
         )
@@ -133,7 +135,7 @@ class TestAgentM1EmpiricalAdversarial(unittest.IsolatedAsyncioTestCase):
         all stale data cleanly before the next turn runs.
         """
         adapter = HeadlessAgentAdapter(
-            cwd="/Users/hermes/projects/first-mate",
+            cwd="/Users/hermes/projects/golem",
             agy_bin=self.mock_bin,
             env={"MOCK_AGY_MODE": "normal"},
         )
@@ -200,7 +202,7 @@ class TestAgentM1EmpiricalAdversarial(unittest.IsolatedAsyncioTestCase):
         strictly its own response with 0 phase shift.
         """
         adapter = HeadlessAgentAdapter(
-            cwd="/Users/hermes/projects/first-mate",
+            cwd="/Users/hermes/projects/golem",
             agy_bin=self.adv_mock_bin,
             env={"ADVERSARIAL_MODE": "kernel_pipe_unconsumed_leak"},
         )
@@ -240,7 +242,7 @@ class TestAgentM1EmpiricalAdversarial(unittest.IsolatedAsyncioTestCase):
         bounds its drain loop without hanging forever (respects round limits).
         """
         adapter = HeadlessAgentAdapter(
-            cwd="/Users/hermes/projects/first-mate",
+            cwd="/Users/hermes/projects/golem",
             agy_bin=self.adv_mock_bin,
             env={"ADVERSARIAL_MODE": "unbounded_flood_leak"},
         )
@@ -266,7 +268,7 @@ class TestAgentM1EmpiricalAdversarial(unittest.IsolatedAsyncioTestCase):
         Assert zero lock deadlocks, sub-second execution, and exact sequential responses.
         """
         adapter = HeadlessAgentAdapter(
-            cwd="/Users/hermes/projects/first-mate",
+            cwd="/Users/hermes/projects/golem",
             agy_bin=self.mock_bin,
             env={"MOCK_AGY_MODE": "normal"},
         )
@@ -298,7 +300,7 @@ class TestAgentM1EmpiricalAdversarial(unittest.IsolatedAsyncioTestCase):
         its authentic response with zero pipe corruption.
         """
         adapter = HeadlessAgentAdapter(
-            cwd="/Users/hermes/projects/first-mate",
+            cwd="/Users/hermes/projects/golem",
             agy_bin=self.mock_bin,
             env={"MOCK_AGY_MODE": "normal"},
         )
@@ -338,7 +340,7 @@ class TestAgentM1EmpiricalAdversarial(unittest.IsolatedAsyncioTestCase):
         or terminate safely, and the adapter remains functional for follow-up turns.
         """
         adapter = HeadlessAgentAdapter(
-            cwd="/Users/hermes/projects/first-mate",
+            cwd="/Users/hermes/projects/golem",
             agy_bin=self.mock_bin,
             env={"MOCK_AGY_MODE": "normal"},
         )
@@ -380,7 +382,7 @@ class TestAgentM1EmpiricalAdversarial(unittest.IsolatedAsyncioTestCase):
         and subsequent start or re-instantiation behaves gracefully.
         """
         adapter = HeadlessAgentAdapter(
-            cwd="/Users/hermes/projects/first-mate",
+            cwd="/Users/hermes/projects/golem",
             agy_bin=self.mock_bin,
             env={"MOCK_AGY_MODE": "exit_nonzero_mid_turn"},
         )

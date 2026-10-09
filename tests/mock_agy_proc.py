@@ -2,6 +2,8 @@
 """
 tests/mock_agy_proc.py
 Deterministic mock CLI binary simulating agy stream-json protocol for subprocess testing.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import sys

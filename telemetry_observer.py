@@ -5,6 +5,8 @@ Real-time fleet delegation telemetry, out-of-band PTY observation,
 and conversational milestone notifications for First Mate.
 Eliminates robotic Datadog metric grids and curses terminal blocks in favor
 of a natural Chief of Staff voice that posts at true execution milestones.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import os

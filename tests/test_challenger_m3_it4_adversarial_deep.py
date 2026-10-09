@@ -15,6 +15,8 @@ Challenges:
 3. Multi-Threaded Cache Mutation Stress:
    - Zero RuntimeError (dictionary changed size during iteration) or KeyError under concurrent
      /api/status polling and high-velocity background hand mutations.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 from __future__ import annotations

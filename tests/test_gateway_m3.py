@@ -9,6 +9,8 @@ Validates:
   - TC-01: Conversational inquiry direct response (0 worker panes, 0 canned announcements, 0 footers)
   - TC-02: Multi-turn thread continuity without re-initialization
   - Explicit slash commands: /wrapup, /archive, /bearings, /ahoy, /learn
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import os
@@ -349,8 +351,11 @@ class TestSessionRouter(unittest.IsolatedAsyncioTestCase):
         session, _ = await self.router.get_or_create("C1", "500.1")
         self.assertIn("C1:500.1", self.router.sessions)
 
-        # Wait for timeout and reaper sweep
-        await asyncio.sleep(0.08)
+        # Wait for timeout and reaper sweep (dynamic polling loop under load)
+        for _ in range(25):
+            if "C1:500.1" not in self.router.sessions:
+                break
+            await asyncio.sleep(0.02)
         self.assertNotIn("C1:500.1", self.router.sessions)
         self.assertEqual(session.state, SessionState.CLOSED)
 

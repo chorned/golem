@@ -171,7 +171,7 @@ class TestTier4WebUILiveObservabilityScenario(unittest.IsolatedAsyncioTestCase):
 # ===========================================================================
 class TestTier4LegacyInvariantAndBackwardCompatibilityScenario(unittest.TestCase):
     """
-    Scenario 4: Legacy imports through first_mate continue to function identically,
+    Scenario 4: Legacy imports through golem continue to function identically,
     and all project documentation and banners preserve the Lineage Invariant.
     """
 
@@ -189,7 +189,7 @@ class TestTier4LegacyInvariantAndBackwardCompatibilityScenario(unittest.TestCase
             import golem.config as fm_cfg
             self.assertIsNotNone(fm_cfg)
         except ImportError:
-            self.skipTest("first_mate shim not importable")
+            self.skipTest("golem shim not importable")
 
 
 if __name__ == "__main__":

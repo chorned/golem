@@ -6,6 +6,8 @@ Comprehensive unit test suite for Golem's On-Demand Messaging Engine (golem/noti
 - iMessage messaging via BlueBubbles with history persistence for thread continuity
 - Concurrent dual-platform messaging (Slack + iMessage)
 - Error handling & validation
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import asyncio

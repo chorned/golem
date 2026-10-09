@@ -1,4 +1,7 @@
-"""Quota-exhaustion failover for the Antigravity driver (Hands)."""
+"""Quota-exhaustion failover for the Antigravity driver (Hands).
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
+"""
 import asyncio
 import unittest
 from unittest import mock

@@ -13,6 +13,8 @@ Validates:
   - Final executive briefing synthesized and posted to Slack upon task completion
   - [SEND_FILE: <path>] directives parsed and uploaded cleanly
   - Blocker alerts from Shoulder Tap Event Bus wake Mouth to post interactive action cards
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import os
@@ -204,7 +206,7 @@ class TestStructuredTaskDispatch(unittest.IsolatedAsyncioTestCase):
                                     "args": {
                                         "task_description": "python3 -m unittest discover tests",
                                         "target_node": "hermes",
-                                        "cwd": "/Users/hermes/projects/first-mate"
+                                        "cwd": "/Users/hermes/projects/golem"
                                     }
                                 }
                             }
@@ -246,7 +248,7 @@ class TestStructuredTaskDispatch(unittest.IsolatedAsyncioTestCase):
                 args = mock_exec.call_args[0]
                 self.assertEqual(args[0], "python3 -m unittest discover tests")
                 self.assertEqual(args[1], "hermes")
-                self.assertEqual(args[2], "/Users/hermes/projects/first-mate")
+                self.assertEqual(args[2], "/Users/hermes/projects/golem")
 
     async def test_thought_signature_preserved_in_executive_briefing_payload(self) -> None:
         """
@@ -491,7 +493,7 @@ class TestExecutiveBriefingDelivery(unittest.IsolatedAsyncioTestCase):
         Verify [SEND_FILE: <path>] directives in executive briefing trigger
         client.files_upload_v2 and are stripped from public message text.
         """
-        test_pdf = "/tmp/fleet_telemetry.pdf"
+        test_pdf = os.path.join(PROJECT_DIR, "fleet_telemetry.pdf")
         with open(test_pdf, "w") as f:
             f.write("%PDF-1.4 Mock PDF Content")
 
@@ -504,7 +506,7 @@ class TestExecutiveBriefingDelivery(unittest.IsolatedAsyncioTestCase):
         turn2_briefing_with_file = {
             "candidates": [{
                 "content": {"parts": [
-                    {"text": "*Report Ready:* Exported fleet telemetry.\n[SEND_FILE: /tmp/fleet_telemetry.pdf]"}
+                    {"text": f"*Report Ready:* Exported fleet telemetry.\n[SEND_FILE: {test_pdf}]"}
                 ]},
                 "finishReason": "STOP"
             }]
@@ -515,7 +517,7 @@ class TestExecutiveBriefingDelivery(unittest.IsolatedAsyncioTestCase):
                 mock_gemini.side_effect = [turn1_dispatch, turn2_briefing_with_file]
 
                 with patch.object(self.gateway, "_execute_backstage_task", new_callable=AsyncMock) as mock_exec:
-                    mock_exec.return_value = {"status": "SUCCESS", "output": "Report generated at /tmp/fleet_telemetry.pdf"}
+                    mock_exec.return_value = {"status": "SUCCESS", "output": f"Report generated at {test_pdf}"}
 
                     event = {
                         "channel": "C_MAIN",

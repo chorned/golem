@@ -207,8 +207,15 @@ class WebUIServer:
                 f"{now_str} [THOUGHT] Golem.Sensory.Nose: Baseline host metrics nominal; zero unhandled tracebacks in bot.err",
             ])
         if not self._recent_logs["mouth"]:
+            active_mouth_model = ""
+            try:
+                from golem.config import get_mouth_model
+                active_mouth_model = get_mouth_model()
+            except Exception:
+                pass
+            model_tag = f" (model={active_mouth_model})" if active_mouth_model else ""
             self._recent_logs["mouth"].extend([
-                f"{now_str} [LIFE] Golem.Agent.Mouth: ChiefOfStaff Mouth liaison active (model=gemini-3.8-flash)",
+                f"{now_str} [LIFE] Golem.Agent.Mouth: ChiefOfStaff Mouth liaison active{model_tag}",
                 f"{now_str} [LIFE] Golem.Agent.Mouth: Out-of-band conversational reactor ready for Slack & web interaction",
                 f"{now_str} [THOUGHT] Golem.Agent.Mouth: Dynamic triage engine ready; 0 brittle regex gates active",
             ])
@@ -1455,8 +1462,8 @@ def extract_recent_agent_logs() -> Dict[str, List[str]]:
         candidates = [
             Path("bot.err"),
             Path("bot.log"),
-            Path("/Users/hermes/projects/first-mate/bot.err"),
-            Path("/Users/hermes/projects/first-mate/bot.log"),
+            Path("/Users/hermes/projects/golem/bot.err"),
+            Path("/Users/hermes/projects/golem/bot.log"),
         ]
         for p in candidates:
             if p.exists():
@@ -1628,22 +1635,18 @@ def get_system_status() -> Dict[str, Any]:
                     nose_data["recent_error_count"] = cached_count
             else:
                 found_count = 0
-                for err_path in [
-                    Path("bot.err"),
-                    Path("bot.log"),
-                    Path("/Users/hermes/projects/first-mate/bot.err"),
-                    Path("/Users/hermes/projects/first-mate/bot.log"),
-                ]:
-                    if err_path.exists():
+                for filename in ("bot.err", "bot.log"):
+                    p = Path(filename)
+                    if p.is_file():
                         try:
-                            size = err_path.stat().st_size
-                            with err_path.open("r", encoding="utf-8", errors="replace") as f:
-                                if size > 16384:
-                                    f.seek(size - 16384)
-                                content = f.read()
+                            size = p.stat().st_size
+                            with p.open("rb") as f:
+                                if size > 4096:
+                                    f.seek(size - 4096)
+                                chunk = f.read()
                             err_lines = [
-                                l for l in content.splitlines()
-                                if any(kw in l.lower() for kw in ("traceback", "[error]", "[critical]", "exception"))
+                                l for l in chunk.splitlines()
+                                if any(kw in l.lower() for kw in (b"traceback", b"[error]", b"[critical]", b"exception"))
                             ]
                             if err_lines:
                                 found_count = len(err_lines)
@@ -1688,10 +1691,10 @@ def get_system_status() -> Dict[str, Any]:
         from golem.config import get_mouth_model
         mouth_model = get_mouth_model()
     except Exception:
-        mouth_model = "gemini-3.8-flash"
+        mouth_model = ""
 
     mouth_data: Dict[str, Any] = {
-        "model": mouth_model or "gemini-3.8-flash",
+        "model": mouth_model or "",
         "status": "ready",
         "active_turns": 0,
         "recent_briefing": "",

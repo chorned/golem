@@ -4,6 +4,8 @@ memory_manager.py
 Episodic Ledger & 3-Tier Memory Manager for First Mate / AGY.
 Provides human-inspectable, git-trackable operational event logging via JSONL,
 grounded conversational task recovery, and recent milestone retrieval.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import os
@@ -14,9 +16,9 @@ from typing import Dict, Any, Optional, List
 
 logger = logging.getLogger("AGY.MemoryManager")
 
-HOST_DIR = os.environ.get("FIRST_MATE_HOST_DIR", os.path.dirname(os.path.abspath(__file__)))
+HOST_DIR = os.environ.get("GOLEM_HOST_DIR", os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_LEDGER_PATH = os.environ.get(
-    "FIRST_MATE_LEDGER_PATH",
+    "GOLEM_LEDGER_PATH",
     os.path.join(HOST_DIR, "memory", "ledger.jsonl")
 )
 

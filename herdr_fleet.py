@@ -3,6 +3,8 @@
 Herdr Fleet Management & Chief of Staff Orchestration Module
 Provides persistent workspace topology management, fleet machine discovery,
 Chief of Staff & Hermes Butler prompt triage, and pane dispatching/monitoring.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import os
@@ -16,8 +18,8 @@ from typing import Dict, Any, Optional, List, Tuple
 
 logger = logging.getLogger("AGY.HerdrFleet")
 
-# Re-exports from golem.execution.mesh for canonical object identity
-from golem.execution.mesh import (
+# Re-exports from golem.mesh for canonical object identity
+from golem.mesh import (
     TOPOLOGY_SPECS,
     NODE_ALIASES,
     wrap_windows_command,

@@ -21,6 +21,8 @@ Challenger 2 verification covering:
     * Bot mention stripping fuzzing
     * Error recovery and state transition resilience
     * Inactivity expiration and automatic recreation
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 from __future__ import annotations
@@ -415,7 +417,7 @@ class TestEmpiricalChallengerM3(unittest.IsolatedAsyncioTestCase):
 
         def real_adapter_factory(cwd: str) -> HeadlessAgentAdapter:
             return HeadlessAgentAdapter(
-                cwd="/Users/hermes/projects/first-mate",
+                cwd="/Users/hermes/projects/golem",
                 agy_bin=mock_bin,
                 env={"MOCK_AGY_MODE": "normal"},
             )

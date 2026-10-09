@@ -3,6 +3,8 @@
 herdr_tools.py
 Direct Native Herdr Python Tools for Gemini Flash Chief of Staff.
 Zero-MCP architecture: direct function calls into the Herdr daemon, git isolation, and FrugaLLM.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import os
@@ -14,9 +16,9 @@ import logging
 from typing import Dict, Any, Optional, List
 
 from golem.config import get_default_hand_worker
-from golem.execution.delegation import WorkerDelegator
+from golem.delegation import WorkerDelegator
 
-logger = logging.getLogger("FirstMate.HerdrTools")
+logger = logging.getLogger("Golem.HerdrTools")
 
 # In-memory registry of active spawned agent panes and their metadata
 SPAWNED_AGENTS: Dict[str, Dict[str, Any]] = {}

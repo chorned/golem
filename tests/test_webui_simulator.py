@@ -7,6 +7,8 @@ Comprehensive test suite for:
   3. CLI argument parsing (--hands, --mock-hands, negative/default counts).
   4. Proof-of-life, proof-of-thought, and debugging sensory logs (Eyes, Nose, Mouth).
   5. Dashboard functional layout (no ellipsizing, line breaks, desktop 3-column) and mobile-optimized view.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 from __future__ import annotations

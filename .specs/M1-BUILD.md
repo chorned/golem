@@ -13,7 +13,7 @@
 
 ## Hand B (Adversarial Auditor) Invariants
 1. Direct imports of `golem.*` resolve cleanly.
-2. Exact module and class identity preserved between `first_mate.*` and `golem.*` (`assertIs`).
+2. Exact module and class identity preserved between `golem.*` and `golem.*` (`assertIs`).
 3. 1,326 unit tests execute cleanly without regressions.
 4. Lineage invariant present in docstrings and headers: *"Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh."*
 

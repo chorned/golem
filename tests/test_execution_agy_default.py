@@ -7,8 +7,8 @@ Covers:
 1. Centralized Hand Worker Resolution (golem.config.get_default_hand_worker):
    - Defaults to 'agy'
    - GOLEM_DEFAULT_HAND_WORKER environment override
-   - FIRSTMATE_DEFAULT_HAND_WORKER / FIRST_MATE_DEFAULT_HAND_WORKER fallback
-   - Precedence: GOLEM_DEFAULT_HAND_WORKER > FIRSTMATE > GOLEM_ENGINE > FIRST_MATE_ENGINE
+   - FIRSTMATE_DEFAULT_HAND_WORKER / FIRSTMATE_DEFAULT_HAND_WORKER fallback
+   - Precedence: GOLEM_DEFAULT_HAND_WORKER > FIRSTMATE > GOLEM_ENGINE > GOLEM_ENGINE
    - Whitespace stripping and case insensitivity
    - Standardization of 'antigravity' to 'agy'
    - Re-exported in golem.execution, golem.execution.delegation, golem.execution, herdr_tools
@@ -42,6 +42,8 @@ Covers:
    - Multi-pane concurrent subshell runs simulate zero deadlocks
    - Exit code fidelity without truncation
    - Clean process termination and buffer drain
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import os
@@ -99,7 +101,7 @@ class TestCentralizedHandWorkerResolution(unittest.TestCase):
                 self.assertEqual(golem.config.get_default_hand_worker(), "hermes")
 
         with patch.object(golem.config, "_get_file_env", return_value={}):
-            with patch.dict(os.environ, {"FIRST_MATE_DEFAULT_HAND_WORKER": "hermes"}, clear=True):
+            with patch.dict(os.environ, {"FIRSTMATE_DEFAULT_HAND_WORKER": "hermes"}, clear=True):
                 self.assertEqual(golem.config.get_default_hand_worker(), "hermes")
 
     def test_resolution_precedence_hierarchy(self):
@@ -109,20 +111,20 @@ class TestCentralizedHandWorkerResolution(unittest.TestCase):
             with patch.dict(os.environ, {
                 "GOLEM_DEFAULT_HAND_WORKER": "worker_golem",
                 "FIRSTMATE_DEFAULT_HAND_WORKER": "worker_firstmate",
-                "FIRST_MATE_ENGINE": "worker_legacy"
+                "GOLEM_ENGINE": "worker_legacy"
             }, clear=True):
                 self.assertEqual(golem.config.get_default_hand_worker(), "worker_golem")
 
-            # Only FIRSTMATE and FIRST_MATE_ENGINE set: FIRSTMATE wins
+            # Only FIRSTMATE and GOLEM_ENGINE set: FIRSTMATE wins
             with patch.dict(os.environ, {
                 "FIRSTMATE_DEFAULT_HAND_WORKER": "worker_firstmate",
-                "FIRST_MATE_ENGINE": "worker_legacy"
+                "GOLEM_ENGINE": "worker_legacy"
             }, clear=True):
                 self.assertEqual(golem.config.get_default_hand_worker(), "worker_firstmate")
 
             # Only legacy engine set: returns legacy engine
             with patch.dict(os.environ, {
-                "FIRST_MATE_ENGINE": "worker_legacy"
+                "GOLEM_ENGINE": "worker_legacy"
             }, clear=True):
                 self.assertEqual(golem.config.get_default_hand_worker(), "worker_legacy")
 
@@ -161,7 +163,7 @@ class TestCentralizedHandWorkerResolution(unittest.TestCase):
             with patch.dict(os.environ, {"GOLEM_DEFAULT_HAND_WORKER": "antigravity"}, clear=True):
                 self.assertEqual(golem.config.get_default_hand_worker(), "agy")
 
-            with patch.dict(os.environ, {"FIRST_MATE_ENGINE": "antigravity"}, clear=True):
+            with patch.dict(os.environ, {"GOLEM_ENGINE": "antigravity"}, clear=True):
                 self.assertEqual(golem.config.get_default_hand_worker(), "agy")
 
     def test_re_exports_across_modules(self):
@@ -188,7 +190,7 @@ class TestHerdrToolsSignaturesAndDefaults(unittest.IsolatedAsyncioTestCase):
         self.orig_env = os.environ.copy()
         os.environ.pop("GOLEM_DEFAULT_HAND_WORKER", None)
         os.environ.pop("FIRSTMATE_DEFAULT_HAND_WORKER", None)
-        os.environ.pop("FIRST_MATE_DEFAULT_HAND_WORKER", None)
+        os.environ.pop("FIRSTMATE_DEFAULT_HAND_WORKER", None)
 
     def tearDown(self):
         os.environ.clear()
@@ -273,7 +275,7 @@ class TestHerdrHandoffPrecedence(unittest.IsolatedAsyncioTestCase):
         self.orig_env = os.environ.copy()
         os.environ.pop("GOLEM_DEFAULT_HAND_WORKER", None)
         os.environ.pop("FIRSTMATE_DEFAULT_HAND_WORKER", None)
-        os.environ.pop("FIRST_MATE_DEFAULT_HAND_WORKER", None)
+        os.environ.pop("FIRSTMATE_DEFAULT_HAND_WORKER", None)
 
     def tearDown(self):
         os.environ.clear()
@@ -355,7 +357,7 @@ class TestWorkerDelegatorRouting(unittest.IsolatedAsyncioTestCase):
         self.orig_env = os.environ.copy()
         os.environ.pop("GOLEM_DEFAULT_HAND_WORKER", None)
         os.environ.pop("FIRSTMATE_DEFAULT_HAND_WORKER", None)
-        os.environ.pop("FIRST_MATE_DEFAULT_HAND_WORKER", None)
+        os.environ.pop("FIRSTMATE_DEFAULT_HAND_WORKER", None)
         self.mock_client = AsyncMock()
         self.delegator = WorkerDelegator(
             herdr_client=self.mock_client,

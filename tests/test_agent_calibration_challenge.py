@@ -5,7 +5,7 @@ Adversarial challenge test suite for Milestone 2:
 Prompt Calibrations, Persona Constraints, and TC-05 Normalization Compliance.
 
 Empirically tests:
-1. Prompt output format contracts in first_mate/agent/calibration.py:
+1. Prompt output format contracts in golem/agent/calibration.py:
    - Single-asterisk bold (*bold*)
    - Numbered choice lists (1. Option A)
    - Slack links (<URL|Label>)
@@ -23,6 +23,8 @@ Empirically tests:
    - Terminal debris stripping (spinners, navigation bars, expand hints, prompt echoes)
    - Code block preservation
    - URL formatting behavior (Slack links vs Markdown links vs bare URLs)
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import os
@@ -50,7 +52,7 @@ from golem.transport.normalizer import (
 
 
 class TestCalibrationContracts(unittest.TestCase):
-    """Verify prompt output format contracts codified in first_mate/agent/calibration.py."""
+    """Verify prompt output format contracts codified in golem/agent/calibration.py."""
 
     def test_slack_mrkdwn_rules_contract(self):
         """Verify SLACK_MRKDWN_RULES enforces all Slack mrkdwn requirements."""

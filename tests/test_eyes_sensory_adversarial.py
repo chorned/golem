@@ -20,6 +20,8 @@ Empirically tests and challenges:
    - Bounded queue overflow handling verifying strict FIFO drop of oldest items without deadlocks.
    - Subscriber exception isolation: failing sync & async subscribers do not interrupt delivery.
    - Concurrent subscribe/unsubscribe churn during active publishing.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 from __future__ import annotations

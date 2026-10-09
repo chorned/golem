@@ -80,7 +80,7 @@ When backstage work finishes:
 When Carl replies `/learn [optional notes]` in a Slack thread:
 1. **Context Extraction:** Golem compiles the thread transcript into a structured operational trace (original intent, worker steps, tool outputs, and final results).
 2. **Reacji State Marker:** Immediately acknowledged with `:brain:`.
-3. **Headless Distillation:** Golem runs headlessly (`agy -p ... --output-format json` in `/Users/hermes/projects/first-mate`), eliminating exploration and failed attempts to isolate the golden path:
+3. **Headless Distillation:** Golem runs headlessly (`agy -p ... --output-format json` in `/Users/hermes/projects/golem`), eliminating exploration and failed attempts to isolate the golden path:
    - **Node Quirks:** Codified into `.agents/rules/<node>.md`.
    - **Repeatable Tasks:** Codified into `.agents/skills/<skill_name>/SKILL.md`.
 4. **Crystallization Briefing:** `:brain:` swaps to `:white_check_mark:`, and Golem posts a concise confirmation of the codified skill or rule.
@@ -126,7 +126,7 @@ Golem operates a decoupled, multi-sensory cognitive and execution architecture:
 
 1. **The Four Sensory Organs:**
    - **The Mouth (Liaison — `MOUTH_MODEL`):** The sole speaker to Carl in Slack/iMessage. Handles incoming conversations, dispatches backstage work via `dispatch_task`, queries sensory organs via `check_eyes` and `check_nose`, and synthesizes executive briefings in Slack mrkdwn (`*bold*`, inline `code`, clean bullets).
-   - **The Hands (Worker Engine — `FIRST_MATE_ENGINE` / `GOLEM_DEFAULT_HAND_WORKER`):** Backstage worker executing in Pane 2 (the runner). Runs tools, commands, git operations, builds, and test suites across fleet nodes via Herdr mesh. Standardized on `agy` by default with on-demand routing to `opencode` and `hermes`. Commands exceeding 3.0s yield an `ExecutionHandle(status="running")`. Never outputs raw text to Slack.
+   - **The Hands (Worker Engine — `GOLEM_ENGINE` / `GOLEM_DEFAULT_HAND_WORKER`):** Backstage worker executing in Pane 2 (the runner). Runs tools, commands, git operations, builds, and test suites across fleet nodes via Herdr mesh. Standardized on `agy` by default with on-demand routing to `opencode` and `hermes`. Commands exceeding 3.0s yield an `ExecutionHandle(status="running")`. Never outputs raw text to Slack.
    - **The Eyes (Task Observer — `EYES_MODEL`):** Non-blocking observer monitoring Pane 2 buffers every 15–30s with SHA-256 buffer change hashing (0 tokens when unchanged). Identifies blockers and task completions, emitting alerts across the Shoulder Tap bus.
    - **The Nose (Fleet Health Sentinel — `NOSE_MODEL`):** Autonomous 24/7 background sentinel running every 15m. Sniffs `bot.err` log tails, Docker containers, root disk pressure, and Tailscale mesh status. Zero-regex quiescent gate (0 tokens when clean). Emits alerts on anomalies and caches telemetry digests.
 
@@ -156,6 +156,6 @@ Golem operates a decoupled, multi-sensory cognitive and execution architecture:
 ## 12. On-Demand Messaging to Carl (Slack & iMessage)
 
 - **Proactive Outreach:** Golem can message Carl on demand across Slack (`D0C2J1HKNN7`), iMessage (`iMessage;-;k.horned@gmail.com`), or both whenever human attention, approval, or an executive decision is required.
-- **Thread Continuity:** Outbound root messages are registered in Golem's session registry (`~/.gemini/first-mate/sessions_registry.json`) for Slack and conversation history (`~/.gemini/first-mate/imessage_history/`) for iMessage. When Carl replies in the thread, Golem continues the conversation with full context.
+- **Thread Continuity:** Outbound root messages are registered in Golem's session registry (`~/.gemini/golem/sessions_registry.json`) for Slack and conversation history (`~/.gemini/golem/imessage_history/`) for iMessage. When Carl replies in the thread, Golem continues the conversation with full context.
 - **Execution:** Dispatched via `scripts/message_carl.py` or `from golem.notify import send_on_demand_message`.
 

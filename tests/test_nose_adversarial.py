@@ -26,6 +26,8 @@ Tests boundary conditions, stress inputs, fault tolerance, and unverified assump
    - Rapid start/stop cycling.
    - Concurrent tick() calls serialization under _sniff_lock.
    - Event bus subscriber exception isolation.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 from __future__ import annotations

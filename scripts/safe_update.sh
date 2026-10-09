@@ -27,12 +27,12 @@ if [ "${1:-}" = "--verify-only" ] || [ "${1:-}" = "--no-reload" ]; then
 fi
 
 # 2. Reload LaunchAgent daemon
-echo "🔄 Reloading launchd daemon: com.user.first-mate..."
-launchctl kickstart -k -p "gui/$(id -u)/com.user.first-mate"
+echo "🔄 Reloading launchd daemon: com.user.golem..."
+launchctl kickstart -k -p "gui/$(id -u)/com.user.golem"
 sleep 1
 
 # 3. Verify running daemon PID
-DAEMON_PID=$(pgrep -f "python.*first-mate/app.py" || true)
+DAEMON_PID=$(pgrep -f "python.*app.py" || true)
 if [ -n "${DAEMON_PID}" ]; then
     echo "🚀 First Mate is running cleanly under PID ${DAEMON_PID}."
 else

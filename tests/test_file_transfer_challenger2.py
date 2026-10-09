@@ -9,6 +9,8 @@ Empirical challenge test suite for Milestone 3 (Fleet Path Resolution & Upload R
    including challenge tests for fleet prefixes (hermes:.env, desktop-pc:.env) and symlinks.
 4. Simulated Slack API upload errors (HTTP 429, 500, network error) verifying session continuity,
    clean response text delivery, reaction swapping, and zero crashed sessions.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 from __future__ import annotations

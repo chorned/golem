@@ -7,6 +7,8 @@ Comprehensive unit test suite for HerdrClient:
 - FrugaLLM proxy routing (OPENAI_BASE_URL set to local proxy http://127.0.0.1:4000/v1).
 - Pane split allocation logic with --no-focus and --direction.
 - dispatch_worker flow: branch checkout, env injection, agent start, agent prompt --wait, agent read.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import os

@@ -15,6 +15,8 @@ Milestone 1 Iteration 4 Empirical Challenger Test Suite:
      - iMessage boundary handling (zero reaction removals attempted).
      - Concurrency storm test (50 concurrent empty file share events).
   3. End-to-end regression verification with Gemini API failure modes.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import os

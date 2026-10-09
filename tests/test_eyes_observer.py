@@ -10,6 +10,8 @@ Validates:
   - Watcher lifecycle management (clean start, periodic ticking, cancel/stop)
   - Offline/error fallback to deterministic buffer extraction
   - Dynamic model resolution without hardcoding
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import os
@@ -376,8 +378,11 @@ class TestEyesObserverLifecycle(unittest.IsolatedAsyncioTestCase):
         task = self.observer.start_monitoring(session_id="C1:1.0", pane="runner")
         self.assertFalse(task.done())
 
-        # Allow several intervals to execute
-        await asyncio.sleep(0.1)
+        # Allow several intervals to execute via dynamic polling
+        for _ in range(50):
+            if tick_count >= 3:
+                break
+            await asyncio.sleep(0.01)
         self.assertGreaterEqual(tick_count, 3)
 
         await self.observer.stop_monitoring()

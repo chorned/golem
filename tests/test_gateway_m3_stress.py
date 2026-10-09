@@ -16,6 +16,8 @@ Tests:
    - Adapter error during turn (verifying state=FAILED and lock release)
    - Closed session rejection (RuntimeError raised before/after lock acquisition)
    - Mixed high-concurrency race (get_or_create, send_user_message, teardown, reaper)
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import os

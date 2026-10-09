@@ -5,7 +5,7 @@ Timestamp: 2026-10-03T06:52:00Z
 Target Components: README.md, AGENTS.md, PROJECT.md, TASK_QUEUE.md, tests/test_documentation_and_manuals.py
 
 [PHASE 1: Flagship README.md Authoring]
-- Created /Users/hermes/projects/first-mate/README.md:
+- Created /Users/hermes/projects/golem/README.md:
   * Prominent Lineage Invariant:
     "Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh."
   * Project Header with status badges: CI/CD workflow, Python 3.11/3.12/3.13 matrix, Apache-2.0 License, Lineage citation.
@@ -30,17 +30,17 @@ Target Components: README.md, AGENTS.md, PROJECT.md, TASK_QUEUE.md, tests/test_d
   * Comprehensive Quickstart Guide:
     - Python 3.11+ and Herdr prerequisites.
     - Editable install (pip install -e . and pip install -e ".[dev]").
-    - Dual CLI entrypoints (golem and first-mate).
+    - Dual CLI entrypoints (golem and golem).
     - Environment configuration from .env.example.
     - Launchd service setup (com.user.golem.plist) and kickstart commands.
   * Dual-Layer Compatibility Shim Exposition:
     - _FirstMateAliasFinder on sys.meta_path.
-    - 100% object identity (assert first_mate is golem).
+    - 100% object identity (assert golem is golem).
     - Bidirectional mock patch fidelity and static mirror files.
   * Lineage & Pedigree credits with links to CONTRIBUTING.md and LICENSE.
 
 [PHASE 2: Operating Contract & Manual AGENTS.md Update]
-- Updated /Users/hermes/projects/first-mate/AGENTS.md:
+- Updated /Users/hermes/projects/golem/AGENTS.md:
   * Codified Lineage Invariant in header: "Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh."
   * Updated Golem Chief of Staff identity and FirstMate / Golem Pattern: One Captain (Carl), One Liaison (Golem Chief of Staff), backstage crew.
   * Integrated Decoupled Sensory Architecture: Mouth (Pane 1), Hands (Pane 2..N with AGY CLI default, pluggable routing to opencode/hermes), Eyes (buffer observer), Nose (sentinel), ShoulderTapEventBus.
@@ -54,7 +54,7 @@ Target Components: README.md, AGENTS.md, PROJECT.md, TASK_QUEUE.md, tests/test_d
   * Sensory inspection tools (check_eyes, check_nose) and mid-stream grounding.
 
 [PHASE 3: Comprehensive Test Suite Authoring]
-- Authored /Users/hermes/projects/first-mate/tests/test_documentation_and_manuals.py:
+- Authored /Users/hermes/projects/golem/tests/test_documentation_and_manuals.py:
   * TestLineageInvariantPresence: verified exact invariant string across README.md, AGENTS.md, PROJECT.md, CONTRIBUTING.md, LICENSE, and module docstring.
   * TestReadmeFlagshipContent: verified badges, all 5 failure modes of naive PTY scraping, decoupled tripartite solution, rich ASCII box art, WebUI documentation, quickstart steps, dual CLI entrypoints, and compatibility shims.
   * TestAgentsOperatingManual: verified Chief of Staff identity, One Captain One Liaison pattern, sensory roles, fleet topology table, reacji lifecycle, slash commands, and guardrails.

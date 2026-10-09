@@ -10,6 +10,8 @@ Validates:
   4. Thread context rehydration on all active thread replies without mutating clean_text
   5. Direct sensory command routing (/status, !status, /eyes, !eyes, /health, !health, /nose, !nose)
   6. Mouth system prompt calibration forbidding unprompted sensory tool calls during conversational chat
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import os
@@ -519,7 +521,7 @@ class TestGatewayR1Resiliency(unittest.IsolatedAsyncioTestCase):
     # --------------------------------------------------------------------------
     def test_mouth_prompt_forbids_unprompted_sensory_calls(self) -> None:
         """Verify Mouth system prompt explicitly forbids unprompted sensory tool calls."""
-        ingress_path = os.path.join(PROJECT_DIR, "golem", "gateway", "ingress.py")
+        ingress_path = os.path.join(PROJECT_DIR, "golem", "ingress.py")
         with open(ingress_path, "r", encoding="utf-8") as f:
             content = f.read()
 

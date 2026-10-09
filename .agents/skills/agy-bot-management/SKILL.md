@@ -1,6 +1,6 @@
 ---
 name: agy-bot-management
-description: Comprehensive operational runbook for monitoring, starting, stopping, restarting, debugging, and testing the AGY native macOS Slack background daemon (com.user.first-mate). Use whenever inspecting service status, viewing logs, updating configurations, or troubleshooting the AGY Slack bot.
+description: Comprehensive operational runbook for monitoring, starting, stopping, restarting, debugging, and testing the AGY native macOS Slack background daemon (com.user.golem). Use whenever inspecting service status, viewing logs, updating configurations, or troubleshooting the AGY Slack bot.
 ---
 
 # AGY Bot Management Guide
@@ -8,14 +8,14 @@ description: Comprehensive operational runbook for monitoring, starting, stoppin
 This skill provides step-by-step instructions for managing the native macOS background service that connects Slack to the local Antigravity CLI (`agy`).
 
 ## Service Architecture
-- **Daemon Label:** `com.user.first-mate` (launchd domain `gui/502`)
-- **Plist Location:** `~/Library/LaunchAgents/com.user.first-mate.plist`
-- **Entry Point:** `/Users/hermes/projects/first-mate/app.py`
-- **Project Directory:** `/Users/hermes/projects/first-mate`
-- **Virtual Environment:** `/Users/hermes/projects/first-mate/.venv`
+- **Daemon Label:** `com.user.golem` (launchd domain `gui/502`)
+- **Plist Location:** `~/Library/LaunchAgents/com.user.golem.plist`
+- **Entry Point:** `/Users/hermes/projects/golem/app.py`
+- **Project Directory:** `/Users/hermes/projects/golem`
+- **Virtual Environment:** `/Users/hermes/projects/golem/.venv`
 - **Log Files:** 
-  - Standard Out: `/Users/hermes/projects/first-mate/bot.log`
-  - Standard Error: `/Users/hermes/projects/first-mate/bot.err`
+  - Standard Out: `/Users/hermes/projects/golem/bot.log`
+  - Standard Error: `/Users/hermes/projects/golem/bot.err`
 - **Retired:** `com.user.antigravity-slack` (pointed at a deleted worktree, exited `78 EX_CONFIG`). Its plist is archived in `~/Library/LaunchAgents.disabled/`. Do not reload it.
 
 ---
@@ -24,7 +24,7 @@ This skill provides step-by-step instructions for managing the native macOS back
 
 To verify if the daemon is loaded and running:
 ```bash
-launchctl print gui/$(id -u)/com.user.first-mate | grep -E "state =|pid =|runs =|last exit"
+launchctl print gui/$(id -u)/com.user.golem | grep -E "state =|pid =|runs =|last exit"
 ```
 - **Output interpretation:**
   - `state = running` with a `pid`: Running healthy.
@@ -37,18 +37,18 @@ launchctl print gui/$(id -u)/com.user.first-mate | grep -E "state =|pid =|runs =
 
 ### Restarting the Service (Recommended after code/env updates)
 ```bash
-launchctl kickstart -k gui/$(id -u)/com.user.first-mate
+launchctl kickstart -k gui/$(id -u)/com.user.golem
 ```
-Then confirm with `tail -n 15 /Users/hermes/projects/first-mate/bot.err` and look for `Bolt app is running!`.
+Then confirm with `tail -n 15 /Users/hermes/projects/golem/bot.err` and look for `Bolt app is running!`.
 
 ### Stopping the Service
 ```bash
-launchctl bootout gui/$(id -u)/com.user.first-mate
+launchctl bootout gui/$(id -u)/com.user.golem
 ```
 
 ### Starting / Enabling the Service
 ```bash
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.user.first-mate.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.user.golem.plist
 ```
 
 ---
@@ -58,10 +58,10 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.user.first-mate.plis
 Real-time tailing of connection logs and errors:
 ```bash
 # View recent error and debug output (includes Socket Mode connection status)
-tail -f /Users/hermes/projects/first-mate/bot.err
+tail -f /Users/hermes/projects/golem/bot.err
 
 # View standard output
-tail -f /Users/hermes/projects/first-mate/bot.log
+tail -f /Users/hermes/projects/golem/bot.log
 ```
 
 ### Common Log Signatures:
@@ -75,7 +75,7 @@ tail -f /Users/hermes/projects/first-mate/bot.log
 
 Run the regression test suites covering in-memory locks, debouncer rate limits, `switch to` directory commands, post-execution git diff / artifact uploads, and the Herdr Chief of Staff persistent execution engine:
 ```bash
-cd /Users/hermes/projects/first-mate
+cd /Users/hermes/projects/golem
 ./.venv/bin/python3 -m unittest tests/test_app.py
 ./.venv/bin/python3 -m unittest tests/test_herdr_fleet.py
 ```
@@ -84,7 +84,7 @@ cd /Users/hermes/projects/first-mate
 
 ## 5. Configuration & Workspace Management
 
-- **Credentials & Defaults:** Stored in `/Users/hermes/projects/first-mate/.env`.
+- **Credentials & Defaults:** Stored in `/Users/hermes/projects/golem/.env`.
 - **Dynamic Workspace Switch:** In any Slack thread, users can send:
   ```text
   switch to /path/to/project

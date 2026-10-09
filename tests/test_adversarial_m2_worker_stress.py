@@ -10,6 +10,8 @@ Covers all 5 Captain Directives:
 3. Security boundaries: injection, path traversal, unknown worker names.
 4. Parameter precedence: worker over subagent, subagent fallback, default resolution.
 5. Environment variable overrides: hierarchy, dirty whitespace, engine exclusions.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import os
@@ -203,7 +205,7 @@ class TestAdversarialWorkerNameVariations(unittest.TestCase):
     def test_config_antigravity_alias_standardization(self):
         """get_default_hand_worker() standardizes 'antigravity' to 'agy' across all env vars."""
         with patch.object(golem.config, "_get_file_env", return_value={}):
-            for var in ["GOLEM_DEFAULT_HAND_WORKER", "FIRSTMATE_DEFAULT_HAND_WORKER", "FIRST_MATE_DEFAULT_HAND_WORKER"]:
+            for var in ["GOLEM_DEFAULT_HAND_WORKER", "FIRSTMATE_DEFAULT_HAND_WORKER", "FIRSTMATE_DEFAULT_HAND_WORKER"]:
                 with patch.dict(os.environ, {var: "antigravity"}, clear=True):
                     self.assertEqual(golem.config.get_default_hand_worker(), "agy")
                 with patch.dict(os.environ, {var: "  ANTIGRAVITY  "}, clear=True):
@@ -275,7 +277,7 @@ class TestAdversarialParameterPrecedence(unittest.IsolatedAsyncioTestCase):
         self.orig_env = os.environ.copy()
         os.environ.pop("GOLEM_DEFAULT_HAND_WORKER", None)
         os.environ.pop("FIRSTMATE_DEFAULT_HAND_WORKER", None)
-        os.environ.pop("FIRST_MATE_DEFAULT_HAND_WORKER", None)
+        os.environ.pop("FIRSTMATE_DEFAULT_HAND_WORKER", None)
 
     def tearDown(self):
         os.environ.clear()
@@ -372,11 +374,11 @@ class TestAdversarialEnvVarOverrides(unittest.TestCase):
             }, clear=True):
                 self.assertEqual(golem.config.get_default_hand_worker(), "opencode")
 
-            # Spaces in both -> falls through to FIRST_MATE_DEFAULT_HAND_WORKER
+            # Spaces in both -> falls through to FIRSTMATE_DEFAULT_HAND_WORKER
             with patch.dict(os.environ, {
                 "GOLEM_DEFAULT_HAND_WORKER": " ",
                 "FIRSTMATE_DEFAULT_HAND_WORKER": "   \n\t",
-                "FIRST_MATE_DEFAULT_HAND_WORKER": "hermes"
+                "FIRSTMATE_DEFAULT_HAND_WORKER": "hermes"
             }, clear=True):
                 self.assertEqual(golem.config.get_default_hand_worker(), "hermes")
 
@@ -386,16 +388,16 @@ class TestAdversarialEnvVarOverrides(unittest.TestCase):
         as hand worker default. Must safely fall back to 'agy'.
         """
         with patch.object(golem.config, "_get_file_env", return_value={}):
-            # FIRST_MATE_ENGINE="claude_code"
-            with patch.dict(os.environ, {"FIRST_MATE_ENGINE": "claude_code"}, clear=True):
+            # GOLEM_ENGINE="claude_code"
+            with patch.dict(os.environ, {"GOLEM_ENGINE": "claude_code"}, clear=True):
                 self.assertEqual(golem.config.get_default_hand_worker(), "agy")
 
             # GOLEM_ENGINE="claude_code"
             with patch.dict(os.environ, {"GOLEM_ENGINE": "claude_code"}, clear=True):
                 self.assertEqual(golem.config.get_default_hand_worker(), "agy")
 
-            # FIRST_MATE_ENGINE="claude"
-            with patch.dict(os.environ, {"FIRST_MATE_ENGINE": "claude"}, clear=True):
+            # GOLEM_ENGINE="claude"
+            with patch.dict(os.environ, {"GOLEM_ENGINE": "claude"}, clear=True):
                 self.assertEqual(golem.config.get_default_hand_worker(), "agy")
 
             # GOLEM_ENGINE="claude"
@@ -403,24 +405,24 @@ class TestAdversarialEnvVarOverrides(unittest.TestCase):
                 self.assertEqual(golem.config.get_default_hand_worker(), "agy")
 
             # Mixed casing and whitespace: "  Claude_Code  "
-            with patch.dict(os.environ, {"FIRST_MATE_ENGINE": "  Claude_Code  "}, clear=True):
+            with patch.dict(os.environ, {"GOLEM_ENGINE": "  Claude_Code  "}, clear=True):
                 self.assertEqual(golem.config.get_default_hand_worker(), "agy")
 
     def test_legitimate_engine_hand_fallback(self):
         """Legitimate hand engine drivers (opencode, hermes) when no hand worker set are used."""
         with patch.object(golem.config, "_get_file_env", return_value={}):
-            with patch.dict(os.environ, {"FIRST_MATE_ENGINE": "opencode"}, clear=True):
+            with patch.dict(os.environ, {"GOLEM_ENGINE": "opencode"}, clear=True):
                 self.assertEqual(golem.config.get_default_hand_worker(), "opencode")
 
-            with patch.dict(os.environ, {"FIRST_MATE_ENGINE": "hermes"}, clear=True):
+            with patch.dict(os.environ, {"GOLEM_ENGINE": "hermes"}, clear=True):
                 self.assertEqual(golem.config.get_default_hand_worker(), "hermes")
 
-    def test_shim_parity_first_mate_config(self):
+    def test_shim_parity_golem_config(self):
         """Verifies golem.config exports identical behavior under all adversarial conditions."""
         with patch.object(golem.config, "_get_file_env", return_value={}):
             with patch.object(golem.config, "_get_file_env", return_value={}):
                 # Claude code exclusion
-                with patch.dict(os.environ, {"FIRST_MATE_ENGINE": "claude_code"}, clear=True):
+                with patch.dict(os.environ, {"GOLEM_ENGINE": "claude_code"}, clear=True):
                     self.assertEqual(golem.config.get_default_hand_worker(), "agy")
                     self.assertEqual(golem.config.get_default_hand_worker(), golem.config.get_default_hand_worker())
 

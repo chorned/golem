@@ -6,6 +6,8 @@ Wraps the `gh` CLI to automate branch lifecycles, PR creation, review summaries,
 and branch pruning without requiring Carl to manage git manually.
 Recognizes the secondary GitHub machine account on `desktop-pc` for worker PR authorship
 and branch protection reviews.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import os
@@ -18,7 +20,7 @@ from typing import Dict, Any, Optional, List, Tuple
 
 logger = logging.getLogger("AGY.GitHubManager")
 
-HOST_DIR = os.environ.get("FIRST_MATE_HOST_DIR", os.path.dirname(os.path.abspath(__file__)))
+HOST_DIR = os.environ.get("GOLEM_HOST_DIR", os.path.dirname(os.path.abspath(__file__)))
 PROJECT_ROOT = HOST_DIR
 DEFAULT_TARGET_REPO = os.environ.get("DEFAULT_TARGET_REPO", "/Users/hermes/projects/AGY")
 

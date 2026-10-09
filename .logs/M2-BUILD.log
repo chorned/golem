@@ -6,11 +6,11 @@ Target Components: golem/config.py, golem/execution/, herdr_tools.py, tests/test
 
 [PHASE 1: Centralized Hand Worker Resolution]
 - Implemented get_default_hand_worker() in golem/config.py.
-- Resolves GOLEM_DEFAULT_HAND_WORKER -> FIRSTMATE_DEFAULT_HAND_WORKER / FIRST_MATE_DEFAULT_HAND_WORKER -> .env fallback.
+- Resolves GOLEM_DEFAULT_HAND_WORKER -> FIRSTMATE_DEFAULT_HAND_WORKER / golem_DEFAULT_HAND_WORKER -> .env fallback.
 - Normalizes casing and strips whitespace: (val or "").strip().lower() or "agy".
 - Standardizes "antigravity" to "agy". Excludes engine-only drivers (claude_code) from hand worker resolution.
 - Re-exported in golem/execution/__init__.py and golem/execution/delegation.py.
-- Mirrored cleanly through first_mate/config.py and first_mate/execution/__init__.py shims.
+- Mirrored cleanly through golem/config.py and golem/execution/__init__.py shims.
 
 [PHASE 2: herdr_tools Standardized Signatures & Defaults]
 - Updated herdr_spawn signature: worker: Optional[str] = None. Defaults to get_default_hand_worker() ('agy').

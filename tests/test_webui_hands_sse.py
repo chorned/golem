@@ -11,6 +11,8 @@ Validates:
   5. ShoulderTapEventBus ↔ WebUI SSE bridge (eye_log, eye_telemetry, nose_alert, nose_telemetry).
   6. Cross-thread alert dispatch via loop.call_soon_threadsafe without event loop deadlock.
   7. In-memory log ring buffering replacing filesystem scraping.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 from __future__ import annotations

@@ -2,6 +2,8 @@
 """
 tests/mock_adversarial_proc.py
 Adversarial subprocess for stress-testing HeadlessAgentAdapter.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import sys

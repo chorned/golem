@@ -11,6 +11,8 @@ Verifies:
 - TC-SYNC-04: False-positive background substring immunity in synchronous tool outputs.
 - TC-SYNC-05: Multi-turn alternating fast and slow continuity with zero cross-talk.
 - TC-SYNC-06: Pre-turn pipe buffer purge stress test (50+ stale NDJSON lines discarded).
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 from __future__ import annotations
@@ -292,7 +294,7 @@ class TestAgentStreamSync(unittest.IsolatedAsyncioTestCase):
         ]
 
         mock_proc = MockDelayProcess(init_json, stream)
-        adapter = HeadlessAgentAdapter(cwd="/Users/hermes/projects/first-mate")
+        adapter = HeadlessAgentAdapter(cwd="/Users/hermes/projects/golem")
 
         with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec:
             mock_exec.return_value = mock_proc
@@ -377,7 +379,7 @@ class TestAgentStreamSync(unittest.IsolatedAsyncioTestCase):
         ]
 
         mock_proc = MockDelayProcess(init_json, stream)
-        adapter = HeadlessAgentAdapter(cwd="/Users/hermes/projects/first-mate")
+        adapter = HeadlessAgentAdapter(cwd="/Users/hermes/projects/golem")
 
         with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec:
             mock_exec.return_value = mock_proc
@@ -400,7 +402,7 @@ class TestAgentStreamSync(unittest.IsolatedAsyncioTestCase):
         """
         mock_bin = os.path.abspath("tests/mock_agy_proc.py")
         adapter = HeadlessAgentAdapter(
-            cwd="/Users/hermes/projects/first-mate",
+            cwd="/Users/hermes/projects/golem",
             agy_bin=mock_bin,
             env={"MOCK_AGY_MODE": "normal"},
         )
@@ -483,7 +485,7 @@ class TestAgentStreamSync(unittest.IsolatedAsyncioTestCase):
         ]
 
         mock_proc = MockDelayProcess(init_json, stream)
-        adapter = HeadlessAgentAdapter(cwd="/Users/hermes/projects/first-mate")
+        adapter = HeadlessAgentAdapter(cwd="/Users/hermes/projects/golem")
 
         with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec:
             mock_exec.return_value = mock_proc
@@ -511,7 +513,7 @@ class TestAgentStreamSync(unittest.IsolatedAsyncioTestCase):
             "init": {"tools": ["herdr_pane_run"]},
         })
         mock_proc = MultiTurnMockProcess(init_json)
-        adapter = HeadlessAgentAdapter(cwd="/Users/hermes/projects/first-mate")
+        adapter = HeadlessAgentAdapter(cwd="/Users/hermes/projects/golem")
 
         with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec:
             mock_exec.return_value = mock_proc
@@ -542,7 +544,7 @@ class TestAgentStreamSync(unittest.IsolatedAsyncioTestCase):
         """
         mock_bin = os.path.abspath("tests/mock_agy_proc.py")
         adapter = HeadlessAgentAdapter(
-            cwd="/Users/hermes/projects/first-mate",
+            cwd="/Users/hermes/projects/golem",
             agy_bin=mock_bin,
             env={"MOCK_AGY_MODE": "normal"},
         )
@@ -638,7 +640,7 @@ class TestThoughtDeltaAndWebUIFormatting(unittest.TestCase):
 
         start_ev = ToolStartEvent(
             tool_name="run_command",
-            parameters={"CommandLine": "pytest tests/test_agent.py", "Cwd": "/workspace/first-mate"},
+            parameters={"CommandLine": "pytest tests/test_agent.py", "Cwd": "/workspace/golem"},
         )
         formatted_start = _format_hand_event_for_webui(start_ev)
         self.assertIsNotNone(formatted_start)

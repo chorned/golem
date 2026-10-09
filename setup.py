@@ -18,12 +18,11 @@ setup(
     version="2.1.0",
     description="Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.",
     long_description="Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.",
-    packages=find_packages(include=["golem*", "first_mate*"]),
+    packages=find_packages(include=["golem*"]),
     py_modules=["app"],
     entry_points={
         "console_scripts": [
             "golem=golem.cli:main",
-            "first-mate=golem.cli:main",
         ],
     },
 )

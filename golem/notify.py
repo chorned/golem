@@ -8,11 +8,12 @@ on demand across Slack, iMessage, or both when attention or decision is needed.
 
 Thread Continuity Architecture:
 - Slack: Posts root message to Carl's DM channel (or specified channel), captures `ts`,
-  and registers `channel:ts` in Golem's persistent session registry (~/.gemini/first-mate/sessions_registry.json).
+  and registers `channel:ts` in Golem's persistent session registry (~/.gemini/golem/sessions_registry.json).
   When Carl replies in thread, Golem rehydrates the session and fetches the full thread context.
 - iMessage: Posts message via BlueBubbles API to Carl's chat GUID, captures dispatched `guid`,
-  and persists it in BlueBubbles conversation history (~/.gemini/first-mate/imessage_history).
-  When Carl replies (inline or in chat), Golem loads the history and continues the thread.
+  and persists it in BlueBubbles conversation history (~/.gemini/golem/imessage_history).
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 from __future__ import annotations
@@ -29,25 +30,27 @@ from dotenv import load_dotenv
 
 logger = logging.getLogger("Golem.Notify")
 
-# Ensure .env is loaded from standard project roots
-for env_path in [
-    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env"),
-    os.path.expanduser("/Users/hermes/projects/first-mate/.env"),
-    os.path.expanduser("~/.hermes/.env"),
-]:
-    if os.path.isfile(env_path):
-        load_dotenv(dotenv_path=env_path)
+# Ensure .env is loaded from standard project roots (skip in test mode to allow clean env patching)
+_is_test = os.environ.get("GOLEM_TEST_MODE") == "1"
+if not _is_test:
+    for env_path in [
+        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env"),
+        os.path.expanduser("/Users/hermes/projects/golem/.env"),
+        os.path.expanduser("~/.hermes/.env"),
+    ]:
+        if os.path.isfile(env_path):
+            load_dotenv(dotenv_path=env_path)
 
 # Default Recipients & Channels
 DEFAULT_SLACK_USER_ID = "UAM3FCV5L"
 DEFAULT_SLACK_CHANNEL = "D0C2J1HKNN7"  # Carl's 1:1 DM channel with Golem (@agy)
 DEFAULT_IMESSAGE_CHAT_GUID = "iMessage;-;k.horned@gmail.com"
-DEFAULT_REGISTRY_PATH = os.path.expanduser("~/.gemini/first-mate/sessions_registry.json")
+DEFAULT_REGISTRY_PATH = os.path.expanduser("~/.gemini/golem/sessions_registry.json")
 
 
 def _record_slack_session_registry(channel: str, thread_ts: str, registry_path: Optional[str] = None) -> None:
     """Register an outbound on-demand root message in Golem's session registry for thread continuity."""
-    path = registry_path or os.environ.get("FIRSTMATE_SESSIONS_REGISTRY_PATH") or DEFAULT_REGISTRY_PATH
+    path = registry_path or os.environ.get("GOLEM_SESSIONS_REGISTRY_PATH") or os.environ.get("FIRSTMATE_SESSIONS_REGISTRY_PATH") or DEFAULT_REGISTRY_PATH
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         registry: Dict[str, Any] = {}
@@ -101,7 +104,7 @@ async def send_slack_message(
         logger.error("Missing SLACK_BOT_TOKEN for on-demand Slack messaging")
         return {"ok": False, "error": "Missing SLACK_BOT_TOKEN"}
 
-    target_channel = channel or os.environ.get("FIRSTMATE_DEFAULT_CHANNEL") or DEFAULT_SLACK_CHANNEL
+    target_channel = channel or os.environ.get("GOLEM_DEFAULT_CHANNEL") or DEFAULT_SLACK_CHANNEL
 
     try:
         from slack_sdk.web.async_client import AsyncWebClient

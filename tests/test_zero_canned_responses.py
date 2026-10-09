@@ -4,6 +4,8 @@ tests/test_zero_canned_responses.py
 Strict architectural regression suite verifying that ZERO canned responses exist.
 Every subsystem must either produce dynamic LLM generation, live-probed telemetry,
 or fail loudly with diagnostic error markers and appropriate error reactions.
+
+Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
 import asyncio
