@@ -5,16 +5,23 @@ Golem is the open-source evolution of First Mate, powered by Herdr's distributed
 golem/wiki.py
 Git-backed Operational Memory Wiki:
   - Standalone Git repository at ~/.golem/wiki/ (configurable via GOLEM_WIKI_DIR).
-  - Standard hierarchy: runbooks/, context/, logbook/.
+  - 4-Tier Memory Topology:
+      • context/rules/: Tier 1 Facts (node invariants, OS quirks, TCC/AX permissions)
+      • context/topology.md: Tier 1 Facts (fleet-wide IPs, Tailscale endpoints)
+      • context/capabilities.md: Tier 2 Capabilities (available tools, CLIs, package affordances)
+      • runbooks/skills/: Tier 3 Skills (procedural execution recipes)
+      • runbooks/flows/: Tier 4 Flows (reactive reflexes & event-driven orchestration)
+      • logbook/: Chronological operational journal (logbook/YYYY-MM-DD.md)
   - Concurrency safety with in-process asyncio.Lock() and cross-process fcntl.flock().
-  - Atomic writes with tempfile, replace, git commit, and automated rollback on failure.
-  - User confirmation gate: auto-commit logbook entries, explicit [y/n] gate for runbooks/context.
+  - Atomic multi-file and single-file changesets with rollback and single Git commits.
+  - User confirmation gate: auto-commit logbook entries, explicit [y/n] gate for proposals.
 """
 
 from __future__ import annotations
 
 import os
 import sys
+import time
 import fcntl
 import uuid
 import difflib
@@ -23,23 +30,126 @@ import asyncio
 import threading
 import subprocess
 import contextlib
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Union
 
 logger = logging.getLogger("Golem.Wiki")
 
 DEFAULT_WIKI_DIR = os.path.expanduser("~/.golem/wiki")
 
+DEFAULT_CAPABILITIES_TEMPLATE = """# Fleet Capabilities & Affordances
 
-class WikiSecurityError(Exception):
+Institutional inventory of tools, CLIs, libraries, and package affordances available across fleet nodes.
+
+## hermes (localhost)
+- **Engine**: Antigravity CLI (`agy`) - Primary Hand worker
+- **Native Multimodal**: Built-in image generation (`generate_image`)
+- **Computer Use**: `macos-computer-use-kit` staged for AX UI automation & autonomous token refresh
+- **Homelab Ops**: Docker & storage administration (`hermes -z`)
+
+## desktop-pc (Windows)
+- **Compute**: High-VRAM NVIDIA GPU / CUDA execution
+- **Workloads**: PyTorch model training & local heavy benchmarks
+
+## personal-laptop (macOS)
+- **Role**: Carl's active workstation (strict ad-hoc execution only)
+
+## oci-machine (Oracle Cloud)
+- **Role**: Cloud VPS, WireGuard VPN, edge ingress, public services
+"""
+
+DEFAULT_TOPOLOGY_TEMPLATE = """# Fleet Topology & Host Mapping
+
+| Machine | Role | Host / Tailscale IP | Execution Mode |
+| :--- | :--- | :--- | :--- |
+| `hermes` | Chief of Staff & Dev Anchor | `localhost` (`/Users/hermes`) | Local `agy` CLI |
+| `desktop-pc` | Compute Grid (Windows) | `100.80.59.45` | Remote SSH / cmd runner |
+| `personal-laptop` | Active Workstation (Ad-hoc) | `100.96.38.5` | Remote SSH (3s timeout) |
+| `oci-machine` | Cloud Ops (VPS Linux) | `100.113.173.33` | Remote SSH (guardrailed) |
+"""
+
+
+class WikiError(Exception):
+    """Base exception for Golem Wiki errors."""
+    pass
+
+
+class WikiSecurityError(WikiError):
     """Raised when a path attempts directory traversal outside the wiki repository."""
     pass
+
+
+class CommitResult(str):
+    """
+    Commit hash result string that evaluates equal to True and non-empty string,
+    ensuring full backward compatibility with legacy bool assertions.
+    """
+    def __eq__(self, other: Any) -> bool:
+        if other is True:
+            return True
+        return super().__eq__(other)
+
+    def __bool__(self) -> bool:
+        return True
+
+
+@dataclass
+class StagedChange:
+    """Represents a single file modification staged in a memory proposal."""
+    tier: str                 # "fact" | "capability" | "skill" | "flow" | "logbook"
+    rel_path: str             # e.g., "context/rules/hermes.md"
+    content: str              # Full new file content
+    diff_preview: str         # Generated via difflib.unified_diff
+    is_new_file: bool = False
+
+
+@dataclass
+class MemoryProposal:
+    """Represents an atomic multi-tier institutional memory proposal."""
+    token: str                # e.g., "prop_3f8a1b2c"
+    summary: str
+    changes: List[StagedChange]
+    created_at: float = field(default_factory=time.time)
+    commit_hash: Optional[str] = None
+    status: str = "pending"
+
+    def consolidated_diff(self) -> str:
+        """Produce unified diff preview across all staged changes."""
+        snippets = []
+        for change in self.changes:
+            action = "New file" if change.is_new_file else "Modified"
+            snippets.append(
+                f"--- a/{change.rel_path} ({change.tier})\n"
+                f"+++ b/{change.rel_path} ({action})\n"
+                f"{change.diff_preview.strip()}"
+            )
+        return "\n\n".join(snippets)
+
+    def to_slack_card(self) -> str:
+        """Format proposal as actionable Slack/iMessage review card."""
+        lines = [
+            f"🧠 *Memory Distillation Proposal* — {self.summary}",
+            f"Proposal Token: `{self.token}`\n",
+            "Changes to apply:",
+        ]
+        for idx, change in enumerate(self.changes, 1):
+            tier_name = change.tier.capitalize()
+            action = "New file" if change.is_new_file else "Updated"
+            lines.append(f"{idx}. [{tier_name}] ──► `{change.rel_path}` ({action})")
+
+        diffs = self.consolidated_diff()
+        if diffs:
+            lines.append(f"\n```{diffs}\n```")
+        lines.append("\nReply `confirm` or `commit` to apply, or describe adjustments.")
+        return "\n".join(lines)
 
 
 class GolemWiki:
     """
     Git-backed Operational Memory Wiki for Project Golem.
     Stores operational runbooks, architecture context, and daily logbook journals.
+    Supports atomic multi-file changesets across 4 memory tiers under single prop_ tokens.
     """
 
     def __init__(self, wiki_dir: Optional[str] = None):
@@ -51,7 +161,8 @@ class GolemWiki:
         self._thread_lock = threading.RLock()
         self._lock_depth = 0
         self._lock_file = None
-        self._pending_updates: Dict[str, Dict[str, Any]] = {}
+        self._pending_updates: Dict[str, Any] = {}
+        self.last_commit_hash: Optional[str] = None
         self.init_repo()
 
     def _safe_path(self, rel_path: str) -> str:
@@ -95,9 +206,16 @@ class GolemWiki:
                 yield
 
     def init_repo(self) -> None:
-        """Ensure wiki directory, standard subdirectories, and git repository are initialized."""
+        """Ensure wiki directory, standard 4-tier subdirectories, and git repository are initialized."""
         with self.file_lock():
-            for subdir in ("runbooks", "context", "logbook"):
+            for subdir in (
+                "runbooks",
+                "runbooks/skills",
+                "runbooks/flows",
+                "context",
+                "context/rules",
+                "logbook",
+            ):
                 os.makedirs(os.path.join(self.wiki_dir, subdir), exist_ok=True)
 
             git_dir = os.path.join(self.wiki_dir, ".git")
@@ -118,6 +236,16 @@ class GolemWiki:
                     with open(ignore_path, "w", encoding="utf-8") as f:
                         f.write(".wiki.lock\n*.tmp\n")
 
+                cap_path = os.path.join(self.wiki_dir, "context", "capabilities.md")
+                if not os.path.exists(cap_path):
+                    with open(cap_path, "w", encoding="utf-8") as f:
+                        f.write(DEFAULT_CAPABILITIES_TEMPLATE)
+
+                topo_path = os.path.join(self.wiki_dir, "context", "topology.md")
+                if not os.path.exists(topo_path):
+                    with open(topo_path, "w", encoding="utf-8") as f:
+                        f.write(DEFAULT_TOPOLOGY_TEMPLATE)
+
                 subprocess.run(["git", "add", "-A"], cwd=self.wiki_dir, check=True, capture_output=True)
                 subprocess.run(
                     [
@@ -131,6 +259,37 @@ class GolemWiki:
                     check=True,
                     capture_output=True,
                 )
+            else:
+                created_any = False
+                cap_path = os.path.join(self.wiki_dir, "context", "capabilities.md")
+                if not os.path.exists(cap_path):
+                    with open(cap_path, "w", encoding="utf-8") as f:
+                        f.write(DEFAULT_CAPABILITIES_TEMPLATE)
+                    created_any = True
+
+                topo_path = os.path.join(self.wiki_dir, "context", "topology.md")
+                if not os.path.exists(topo_path):
+                    with open(topo_path, "w", encoding="utf-8") as f:
+                        f.write(DEFAULT_TOPOLOGY_TEMPLATE)
+                    created_any = True
+
+                if created_any:
+                    try:
+                        subprocess.run(["git", "add", "-A"], cwd=self.wiki_dir, check=True, capture_output=True)
+                        subprocess.run(
+                            [
+                                "git",
+                                "-c", "user.name=Golem",
+                                "-c", "user.email=golem@fleet.local",
+                                "commit",
+                                "-m", "chore(wiki): scaffold 4-tier default context templates",
+                            ],
+                            cwd=self.wiki_dir,
+                            check=True,
+                            capture_output=True,
+                        )
+                    except Exception as e:
+                        logger.debug(f"Git commit for default templates notice: {e}")
 
     def read(self, rel_path: str) -> Optional[str]:
         """Read content of a wiki document relative to the wiki root."""
@@ -186,6 +345,14 @@ class GolemWiki:
                     check=True,
                     capture_output=True,
                 )
+                res = subprocess.run(
+                    ["git", "rev-parse", "--short", "HEAD"],
+                    cwd=self.wiki_dir,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+                self.last_commit_hash = res.stdout.strip()
                 return True
             except Exception as e:
                 logger.error(f"Error during atomic wiki write to {rel_path}: {e}")
@@ -206,7 +373,7 @@ class GolemWiki:
                         os.remove(target)
                     except OSError:
                         pass
-                raise
+                raise WikiError(f"Write failure for {rel_path}: {e}") from e
 
     def search(self, query: str) -> List[Dict[str, Any]]:
         """Search markdown documents in the wiki for query string."""
@@ -283,7 +450,9 @@ class GolemWiki:
         """
         Stage a proposed runbook or context update requiring explicit [y/n] user confirmation.
         Returns approval card payload with diff summary and pending token.
+        Preserves legacy single-file contract.
         """
+        self._safe_path(rel_path)
         current_content = self.read(rel_path) or ""
         diff_lines = list(
             difflib.unified_diff(
@@ -296,7 +465,7 @@ class GolemWiki:
         diff_summary = "".join(diff_lines) if diff_lines else "(No content change)"
 
         token = f"prop_{uuid.uuid4().hex[:8]}"
-        self._pending_updates[token] = {
+        payload = {
             "token": token,
             "path": rel_path,
             "content": content,
@@ -305,6 +474,7 @@ class GolemWiki:
             "status": "pending",
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
+        self._pending_updates[token] = payload
 
         return {
             "token": token,
@@ -319,28 +489,230 @@ class GolemWiki:
             ),
         }
 
-    def confirm_update(self, token: str) -> bool:
-        """Execute and commit a pending update that received human confirmation."""
+    def propose_multi_update(
+        self,
+        summary: str,
+        changes: List[Union[Dict[str, Any], StagedChange]],
+    ) -> MemoryProposal:
+        """
+        Stage an atomic multi-file proposal across the 4 memory tiers under a single token.
+        Strictly validates all paths for directory traversal before staging.
+        """
+        # Validate all paths upfront for directory traversal
+        for ch in changes:
+            rel_p = ch.rel_path if isinstance(ch, StagedChange) else str(ch.get("rel_path", ""))
+            self._safe_path(rel_p)
+
+        staged_changes: List[StagedChange] = []
+        for ch in changes:
+            if isinstance(ch, StagedChange):
+                staged_changes.append(ch)
+                continue
+
+            tier = str(ch.get("tier", "fact")).lower()
+            rel_path = str(ch.get("rel_path", "")).lstrip("/\\")
+            content = str(ch.get("content", ""))
+
+            current_content = self.read(rel_path) or ""
+            target_p = self._safe_path(rel_path)
+            is_new = not os.path.exists(target_p)
+
+            diff_lines = list(
+                difflib.unified_diff(
+                    current_content.splitlines(keepends=True),
+                    content.splitlines(keepends=True),
+                    fromfile=f"a/{rel_path}",
+                    tofile=f"b/{rel_path}",
+                )
+            )
+            diff_summary = "".join(diff_lines) if diff_lines else ("(New file)" if is_new else "(No content change)")
+
+            staged_changes.append(
+                StagedChange(
+                    tier=tier,
+                    rel_path=rel_path,
+                    content=content,
+                    diff_preview=diff_summary,
+                    is_new_file=is_new,
+                )
+            )
+
+        token = f"prop_{uuid.uuid4().hex[:8]}"
+        proposal = MemoryProposal(
+            token=token,
+            summary=summary,
+            changes=staged_changes,
+            created_at=time.time(),
+        )
+
+        self._pending_updates[token] = proposal
+        return proposal
+
+    def confirm_update(self, token: str) -> Union[CommitResult, bool]:
+        """
+        Execute and commit a pending update (single-file or multi-file MemoryProposal)
+        that received human confirmation.
+        Acquires file_lock, performs atomic replacement of all files, stages in git,
+        and creates a single atomic commit. Rolls back on failure and raises WikiError.
+        """
         proposal = self._pending_updates.get(token)
-        if not proposal or proposal.get("status") != "pending":
+        if not proposal:
             return False
 
-        rel_path = proposal["path"]
-        content = proposal["content"]
-        reason = proposal.get("reason", "Approved operational update")
+        if isinstance(proposal, dict) and proposal.get("status") != "pending":
+            return False
 
-        self.write(
-            rel_path=rel_path,
-            content=content,
-            commit_msg=f"feat(wiki): update {rel_path} [{reason}] (approved: {token})",
-        )
-        proposal["status"] = "approved"
-        return True
+        is_proposal_obj = isinstance(proposal, MemoryProposal)
+
+        if is_proposal_obj:
+            changes_to_apply = proposal.changes
+            summary = proposal.summary or "Institutional memory update"
+        else:
+            rel_p = proposal["path"]
+            content = proposal["content"]
+            target_p = self._safe_path(rel_p)
+            changes_to_apply = [
+                StagedChange(
+                    tier="context",
+                    rel_path=rel_p,
+                    content=content,
+                    diff_preview=proposal.get("diff", ""),
+                    is_new_file=not os.path.exists(target_p),
+                )
+            ]
+            summary = proposal.get("reason", "Approved operational update")
+
+        # Validate all paths
+        for ch in changes_to_apply:
+            self._safe_path(ch.rel_path)
+
+        backups: Dict[str, Optional[str]] = {}
+        written_targets: List[str] = []
+        tmp_targets: List[str] = []
+
+        with self.file_lock():
+            try:
+                # 1. Atomically write each file
+                for ch in changes_to_apply:
+                    target = self._safe_path(ch.rel_path)
+                    parent = os.path.dirname(target)
+                    os.makedirs(parent, exist_ok=True)
+
+                    if os.path.exists(target):
+                        with open(target, "r", encoding="utf-8", errors="replace") as f:
+                            backups[target] = f.read()
+                    else:
+                        backups[target] = None
+
+                    tmp_target = target + f".{uuid.uuid4().hex[:6]}.tmp"
+                    tmp_targets.append(tmp_target)
+
+                    with open(tmp_target, "w", encoding="utf-8") as f:
+                        f.write(ch.content)
+                        f.flush()
+                        os.fsync(f.fileno())
+
+                    os.replace(tmp_target, target)
+                    tmp_targets.remove(tmp_target)
+                    written_targets.append(target)
+
+                # 2. Stage all files in git
+                for ch in changes_to_apply:
+                    target = self._safe_path(ch.rel_path)
+                    rel = os.path.relpath(target, self.wiki_dir)
+                    subprocess.run(["git", "add", rel], cwd=self.wiki_dir, check=True, capture_output=True)
+
+                # 3. Single atomic commit
+                if is_proposal_obj:
+                    commit_msg = f"memory: [{token}] {summary}"
+                else:
+                    commit_msg = f"feat(wiki): update {changes_to_apply[0].rel_path} [{summary}] (approved: {token})"
+
+                subprocess.run(
+                    [
+                        "git",
+                        "-c", "user.name=Golem",
+                        "-c", "user.email=golem@fleet.local",
+                        "commit",
+                        "-m", commit_msg,
+                        "--author", "Golem <golem@fleet.local>",
+                    ],
+                    cwd=self.wiki_dir,
+                    check=True,
+                    capture_output=True,
+                )
+
+                res = subprocess.run(
+                    ["git", "rev-parse", "--short", "HEAD"],
+                    cwd=self.wiki_dir,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+                commit_hash = res.stdout.strip()
+                result = CommitResult(commit_hash)
+                self.last_commit_hash = commit_hash
+                if is_proposal_obj:
+                    proposal.commit_hash = commit_hash
+                    proposal.status = "approved"
+                else:
+                    proposal["status"] = "approved"
+                    proposal["commit_hash"] = commit_hash
+
+                del self._pending_updates[token]
+                return result
+            except Exception as e:
+                logger.error(f"Error during atomic memory confirm_update for {token}: {e}")
+                # Rollback temp files
+                for tmp in list(tmp_targets):
+                    try:
+                        if os.path.exists(tmp):
+                            os.remove(tmp)
+                    except OSError:
+                        pass
+
+                # Rollback written targets
+                for target, prev_content in backups.items():
+                    try:
+                        if prev_content is not None:
+                            with open(target, "w", encoding="utf-8") as f:
+                                f.write(prev_content)
+                        elif os.path.exists(target):
+                            os.remove(target)
+                    except OSError:
+                        pass
+
+                # Reset git index
+                try:
+                    subprocess.run(["git", "reset", "HEAD", "--", "."], cwd=self.wiki_dir, capture_output=True)
+                except Exception:
+                    pass
+
+                raise WikiError(f"Atomic memory commit failed for {token}: {e}") from e
 
     def reject_update(self, token: str) -> bool:
         """Reject and discard a pending update."""
         proposal = self._pending_updates.get(token)
-        if not proposal or proposal.get("status") != "pending":
+        if not proposal:
             return False
-        proposal["status"] = "rejected"
+        if isinstance(proposal, dict):
+            if proposal.get("status") != "pending":
+                return False
+            proposal["status"] = "rejected"
+        else:
+            proposal.status = "rejected"
+        del self._pending_updates[token]
         return True
+
+
+__all__ = [
+    "GolemWiki",
+    "WikiError",
+    "WikiSecurityError",
+    "CommitResult",
+    "StagedChange",
+    "MemoryProposal",
+    "DEFAULT_WIKI_DIR",
+    "DEFAULT_CAPABILITIES_TEMPLATE",
+    "DEFAULT_TOPOLOGY_TEMPLATE",
+]
