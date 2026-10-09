@@ -351,6 +351,23 @@ class OutboxManager:
         meta_file = self.meta_dir / f"{artifact_id}.json"
         meta.save_meta(meta_file)
         logger.info(f"Staged artifact '{meta.filename}' ({artifact_id}) to {dest_path}")
+
+        try:
+            from golem.state import get_default_task_ledger
+            ledger = get_default_task_ledger()
+            ledger.record_artifact(
+                artifact_id=artifact_id,
+                task_id=session_id or "standalone",
+                channel=channel or "default",
+                thread_ts=thread_ts or "default",
+                rel_path=rel_path,
+                abs_path=str(dest_path),
+                sha256=sha256,
+                size_bytes=file_size,
+            )
+        except Exception as le:
+            logger.debug(f"TaskLedger record_artifact notice: {le}")
+
         return meta
 
     async def stage_from_remote(
@@ -652,178 +669,20 @@ async def share_artifact(
     Updates metadata to mark shared=True upon successful upload.
     Auto-binds last_artifact context to active session.
     Satisfies Stage 4 Channel-Context Artifact Sandboxing invariant.
+    Delegates to golem.tools.delivery.share_artifact.
     """
-    mgr = outbox_manager or get_default_outbox_manager()
-
-    target_path = path
-    active_session = session
-    if active_session is None:
-        try:
-            from golem.session import get_current_session
-            active_session = get_current_session()
-        except Exception:
-            pass
-
-    if not target_path:
-        if artifact_id:
-            meta_rec = mgr.get_artifact(artifact_id)
-            if not meta_rec:
-                raise FileNotFoundError(f"Artifact ID '{artifact_id}' not found.")
-            target_path = meta_rec.absolute_path
-            if not session_id and meta_rec.session_id:
-                session_id = meta_rec.session_id
-        elif active_session is not None and hasattr(active_session, "get_last_artifact"):
-            last_art = active_session.get_last_artifact()
-            if last_art:
-                if isinstance(last_art, dict):
-                    target_path = last_art.get("absolute_path") or last_art.get("path")
-                    if not artifact_id:
-                        artifact_id = last_art.get("artifact_id")
-                    if not session_id:
-                        session_id = last_art.get("session_id")
-                elif hasattr(last_art, "absolute_path"):
-                    target_path = last_art.absolute_path
-                    if not artifact_id:
-                        artifact_id = getattr(last_art, "artifact_id", None)
-                    if not session_id:
-                        session_id = getattr(last_art, "session_id", None)
-                elif isinstance(last_art, str):
-                    target_path = last_art
-
-    if not target_path:
-        raise ValueError("No artifact specified and no active last_artifact found in session context.")
-
-    resolved_path = assert_sandboxed_path(target_path, sandbox_root=mgr.root_dir)
-
-    if not resolved_path.is_file():
-        raise FileNotFoundError(f"Artifact does not exist at {resolved_path}")
-
-    filename = resolved_path.name
-    file_size = resolved_path.stat().st_size
-    sha256 = calculate_sha256(resolved_path)
-    mime_type_val, _ = mimetypes.guess_type(str(resolved_path))
-    mime_type = mime_type_val or "application/octet-stream"
-    rel_path = str(resolved_path.relative_to(mgr.root_dir))
-    upload_title = title or f"Artifact: {filename}"
-
-    is_shared = False
-    shared_at = None
-    upload_resp_data = None
-
-    if client is not None and channel:
-        upload_kwargs: Dict[str, Any] = {
-            "channel": channel,
-            "file": str(resolved_path),
-            "filename": filename,
-            "title": upload_title,
-        }
-        if thread_ts:
-            upload_kwargs["thread_ts"] = thread_ts
-
-        if hasattr(client, "files_upload_v2"):
-            res = client.files_upload_v2(**upload_kwargs)
-            resp = await res if inspect.isawaitable(res) else res
-        elif hasattr(client, "upload_file"):
-            res = client.upload_file(**upload_kwargs)
-            resp = await res if inspect.isawaitable(res) else res
-        else:
-            raise AttributeError("Slack client does not provide files_upload_v2 or upload_file method.")
-
-        upload_resp_data = (
-            resp if isinstance(resp, dict) else (
-                resp.data if hasattr(resp, "data") else {"ok": True, "file": filename}
-            )
-        )
-        is_shared = True
-        shared_at = time.time()
-
-    # Try to find and update artifact metadata
-    matched_meta: Optional[ArtifactMetadata] = None
-    if artifact_id:
-        matched_meta = mgr.get_artifact(artifact_id)
-    if matched_meta is None:
-        for meta in mgr.list_artifacts():
-            if meta.absolute_path == str(resolved_path):
-                matched_meta = meta
-                break
-
-    resolved_session_id = session_id or (getattr(active_session, "session_id", None) if active_session else None)
-
-    if matched_meta:
-        if is_shared:
-            matched_meta.shared = True
-            matched_meta.shared_at = shared_at
-            if channel:
-                matched_meta.channel = channel
-            if thread_ts:
-                matched_meta.thread_ts = thread_ts
-        if resolved_session_id and not matched_meta.session_id:
-            matched_meta.session_id = resolved_session_id
-        meta_file = mgr.meta_dir / f"{matched_meta.artifact_id}.json"
-        matched_meta.save_meta(meta_file)
-        art_id = matched_meta.artifact_id
-        resolved_session_id = matched_meta.session_id or resolved_session_id
-    else:
-        art_id = artifact_id or f"art_{int(time.time())}_{uuid.uuid4().hex[:8]}"
-        new_meta = ArtifactMetadata(
-            artifact_id=art_id,
-            filename=filename,
-            relative_path=rel_path,
-            absolute_path=str(resolved_path),
-            sha256=sha256,
-            size_bytes=file_size,
-            created_at=time.time(),
-            mime_type=mime_type,
-            session_id=resolved_session_id,
-            channel=channel,
-            thread_ts=thread_ts,
-            shared=is_shared,
-            shared_at=shared_at,
-            staged_by="share_artifact",
-            tags=["shared"] if is_shared else [],
-        )
-        meta_file = mgr.meta_dir / f"{art_id}.json"
-        new_meta.save_meta(meta_file)
-        matched_meta = new_meta
-
-    file_info = (
-        (upload_resp_data.get("file") if isinstance(upload_resp_data, dict) else filename)
-        if upload_resp_data
-        else filename
+    from golem.tools.delivery import share_artifact as _delivery_share
+    return await _delivery_share(
+        path=path,
+        client=client,
+        channel=channel,
+        thread_ts=thread_ts,
+        title=title,
+        outbox_manager=outbox_manager,
+        artifact_id=artifact_id,
+        session_id=session_id,
+        session=session,
     )
-
-    result_dict: Dict[str, Any] = {
-        "ok": True,
-        "path": str(resolved_path),
-        "absolute_path": str(resolved_path),
-        "relative_path": rel_path,
-        "filename": filename,
-        "size_bytes": file_size,
-        "size": file_size,
-        "mime_type": mime_type,
-        "sha256": sha256,
-        "artifact_id": art_id,
-        "session_id": resolved_session_id,
-        "shared": is_shared,
-        "shared_at": shared_at,
-        "channel": channel,
-        "thread_ts": thread_ts,
-        "title": upload_title,
-        "upload_metadata": upload_resp_data,
-        "slack_response": upload_resp_data,
-        "directive": f"[SEND_FILE: {resolved_path}]",
-        "file": file_info,
-    }
-
-    # Auto-bind artifact metadata to session.record_artifact() if session is available
-    if active_session is not None and hasattr(active_session, "record_artifact"):
-        try:
-            active_session.record_artifact(result_dict)
-        except Exception as e:
-            logger.debug(f"Failed to auto-bind artifact to session: {e}")
-
-    logger.info(f"Shared sandboxed artifact '{filename}' ({resolved_path}) to channel {channel}")
-    return result_dict
 
 
 __all__ = [
