@@ -1271,9 +1271,44 @@
         .btn-start:active {
             transform: scale(0.96);
         }
+
+        .wiki-nav-link {
+            position: fixed;
+            top: 14px;
+            right: 18px;
+            z-index: 9999;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: rgba(13, 15, 22, 0.88);
+            border: 1px solid var(--border-stone);
+            border-radius: 4px;
+            padding: 5px 12px;
+            color: var(--runic-cyan);
+            font-family: var(--font-crt);
+            font-size: 13px;
+            text-decoration: none;
+            letter-spacing: 1px;
+            backdrop-filter: blur(4px);
+            transition: all 0.2s ease;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
+        }
+        .wiki-nav-link:hover {
+            border-color: var(--runic-cyan);
+            background: rgba(0, 240, 255, 0.15);
+            box-shadow: 0 0 10px rgba(0, 240, 255, 0.4);
+            color: #ffffff;
+            transform: translateY(-1px);
+        }
     </style>
 </head>
 <body class="dark">
+    <!-- Floating Link to Golem Memory Wiki -->
+    <a href="/wiki" class="wiki-nav-link" title="Open Golem Operational Memory Wiki">
+        <span>📖</span>
+        <span>WIKI</span>
+    </a>
+
     <!-- Background Image: Ancient Robotic Stone Golem Colossus -->
     <div class="colossus-backdrop">
         <img alt="Ancient Stone Colossus Mech" class="colossus-img" id="colossus-img" src="/colossus.png" />
@@ -1321,6 +1356,7 @@
         <button class="mobile-tab-btn" data-tab="nose">👃 Nose</button>
         <button class="mobile-tab-btn" data-tab="mouth">👄 Mouth</button>
         <button class="mobile-tab-btn" data-tab="fleet">🌐 Fleet</button>
+        <a href="/wiki" class="mobile-tab-btn" style="text-decoration: none; display: flex; align-items: center; justify-content: center; color: var(--runic-cyan);">📖 Wiki</a>
     </nav>
 
     <!-- Hidden metadata for test / system invariants -->

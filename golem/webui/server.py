@@ -48,6 +48,7 @@ logger = logging.getLogger("golem.webui")
 _CURRENT_DIR = Path(__file__).resolve().parent
 _TEMPLATES_DIR = _CURRENT_DIR / "templates"
 _DASHBOARD_FILE = _TEMPLATES_DIR / "dashboard.html"
+_WIKI_FILE = _TEMPLATES_DIR / "wiki.html"
 
 if _DASHBOARD_FILE.exists():
     try:
@@ -428,6 +429,11 @@ class WebUIServer:
         self.app.router.add_delete("/api/hands/{pane_id}", self.handle_kill_hand)
         self.app.router.add_post("/api/panes/{pane_id}/kill", self.handle_kill_hand)
         self.app.router.add_delete("/api/panes/{pane_id}", self.handle_kill_hand)
+        self.app.router.add_get("/wiki", self.handle_wiki)
+        self.app.router.add_get("/api/wiki/tree", self.handle_wiki_tree)
+        self.app.router.add_get("/api/wiki/doc", self.handle_wiki_doc)
+        self.app.router.add_post("/api/wiki/save", self.handle_wiki_save)
+        self.app.router.add_get("/api/wiki/search", self.handle_wiki_search)
 
     def start_hand_simulation(self, count: int = 6) -> None:
         """Start background simulation of N hand agents for testing/demonstration."""
@@ -610,6 +616,74 @@ class WebUIServer:
             except Exception:
                 pass
         return web.Response(text=html, content_type="text/html", charset="utf-8")
+
+    async def handle_wiki(self, request: web.Request) -> web.Response:
+        """Render Golem Operational Memory Wiki UI."""
+        if _WIKI_FILE.exists():
+            try:
+                html = _WIKI_FILE.read_text(encoding="utf-8")
+                return web.Response(text=html, content_type="text/html", charset="utf-8")
+            except Exception as e:
+                logger.error(f"Error reading wiki template: {e}")
+        return web.Response(text="<h1>Golem Memory Wiki</h1><p>Template missing.</p>", content_type="text/html")
+
+    async def handle_wiki_tree(self, request: web.Request) -> web.Response:
+        """Return categorized tree of all documents in ~/.golem/wiki/."""
+        from golem.wiki import GolemWiki
+        wiki = GolemWiki()
+        docs = wiki.list_documents()
+        tree: Dict[str, List[str]] = {"context": [], "runbooks": [], "logbook": [], "other": []}
+        for d in docs:
+            parts = d.split("/", 1)
+            cat = parts[0] if len(parts) > 1 and parts[0] in tree else "other"
+            tree[cat].append(d)
+        return web.json_response({"ok": True, "tree": tree, "docs": docs})
+
+    async def handle_wiki_doc(self, request: web.Request) -> web.Response:
+        """Read and return content of a wiki document by relative path."""
+        path = request.query.get("path", "").strip()
+        if not path:
+            return web.json_response({"ok": False, "error": "Path parameter required"}, status=400)
+        from golem.wiki import GolemWiki
+        wiki = GolemWiki()
+        try:
+            content = wiki.read(path)
+            if content is None:
+                return web.json_response({"ok": False, "error": f"Document '{path}' not found"}, status=404)
+            abs_p = wiki._safe_path(path)
+            mtime = os.path.getmtime(abs_p) if os.path.exists(abs_p) else time.time()
+            return web.json_response({"ok": True, "path": path, "content": content, "mtime": mtime})
+        except Exception as e:
+            return web.json_response({"ok": False, "error": str(e)}, status=400)
+
+    async def handle_wiki_save(self, request: web.Request) -> web.Response:
+        """Save and commit an operational document to ~/.golem/wiki/ via GolemWiki."""
+        try:
+            data = await request.json()
+            path = data.get("path", "").strip()
+            content = data.get("content", "")
+            commit_msg = data.get("commit_msg") or f"feat(wiki): web edit {path}"
+            if not path:
+                return web.json_response({"ok": False, "error": "Path required"}, status=400)
+            from golem.wiki import GolemWiki
+            wiki = GolemWiki()
+            success = wiki.write(
+                rel_path=path,
+                content=content,
+                commit_msg=commit_msg,
+                author="Carl <carl@fleet.local>",
+            )
+            return web.json_response({"ok": success, "path": path})
+        except Exception as e:
+            return web.json_response({"ok": False, "error": str(e)}, status=400)
+
+    async def handle_wiki_search(self, request: web.Request) -> web.Response:
+        """Search markdown documents in ~/.golem/wiki/."""
+        query = request.query.get("q", "").strip()
+        from golem.wiki import GolemWiki
+        wiki = GolemWiki()
+        results = wiki.search(query)
+        return web.json_response({"ok": True, "results": results})
 
     async def handle_colossus_bg(self, request: web.Request) -> web.Response:
         """Serve local colossus backdrop image for air-gapped / offline retro aesthetic."""

@@ -1,0 +1,716 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>GOLEM // Operational Memory Wiki</title>
+    <!-- Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh. -->
+    <style>
+        :root {
+            --bg-base: #080c10;
+            --bg-void: #050608;
+            --bg-card: #0d0f16;
+            --bg-sidebar: #090c12;
+            --border-stone: #232834;
+            --border-red: #38080c;
+            --header-red-1: #ff2a2a;
+            --header-red-2: #b80000;
+            --header-red-3: #7a0000;
+            --runic-cyan: #00f0ff;
+            --runic-gold: #ffd700;
+            --runic-green: #00e676;
+            --font-pixel: 'Press Start 2P', 'Courier New', monospace;
+            --font-crt: 'VT323', 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+            --font-space: 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            background-color: var(--bg-void);
+            color: #d1d5db;
+            font-family: var(--font-space);
+            font-size: 14px;
+            height: 100vh;
+            width: 100vw;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        /* Top Header Bar */
+        .wiki-header {
+            background: linear-gradient(180deg, #131722 0%, #0d0f16 100%);
+            border-bottom: 1px solid var(--border-stone);
+            padding: 10px 20px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-shrink: 0;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.6);
+        }
+
+        .wiki-brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .back-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: rgba(0, 240, 255, 0.08);
+            border: 1px solid rgba(0, 240, 255, 0.3);
+            border-radius: 4px;
+            padding: 4px 10px;
+            color: var(--runic-cyan);
+            font-family: var(--font-crt);
+            font-size: 13px;
+            text-decoration: none;
+            transition: all 0.2s;
+        }
+        .back-link:hover {
+            background: rgba(0, 240, 255, 0.2);
+            box-shadow: 0 0 8px rgba(0, 240, 255, 0.4);
+            color: #ffffff;
+        }
+
+        .wiki-title {
+            font-family: var(--font-crt);
+            font-size: 18px;
+            color: #ffffff;
+            letter-spacing: 1.5px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .wiki-path-badge {
+            font-family: var(--font-crt);
+            font-size: 13px;
+            color: var(--runic-gold);
+            background: rgba(255, 215, 0, 0.08);
+            border: 1px solid rgba(255, 215, 0, 0.25);
+            padding: 3px 8px;
+            border-radius: 3px;
+            max-width: 320px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .wiki-actions {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .btn {
+            font-family: var(--font-crt);
+            font-size: 14px;
+            padding: 5px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            border: 1px solid var(--border-stone);
+            background: #141822;
+            color: #d1d5db;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.2s;
+        }
+        .btn:hover {
+            background: #1c2230;
+            color: #ffffff;
+        }
+
+        .btn-cyan {
+            border-color: var(--runic-cyan);
+            color: var(--runic-cyan);
+            background: rgba(0, 240, 255, 0.08);
+        }
+        .btn-cyan:hover {
+            background: rgba(0, 240, 255, 0.25);
+            box-shadow: 0 0 10px rgba(0, 240, 255, 0.4);
+        }
+
+        .btn-green {
+            border-color: var(--runic-green);
+            color: var(--runic-green);
+            background: rgba(0, 230, 118, 0.08);
+        }
+        .btn-green:hover {
+            background: rgba(0, 230, 118, 0.25);
+            box-shadow: 0 0 10px rgba(0, 230, 118, 0.4);
+        }
+
+        /* Main Split Workspace */
+        .wiki-layout {
+            display: flex;
+            flex: 1;
+            height: calc(100vh - 54px);
+            overflow: hidden;
+        }
+
+        /* Left Navigation Sidebar */
+        .wiki-sidebar {
+            width: 320px;
+            background: var(--bg-sidebar);
+            border-right: 1px solid var(--border-stone);
+            display: flex;
+            flex-direction: column;
+            flex-shrink: 0;
+            overflow: hidden;
+        }
+
+        .wiki-search-box {
+            padding: 12px;
+            border-bottom: 1px solid var(--border-stone);
+            background: rgba(0, 0, 0, 0.2);
+        }
+        .wiki-search-input {
+            width: 100%;
+            background: #0d1017;
+            border: 1px solid var(--border-stone);
+            border-radius: 4px;
+            padding: 6px 10px;
+            color: #ffffff;
+            font-family: var(--font-space);
+            font-size: 13px;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+        .wiki-search-input:focus {
+            border-color: var(--runic-cyan);
+            box-shadow: 0 0 8px rgba(0, 240, 255, 0.2);
+        }
+
+        .wiki-tree {
+            flex: 1;
+            overflow-y: auto;
+            padding: 12px;
+        }
+
+        .tree-category {
+            margin-bottom: 18px;
+        }
+        .tree-category-title {
+            font-family: var(--font-crt);
+            font-size: 12px;
+            color: #94a3b8;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            padding: 4px 6px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            margin-bottom: 6px;
+        }
+
+        .tree-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 8px;
+            border-radius: 4px;
+            color: #cbd5e1;
+            font-size: 13px;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            text-decoration: none;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .tree-item:hover {
+            background: rgba(255, 255, 255, 0.06);
+            color: #ffffff;
+        }
+        .tree-item.active {
+            background: rgba(0, 240, 255, 0.12);
+            color: var(--runic-cyan);
+            font-weight: 500;
+            border-left: 2px solid var(--runic-cyan);
+        }
+
+        /* Main Document Viewport */
+        .wiki-main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background: var(--bg-void);
+            overflow: hidden;
+            position: relative;
+        }
+
+        /* Reader Content Pane */
+        .wiki-reader {
+            flex: 1;
+            overflow-y: auto;
+            padding: 32px 48px;
+            max-width: 960px;
+            margin: 0 auto;
+            width: 100%;
+            line-height: 1.6;
+        }
+
+        /* Editor Content Pane */
+        .wiki-editor-pane {
+            display: none;
+            flex-direction: column;
+            flex: 1;
+            padding: 20px 32px;
+            gap: 12px;
+            overflow: hidden;
+            max-width: 1100px;
+            margin: 0 auto;
+            width: 100%;
+        }
+
+        .wiki-textarea {
+            flex: 1;
+            background: #090c12;
+            border: 1px solid var(--border-stone);
+            border-radius: 6px;
+            padding: 16px;
+            color: #f1f5f9;
+            font-family: var(--font-crt);
+            font-size: 15px;
+            line-height: 1.5;
+            resize: none;
+            outline: none;
+        }
+        .wiki-textarea:focus {
+            border-color: var(--runic-cyan);
+            box-shadow: 0 0 10px rgba(0, 240, 255, 0.2);
+        }
+
+        .commit-bar {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        .commit-input {
+            flex: 1;
+            background: #090c12;
+            border: 1px solid var(--border-stone);
+            border-radius: 4px;
+            padding: 8px 12px;
+            color: #ffffff;
+            font-family: var(--font-space);
+            font-size: 13px;
+            outline: none;
+        }
+        .commit-input:focus {
+            border-color: var(--runic-green);
+        }
+
+        /* Markdown Typography */
+        .markdown-body h1 {
+            font-size: 26px;
+            color: #ffffff;
+            border-bottom: 1px solid var(--border-stone);
+            padding-bottom: 8px;
+            margin-bottom: 18px;
+            letter-spacing: 0.5px;
+        }
+        .markdown-body h2 {
+            font-size: 20px;
+            color: #e2e8f0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            padding-bottom: 6px;
+            margin-top: 24px;
+            margin-bottom: 14px;
+        }
+        .markdown-body h3 {
+            font-size: 16px;
+            color: var(--runic-cyan);
+            margin-top: 18px;
+            margin-bottom: 10px;
+        }
+        .markdown-body p {
+            margin-bottom: 14px;
+            color: #cbd5e1;
+        }
+        .markdown-body ul, .markdown-body ol {
+            margin-bottom: 14px;
+            padding-left: 24px;
+            color: #cbd5e1;
+        }
+        .markdown-body li {
+            margin-bottom: 4px;
+        }
+        .markdown-body pre {
+            background: #0a0d14;
+            border: 1px solid var(--border-stone);
+            border-radius: 6px;
+            padding: 14px;
+            overflow-x: auto;
+            margin-bottom: 16px;
+            font-family: var(--font-crt);
+            font-size: 14px;
+            color: #f8fafc;
+        }
+        .markdown-body code {
+            font-family: var(--font-crt);
+            background: rgba(255, 255, 255, 0.08);
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 13px;
+            color: var(--runic-gold);
+        }
+        .markdown-body pre code {
+            background: transparent;
+            padding: 0;
+            color: inherit;
+        }
+        .markdown-body blockquote {
+            border-left: 3px solid var(--runic-cyan);
+            background: rgba(0, 240, 255, 0.04);
+            padding: 8px 16px;
+            margin-bottom: 14px;
+            color: #94a3b8;
+            font-style: italic;
+        }
+        .markdown-body table {
+            border-collapse: collapse;
+            width: 100%;
+            margin-bottom: 16px;
+        }
+        .markdown-body th, .markdown-body td {
+            border: 1px solid var(--border-stone);
+            padding: 8px 12px;
+            text-align: left;
+        }
+        .markdown-body th {
+            background: #0f141d;
+            color: #ffffff;
+            font-weight: 600;
+        }
+
+        /* Empty placeholder */
+        .empty-state {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            color: #64748b;
+            gap: 12px;
+            text-align: center;
+        }
+
+        /* Feedback Toast */
+        .toast {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: rgba(13, 15, 22, 0.95);
+            border: 1px solid var(--runic-cyan);
+            box-shadow: 0 0 16px rgba(0, 240, 255, 0.3);
+            color: #ffffff;
+            padding: 10px 18px;
+            border-radius: 4px;
+            font-family: var(--font-crt);
+            font-size: 14px;
+            z-index: 99999;
+            opacity: 0;
+            transform: translateY(10px);
+            transition: all 0.25s ease;
+            pointer-events: none;
+        }
+        .toast.show {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Header Navigation -->
+    <header class="wiki-header">
+        <div class="wiki-brand">
+            <a href="/" class="back-link">⚡️ TELEMETRY MATRIX</a>
+            <div class="wiki-title">
+                <span>📖 GOLEM MEMORY WIKI</span>
+            </div>
+            <div id="active-path-badge" class="wiki-path-badge" style="display: none;">No document loaded</div>
+        </div>
+        <div class="wiki-actions">
+            <button id="edit-toggle-btn" class="btn btn-cyan" onclick="toggleEditMode()">✏️ EDIT</button>
+            <button id="view-toggle-btn" class="btn" onclick="toggleEditMode()" style="display: none;">👁️ VIEW</button>
+            <button id="reload-btn" class="btn" onclick="reloadCurrentDoc()" title="Reload from Git">🔄 REFRESH</button>
+        </div>
+    </header>
+
+    <!-- Split Workspace -->
+    <div class="wiki-layout">
+        <!-- Sidebar -->
+        <aside class="wiki-sidebar">
+            <div class="wiki-search-box">
+                <input type="text" id="doc-filter" class="wiki-search-input" placeholder="Filter documents (e.g. rules, skills)..." oninput="filterDocuments()"/>
+            </div>
+            <div class="wiki-tree" id="wiki-tree">
+                <div style="color: #64748b; padding: 12px; text-align: center;">Loading wiki tree...</div>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="wiki-main">
+            <!-- Reader Pane -->
+            <article class="wiki-reader markdown-body" id="wiki-reader">
+                <div class="empty-state">
+                    <span style="font-size: 32px;">📖</span>
+                    <h3>Select an operational document from the sidebar to view</h3>
+                    <p style="font-size: 13px;">All rules, skills, and logbooks are versioned in Git at ~/.golem/wiki</p>
+                </div>
+            </article>
+
+            <!-- Editor Pane -->
+            <div class="wiki-editor-pane" id="wiki-editor-pane">
+                <textarea id="wiki-editor-area" class="wiki-textarea" placeholder="Markdown document content..."></textarea>
+                <div class="commit-bar">
+                    <input type="text" id="commit-msg-input" class="commit-input" placeholder="Commit message (e.g. feat(wiki): update rule)"/>
+                    <button class="btn btn-green" onclick="saveDocument()">💾 COMMIT TO GIT</button>
+                    <button class="btn" onclick="toggleEditMode()">CANCEL</button>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Toast Notification -->
+    <div id="toast" class="toast"></div>
+
+    <script>
+        let currentPath = null;
+        let isEditMode = false;
+        let allDocs = [];
+
+        // Simple built-in Markdown Parser (zero external CDN dependency required)
+        function renderMarkdown(md) {
+            if (!md) return '';
+            let html = md
+                // Escape HTML tags to prevent XSS
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;');
+
+            // Code blocks ```code```
+            html = html.replace(/```([a-zA-Z0-9_+-]*)\n([\s\S]*?)```/g, (match, lang, code) => {
+                return `<pre><code class="language-${lang}">${code}</code></pre>`;
+            });
+
+            // Blockquotes
+            html = html.replace(/^\&gt;\s?(.*)$/gm, '<blockquote>$1</blockquote>');
+
+            // Headers
+            html = html.replace(/^### (.*$)/gm, '<h3>$1</h3>');
+            html = html.replace(/^## (.*$)/gm, '<h2>$1</h2>');
+            html = html.replace(/^# (.*$)/gm, '<h1>$1</h1>');
+
+            // Horizontal Rules
+            html = html.replace(/^---$/gm, '<hr style="border: none; border-top: 1px solid var(--border-stone); margin: 20px 0;"/>');
+
+            // Bold & Italics
+            html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+            html = html.replace(/\*(.*?)\*/g, '<em>$1</em>');
+            html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+
+            // Unordered Lists
+            html = html.replace(/^\s*[-*]\s(.*)$/gm, '<li>$1</li>');
+            html = html.replace(/(<li>[\s\S]*?<\/li>)/g, '<ul>$1</ul>');
+            // Clean consecutive ULs
+            html = html.replace(/<\/ul>\s*<ul>/g, '');
+
+            // Paragraphs
+            html = html.split('\n\n').map(p => {
+                p = p.trim();
+                if (!p) return '';
+                if (p.startsWith('<h') || p.startsWith('<pre') || p.startsWith('<ul') || p.startsWith('<blockquote') || p.startsWith('<hr')) {
+                    return p;
+                }
+                return `<p>${p.replace(/\n/g, '<br/>')}</p>`;
+            }).join('\n');
+
+            return html;
+        }
+
+        function showToast(msg, duration = 3000) {
+            const t = document.getElementById('toast');
+            t.innerText = msg;
+            t.classList.add('show');
+            setTimeout(() => t.classList.remove('show'), duration);
+        }
+
+        async function fetchWikiTree() {
+            try {
+                const res = await fetch('/api/wiki/tree');
+                const data = await res.json();
+                if (data.ok) {
+                    allDocs = data.docs || [];
+                    renderTree(data.tree);
+                    if (allDocs.length > 0 && !currentPath) {
+                        loadDocument(allDocs[0]);
+                    }
+                }
+            } catch (e) {
+                console.error("Error fetching wiki tree:", e);
+                document.getElementById('wiki-tree').innerHTML = '<div style="color: #ef4444; padding: 12px;">Failed to load wiki tree.</div>';
+            }
+        }
+
+        function renderTree(tree) {
+            const container = document.getElementById('wiki-tree');
+            container.innerHTML = '';
+
+            const categories = [
+                { key: 'context', title: '📐 Operational Rules', icon: '⚖️' },
+                { key: 'runbooks', title: '🛠️ Runbooks & Skills', icon: '⚡' },
+                { key: 'logbook', title: '📜 Logbook & History', icon: '📝' },
+                { key: 'other', title: '📁 Other Documents', icon: '📄' }
+            ];
+
+            categories.forEach(cat => {
+                const items = tree[cat.key] || [];
+                if (items.length === 0) return;
+
+                const catDiv = document.createElement('div');
+                catDiv.className = 'tree-category';
+                catDiv.innerHTML = `<div class="tree-category-title">${cat.title} (${items.length})</div>`;
+
+                items.forEach(docPath => {
+                    const item = document.createElement('a');
+                    item.className = 'tree-item' + (docPath === currentPath ? ' active' : '');
+                    item.dataset.path = docPath;
+                    const displayName = docPath.split('/').pop();
+                    item.innerHTML = `<span>${cat.icon}</span> <span>${displayName}</span>`;
+                    item.onclick = (e) => {
+                        e.preventDefault();
+                        loadDocument(docPath);
+                    };
+                    catDiv.appendChild(item);
+                });
+
+                container.appendChild(catDiv);
+            });
+        }
+
+        function filterDocuments() {
+            const q = document.getElementById('doc-filter').value.toLowerCase();
+            const items = document.querySelectorAll('.tree-item');
+            items.forEach(el => {
+                const p = (el.dataset.path || '').toLowerCase();
+                el.style.display = p.includes(q) ? 'flex' : 'none';
+            });
+        }
+
+        async function loadDocument(relPath) {
+            currentPath = relPath;
+            document.querySelectorAll('.tree-item').forEach(el => {
+                el.classList.toggle('active', el.dataset.path === relPath);
+            });
+
+            const badge = document.getElementById('active-path-badge');
+            badge.style.display = 'inline-block';
+            badge.innerText = relPath;
+
+            try {
+                const res = await fetch('/api/wiki/doc?path=' + encodeURIComponent(relPath));
+                const data = await res.json();
+                if (data.ok) {
+                    const reader = document.getElementById('wiki-reader');
+                    reader.innerHTML = renderMarkdown(data.content);
+                    document.getElementById('wiki-editor-area').value = data.content;
+                    document.getElementById('commit-msg-input').value = `feat(wiki): update ${relPath.split('/').pop()}`;
+
+                    if (isEditMode) {
+                        toggleEditMode(false);
+                    }
+                } else {
+                    document.getElementById('wiki-reader').innerHTML = `<div class="empty-state"><h3>Error loading document:</h3><p>${data.error}</p></div>`;
+                }
+            } catch (e) {
+                console.error("Error loading document:", e);
+                showToast("Failed to load document.");
+            }
+        }
+
+        function toggleEditMode(force) {
+            if (force !== undefined) {
+                isEditMode = force;
+            } else {
+                isEditMode = !isEditMode;
+            }
+
+            const reader = document.getElementById('wiki-reader');
+            const editor = document.getElementById('wiki-editor-pane');
+            const editBtn = document.getElementById('edit-toggle-btn');
+            const viewBtn = document.getElementById('view-toggle-btn');
+
+            if (isEditMode) {
+                reader.style.display = 'none';
+                editor.style.display = 'flex';
+                editBtn.style.display = 'none';
+                viewBtn.style.display = 'inline-flex';
+                document.getElementById('wiki-editor-area').focus();
+            } else {
+                reader.style.display = 'block';
+                editor.style.display = 'none';
+                editBtn.style.display = 'inline-flex';
+                viewBtn.style.display = 'none';
+            }
+        }
+
+        async function saveDocument() {
+            if (!currentPath) {
+                showToast("No document selected.");
+                return;
+            }
+
+            const content = document.getElementById('wiki-editor-area').value;
+            const commitMsg = document.getElementById('commit-msg-input').value.trim() || `feat(wiki): update ${currentPath}`;
+
+            try {
+                const res = await fetch('/api/wiki/save', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        path: currentPath,
+                        content: content,
+                        commit_msg: commitMsg
+                    })
+                });
+                const data = await res.json();
+                if (data.ok) {
+                    showToast("✅ Committed to Git successfully!");
+                    document.getElementById('wiki-reader').innerHTML = renderMarkdown(content);
+                    toggleEditMode(false);
+                } else {
+                    showToast("❌ Error saving: " + (data.error || 'Unknown error'));
+                }
+            } catch (e) {
+                console.error("Error saving document:", e);
+                showToast("❌ Network error saving document.");
+            }
+        }
+
+        function reloadCurrentDoc() {
+            if (currentPath) {
+                loadDocument(currentPath);
+                showToast("🔄 Refreshed from disk");
+            }
+        }
+
+        // Initialize on page load
+        window.addEventListener('DOMContentLoaded', () => {
+            fetchWikiTree();
+        });
+    </script>
+</body>
+</html>
