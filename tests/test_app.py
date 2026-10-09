@@ -64,8 +64,9 @@ class TestThinIngressGateway(unittest.IsolatedAsyncioTestCase):
 
     def test_target_directory_resolution_for_named_projects(self):
         """Verify prompt mentioning a specific project in ~/projects resolves to that directory."""
-        cwd = resolve_target_directory("refactor the auth middleware in AGY")
-        self.assertTrue(cwd.endswith("/projects/AGY"))
+        with patch("os.path.isdir", return_value=True), patch("os.listdir", return_value=["AGY"]):
+            cwd = resolve_target_directory("refactor the auth middleware in AGY")
+            self.assertTrue(cwd.endswith("/projects/AGY"))
 
     def test_target_directory_resolution_for_generic_spikes(self):
         """Verify generic spikes, demos, or unspecified projects route to sandbox."""
@@ -88,7 +89,7 @@ class TestThinIngressGateway(unittest.IsolatedAsyncioTestCase):
         """Verify sandbox scoping falls back to safe sandbox directory if / is passed."""
         raw_cmd = "python3 -m http.server 8080"
         scoped = scope_server_commands(raw_cmd, "/")
-        self.assertNotIn("--directory /", scoped.replace("/Users/hermes/projects/sandbox", ""))
+        self.assertNotIn("--directory /", scoped.replace(os.path.expanduser("~/projects/sandbox"), "").replace("/Users/hermes/projects/sandbox", ""))
         self.assertIn("sandbox", scoped)
 
     def test_normalize_for_bluebubbles_links_and_emojis(self):

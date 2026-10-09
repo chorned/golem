@@ -1428,7 +1428,6 @@ class WebUILauncher:
 
         # Check socket availability immediately to catch port collision synchronously
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as test_sock:
-            test_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try:
                 test_sock.bind((host, port))
             except OSError as err:

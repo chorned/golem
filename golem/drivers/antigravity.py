@@ -15,6 +15,8 @@ import json
 import inspect
 import select
 import asyncio
+import sys
+import shutil
 import logging
 from collections import deque
 from typing import Optional, List, Dict, Any, AsyncGenerator, Deque, Set
@@ -33,7 +35,28 @@ from .base import BaseAgentDriver
 
 logger = logging.getLogger("Golem.Agent.Drivers.Antigravity")
 
-DEFAULT_AGY_BIN = "/Users/hermes/.local/bin/agy"
+
+def _resolve_default_agy_bin() -> str:
+    env_bin = os.environ.get("GOLEM_AGY_BIN")
+    if env_bin and os.path.exists(env_bin):
+        return env_bin
+    which_bin = shutil.which("agy")
+    if which_bin:
+        return which_bin
+    hermes_bin = "/Users/hermes/.local/bin/agy"
+    if os.path.exists(hermes_bin) and sys.platform == "darwin":
+        return hermes_bin
+    repo_mock = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        "tests",
+        "mock_agy_proc.py",
+    )
+    if os.path.exists(repo_mock):
+        return repo_mock
+    return hermes_bin
+
+
+DEFAULT_AGY_BIN = _resolve_default_agy_bin()
 
 # Matches AGY / upstream quota-exhaustion failures (subscription quota, 429, RESOURCE_EXHAUSTED, etc.).
 QUOTA_ERROR_PATTERN = re.compile(

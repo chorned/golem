@@ -287,10 +287,11 @@ class TestLogSniffer(unittest.IsolatedAsyncioTestCase):
         sentinel.sniff_bot_err()
         old_inode = sentinel.last_log_inode
 
-        # Simulate logrotate: unlink old file and create new file with same path
-        os.remove(self.bot_err_path)
-        with open(self.bot_err_path, "w") as f:
-            f.write("Second generation fresh log file\n")
+        # Simulate logrotate: keep old inode allocated via open fd, unlink and recreate
+        with open(self.bot_err_path, "r") as _hold_old_inode:
+            os.remove(self.bot_err_path)
+            with open(self.bot_err_path, "w") as f:
+                f.write("Second generation fresh log file\n")
 
         errors, raw = sentinel.sniff_bot_err()
         self.assertNotEqual(sentinel.last_log_inode, old_inode)
@@ -402,7 +403,7 @@ class TestFleetSniffer(unittest.IsolatedAsyncioTestCase):
         mock_proc.returncode = 0
         mock_proc.communicate = AsyncMock(return_value=(mock_output, b""))
 
-        with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+        with patch("shutil.which", return_value="/usr/local/bin/tailscale"), patch("asyncio.create_subprocess_exec", return_value=mock_proc):
             ts = await self.sentinel.probe_tailscale()
             self.assertEqual(ts["backend_state"], "Running")
             self.assertTrue(ts["online"])
@@ -440,7 +441,7 @@ class TestFleetSniffer(unittest.IsolatedAsyncioTestCase):
         mock_proc.returncode = 0
         mock_proc.communicate = AsyncMock(return_value=(mock_stdout, b""))
 
-        with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+        with patch("shutil.which", return_value="/usr/local/bin/docker"), patch("asyncio.create_subprocess_exec", return_value=mock_proc):
             docker = await self.sentinel.probe_docker_health()
             self.assertTrue(docker["docker_running"])
             self.assertEqual(docker["container_count"], 3)

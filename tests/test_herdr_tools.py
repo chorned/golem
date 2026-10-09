@@ -44,6 +44,10 @@ class TestHerdrTools(unittest.IsolatedAsyncioTestCase):
         os.makedirs(git_repo, exist_ok=True)
         init_p = await _REAL_SUBPROCESS_EXEC("git", "init", "-b", "main", cwd=git_repo)
         await init_p.communicate()
+        cfg_e = await _REAL_SUBPROCESS_EXEC("git", "config", "user.email", "test@example.com", cwd=git_repo)
+        await cfg_e.communicate()
+        cfg_n = await _REAL_SUBPROCESS_EXEC("git", "config", "user.name", "Test Runner", cwd=git_repo)
+        await cfg_n.communicate()
         commit_p = await _REAL_SUBPROCESS_EXEC(
             "git", "commit", "--allow-empty", "-m", "init", cwd=git_repo
         )
@@ -138,6 +142,10 @@ class TestHerdrTools(unittest.IsolatedAsyncioTestCase):
         os.makedirs(git_repo, exist_ok=True)
         p1 = await asyncio.create_subprocess_exec("git", "init", "-b", "main", cwd=git_repo)
         await p1.communicate()
+        p_ce = await asyncio.create_subprocess_exec("git", "config", "user.email", "test@example.com", cwd=git_repo)
+        await p_ce.communicate()
+        p_cn = await asyncio.create_subprocess_exec("git", "config", "user.name", "Test Runner", cwd=git_repo)
+        await p_cn.communicate()
         p2 = await asyncio.create_subprocess_exec("git", "commit", "--allow-empty", "-m", "init", cwd=git_repo)
         await p2.communicate()
 

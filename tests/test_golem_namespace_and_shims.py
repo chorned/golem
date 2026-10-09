@@ -22,18 +22,21 @@ import sys
 try:
     import tomllib
 except ModuleNotFoundError:
-    import toml
-    class _TomlWrapper:
-        @staticmethod
-        def load(f):
-            content = f.read()
-            if isinstance(content, bytes):
-                content = content.decode("utf-8")
-            return toml.loads(content)
-        @staticmethod
-        def loads(s):
-            return toml.loads(s)
-    tomllib = _TomlWrapper()
+    try:
+        import tomli as tomllib
+    except ModuleNotFoundError:
+        import toml
+        class _TomlWrapper:
+            @staticmethod
+            def load(f):
+                content = f.read()
+                if isinstance(content, bytes):
+                    content = content.decode("utf-8")
+                return toml.loads(content)
+            @staticmethod
+            def loads(s):
+                return toml.loads(s)
+        tomllib = _TomlWrapper()
 import plistlib
 import unittest
 from unittest.mock import patch, MagicMock, AsyncMock

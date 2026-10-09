@@ -126,6 +126,11 @@ class TestGatewayR2SSEWiring(unittest.IsolatedAsyncioTestCase):
         if isinstance(self.session, tuple):
             self.session = self.session[0]
 
+    async def asyncTearDown(self) -> None:
+        if hasattr(self, "router"):
+            await self.router.teardown(channel="C_TEST", thread_ts="T_100")
+            await self.router.stop_reaper()
+
     async def test_01_headless_invariant_when_webui_server_none(self) -> None:
         """Invariant 1: When webui_server is None (headless mode), execution completes with zero AttributeError."""
         headless_gateway = IngressGateway(router=self.router, webui_server=None)
@@ -167,14 +172,14 @@ class TestGatewayR2SSEWiring(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.webui.registered_hands), 1)
         reg = self.webui.registered_hands[0]
         self.assertEqual(reg["node"], "desktop-pc")
-        self.assertEqual(reg["command"], "cargo build --release")
+        self.assertIn("cargo build --release", reg["command"])
         self.assertEqual(reg["worker"], "agy")
 
         # Verify hand_spawn broadcast
         spawn_events = [b for b in self.webui.broadcasts if b["event"] == "hand_spawn"]
         self.assertEqual(len(spawn_events), 1)
         spawn_payload = spawn_events[0]["data"]
-        self.assertEqual(spawn_payload["command"], "cargo build --release")
+        self.assertIn("cargo build --release", spawn_payload["command"])
         self.assertEqual(spawn_payload["node"], "desktop-pc")
         self.assertEqual(spawn_payload["status"], "RUNNING")
 

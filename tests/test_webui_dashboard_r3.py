@@ -22,6 +22,7 @@ import os
 import sys
 import json
 import socket
+import shutil
 import asyncio
 import subprocess
 import unittest
@@ -320,6 +321,8 @@ class TestNoseTelemetryDeduplicationLogic(unittest.IsolatedAsyncioTestCase):
         };
         console.log(JSON.stringify(result));
         """
+        if not shutil.which("node"):
+            self.skipTest("node binary not installed in test environment")
         proc = subprocess.run(["node", "-e", js_code], capture_output=True, text=True, check=True)
         res = json.loads(proc.stdout.strip())
 
