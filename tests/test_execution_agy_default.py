@@ -721,6 +721,34 @@ class TestIngressDispatchAgyDefault(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(call_kw["worker"], "hermes")
             self.assertEqual(res["worker"], "hermes")
 
+    async def test_ingress_execute_backstage_task_fast_tool_start_node_label_defined(self):
+        """_execute_backstage_task does not raise UnboundLocalError when tool_start arrives before yield timeout."""
+        session = MagicMock()
+        session.session_id = "test-session-fast"
+
+        async def fast_tool_events(*args, **kwargs):
+            yield {"event_type": "tool_start", "tool_name": "run_command"}
+            yield {"event_type": "finish", "status": "SUCCESS", "response": "done"}
+
+        client = MagicMock()
+
+        with patch.object(self.gateway, "_stream_backstage_events", side_effect=fast_tool_events):
+            with patch("golem.ingress.set_assistant_status", new_callable=AsyncMock) as mock_status:
+                accumulator = await self.gateway._execute_backstage_task(
+                    task_desc="Quick tool execution",
+                    target_node="personal-laptop",
+                    worker="agy",
+                    session=session,
+                    client=client,
+                    channel="C123",
+                    thread_ts="100.2",
+                    yield_timeout=3.0,
+                )
+
+                self.assertIsNotNone(accumulator)
+                self.assertEqual(accumulator.turn_status, "SUCCESS")
+                mock_status.assert_any_call(client, "C123", "100.2", "Running run_command on personal-laptop...")
+
 
 if __name__ == "__main__":
     unittest.main()

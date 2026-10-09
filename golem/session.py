@@ -142,6 +142,9 @@ class SessionHandle:
         self.last_artifact: Optional[Dict[str, Any]] = None
         self.artifacts: List[Dict[str, Any]] = []
 
+        # 4-Tier Institutional Memory Proposal (Stage 2 & 3)
+        self.pending_memory_proposal: Optional[Any] = None
+
     @property
     def driver(self) -> Any:
         """Alias for adapter representing the underlying BaseAgentDriver instance."""

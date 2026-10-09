@@ -59,6 +59,112 @@ def get_gemini_api_key() -> str:
     return ""
 
 
+PROPOSE_MEMORY_UPDATE_TOOL_DECLARATION: Dict[str, Any] = {
+    "name": "propose_memory_update",
+    "description": (
+        "Triggered when the user instructs Golem to remember a rule, environment fact, "
+        "tool capability, procedural skill, or reactive flow. "
+        "Stages updates across the 4 memory tiers for human confirmation."
+    ),
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "summary": {
+                "type": "STRING",
+                "description": "Concise summary of what is being learned or updated.",
+            },
+            "changes": {
+                "type": "ARRAY",
+                "description": "List of staged changes across the 4 memory tiers.",
+                "items": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "tier": {
+                            "type": "STRING",
+                            "enum": ["fact", "capability", "skill", "flow", "logbook"],
+                            "description": "Memory tier: 'fact', 'capability', 'skill', 'flow', or 'logbook'.",
+                        },
+                        "rel_path": {
+                            "type": "STRING",
+                            "description": (
+                                "Path relative to ~/.golem/wiki/ (e.g., context/rules/hermes.md, "
+                                "context/capabilities.md, runbooks/skills/tool/SKILL.md, runbooks/flows/flow.md)"
+                            ),
+                        },
+                        "content": {
+                            "type": "STRING",
+                            "description": "Complete updated file content to be written.",
+                        },
+                    },
+                    "required": ["tier", "rel_path", "content"],
+                },
+            },
+        },
+        "required": ["summary", "changes"],
+    },
+}
+
+DISPATCH_TASK_TOOL_DECLARATION: Dict[str, Any] = {
+    "name": "dispatch_task",
+    "description": (
+        "Dispatch an operational task (coding, file modification, shell command, "
+        "build, git operation, test suite, or system maintenance) backstage to The Hands."
+    ),
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "task_description": {"type": "STRING", "description": "Clear technical instructions."},
+            "worker": {"type": "STRING", "description": "Hand worker engine ('agy', 'opencode', 'hermes')."},
+            "target_node": {"type": "STRING", "description": "Target fleet node."},
+            "cwd": {"type": "STRING", "description": "Working directory."},
+        },
+        "required": ["task_description"],
+    },
+}
+
+CHECK_EYES_TOOL_DECLARATION: Dict[str, Any] = {
+    "name": "check_eyes",
+    "description": "Inspect the active runner terminal buffer via The Eyes.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {"pane": {"type": "STRING", "description": "Runner pane identifier."}},
+        "required": [],
+    },
+}
+
+CHECK_NOSE_TOOL_DECLARATION: Dict[str, Any] = {
+    "name": "check_nose",
+    "description": "Inspect 24/7 fleet and system health telemetry via The Nose Sentinel.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {"trigger_fresh_sniff": {"type": "BOOLEAN", "description": "Force fresh sniff."}},
+        "required": [],
+    },
+}
+
+SHARE_ARTIFACT_TOOL_DECLARATION: Dict[str, Any] = {
+    "name": "share_artifact",
+    "description": "Share an artifact or file staged in the Golem Outbox (~/.golem/outbox/) with Carl.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "path": {"type": "STRING", "description": "Path to artifact."},
+            "artifact_id": {"type": "STRING", "description": "Artifact ID."},
+            "title": {"type": "STRING", "description": "Title/label for file."},
+        },
+        "required": [],
+    },
+}
+
+MOUTH_TOOLS: List[Dict[str, Any]] = [
+    DISPATCH_TASK_TOOL_DECLARATION,
+    CHECK_EYES_TOOL_DECLARATION,
+    CHECK_NOSE_TOOL_DECLARATION,
+    SHARE_ARTIFACT_TOOL_DECLARATION,
+    PROPOSE_MEMORY_UPDATE_TOOL_DECLARATION,
+]
+
+
 def is_cancellation_message(text: str) -> bool:
     """Check if message expresses cancellation intent."""
     clean = text.strip().lower()
@@ -259,6 +365,16 @@ async def generate_mouth_response(
             "Keep answers focused, high-signal, and proportionate to Carl's question."
         )
 
+        # Pre-flight Capabilities Injection from Wiki (~/.golem/wiki/context/capabilities.md)
+        try:
+            from golem.wiki import GolemWiki
+            wiki = GolemWiki()
+            cap_content = wiki.read("context/capabilities.md")
+            if cap_content and cap_content.strip():
+                sys_prompt += f"\n\n--- Active Fleet Capabilities ---\n{cap_content.strip()}"
+        except Exception:
+            pass
+
         state_ctx_lines = [
             f"Runner Status: {status_val}",
             f"Active Command: {command}",
@@ -351,3 +467,165 @@ async def generate_mouth_response(
     except Exception as e:
         logger.warning(f"Gemini Mouth response generation encountered error: {e}")
         return f"⚠️ *Mouth Generation Error:* Failed to generate dynamic LLM response ({type(e).__name__}): {e}"
+
+
+async def triage_memory_input(
+    text: str,
+    session: Optional[Any] = None,
+    api_key: Optional[str] = None,
+    model: Optional[str] = None,
+) -> Tuple[str, Optional[Any]]:
+    """
+    Triage an operational memory input across the 4 tiers vs daily logbook.
+    - If purely a reflection or journal note -> appends to wiki logbook. Returns ("logbook", None)
+    - If contains Facts, Capabilities, Skills, or Flows -> creates a multi-file proposal
+      via wiki.propose_multi_update(...). Sets session.pending_memory_proposal and returns ("proposal", proposal).
+    """
+    from golem.wiki import GolemWiki
+    wiki = GolemWiki()
+    clean_text = (text or "").strip()
+    if not clean_text:
+        return "logbook", None
+
+    # Check for pure daily note / reflection markers
+    lower = clean_text.lower()
+    is_pure_reflection = (
+        lower.startswith(("daily note", "reflection:", "journal:", "logbook:", "retrospective:", "wrapup note:"))
+        or (
+            "today we" in lower
+            and not any(
+                k in lower
+                for k in ("rule", "invariant", "installed", "capability", "skill", "trigger", "flow", "oauth")
+            )
+        )
+    )
+    if is_pure_reflection:
+        wiki.logbook_append(entry=clean_text, title="Operational Learning (/learn)")
+        return "logbook", None
+
+    # Triage across 4 tiers
+    changes: List[Dict[str, Any]] = []
+
+    # 1. Facts (context/rules/<node>.md or context/topology.md)
+    fact_nodes = ["hermes", "desktop-pc", "oci-machine", "personal-laptop"]
+    matched_nodes = [node for node in fact_nodes if node in lower]
+    has_fact_keywords = any(
+        k in lower
+        for k in (
+            "invariant", "tcc", "ax permission", "cuda", "wsl", "permission",
+            "host invariant", "tailscale ip", "screen recording"
+        )
+    )
+    if matched_nodes or has_fact_keywords:
+        target_node = matched_nodes[0] if matched_nodes else "hermes"
+        rel_path = f"context/rules/{target_node}.md"
+        existing = wiki.read(rel_path) if wiki.exists(rel_path) else f"# {target_node.title()} Rules & Invariants\n"
+        fact_lines = [
+            line.strip()
+            for line in clean_text.splitlines()
+            if any(
+                k in line.lower()
+                for k in (
+                    target_node, "invariant", "tcc", "permission", "access",
+                    "cuda", "wsl", "rule", "screen recording"
+                )
+            )
+        ]
+        fact_content = "\n".join(fact_lines) if fact_lines else clean_text
+        new_content = existing.rstrip() + f"\n\n## Updated Invariants\n{fact_content}\n"
+        changes.append({
+            "tier": "fact",
+            "rel_path": rel_path,
+            "content": new_content,
+        })
+
+    # 2. Capabilities (context/capabilities.md)
+    has_cap_keywords = any(
+        k in lower
+        for k in (
+            "capability", "capabilities", "macos-computer-use-kit",
+            "installed", "tool", "kit", "affordance", "package"
+        )
+    )
+    if has_cap_keywords:
+        rel_path = "context/capabilities.md"
+        existing = wiki.read(rel_path) if wiki.exists(rel_path) else "# Fleet Capabilities & Tool Affordances\n"
+        cap_lines = [
+            line.strip()
+            for line in clean_text.splitlines()
+            if any(
+                k in line.lower()
+                for k in (
+                    "capability", "tool", "kit", "affordance",
+                    "macos-computer-use", "package", "installed", "staged"
+                )
+            )
+        ]
+        cap_content = "\n".join(cap_lines) if cap_lines else clean_text
+        new_content = existing.rstrip() + f"\n\n### Discovered Tool Capability\n{cap_content}\n"
+        changes.append({
+            "tier": "capability",
+            "rel_path": rel_path,
+            "content": new_content,
+        })
+
+    # 3. Skills (runbooks/skills/<name>/SKILL.md)
+    has_skill_keywords = any(
+        k in lower
+        for k in ("skill", "recipe", "cli flag", "procedure", "how to execute", "harness.sh")
+    )
+    if has_skill_keywords:
+        skill_name = "operational_recipe"
+        for word in re.findall(r"\b[a-z0-9_-]{4,}\b", lower):
+            if word in lower and any(p in lower for p in (f"skill {word}", f"{word} skill", f"{word}-kit")):
+                skill_name = word.replace("-", "_")
+                break
+        rel_path = f"runbooks/skills/{skill_name}/SKILL.md"
+        content = f"# Skill: {skill_name}\n\n## Instructions\n{clean_text}\n"
+        changes.append({
+            "tier": "skill",
+            "rel_path": rel_path,
+            "content": content,
+        })
+
+    # 4. Flows (runbooks/flows/<name>.md)
+    has_flow_keywords = any(
+        k in lower
+        for k in ("flow", "trigger", "reflex", "oauth", "token refresh", "event bus", "blocker reaction")
+    )
+    if has_flow_keywords:
+        flow_name = "reactive_flow"
+        if "oauth" in lower or "token refresh" in lower:
+            flow_name = "oauth_token_refresh"
+        elif "sync" in lower or "audiobookshelf" in lower:
+            flow_name = "audiobookshelf_sync"
+        rel_path = f"runbooks/flows/{flow_name}.md"
+        flow_lines = [
+            line.strip()
+            for line in clean_text.splitlines()
+            if any(
+                k in line.lower()
+                for k in ("trigger", "oauth", "reflex", "token", "refresh", "blocker", "flow", "autonomous")
+            )
+        ]
+        flow_body = "\n".join(flow_lines) if flow_lines else clean_text
+        content = f"# Flow: {flow_name}\n\nTrigger: Eyes matches {flow_name.replace('_', ' ').title()}\n\n## Reflex Procedure\n{flow_body}\n"
+        changes.append({
+            "tier": "flow",
+            "rel_path": rel_path,
+            "content": content,
+        })
+
+    # If any structured tier changes were detected, create a proposal!
+    if changes:
+        summary = "Operational learning distillation across memory tiers"
+        if len(changes) == 1:
+            summary = f"Update {changes[0]['tier']} in {changes[0]['rel_path']}"
+        proposal = wiki.propose_multi_update(changes=changes, summary=summary)
+        if session is not None:
+            session.pending_memory_proposal = proposal
+        return "proposal", proposal
+
+    # Fallback to logbook
+    wiki.logbook_append(entry=clean_text, title="Operational Learning (/learn)")
+    return "logbook", None

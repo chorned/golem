@@ -1132,6 +1132,12 @@ async def handle_learn_request(
         await add_reacji(client, channel, react_ts, "brain")
 
     try:
+        session_key = f"{channel}:{thread_ts}"
+        matched_session = sessions.get(session_key)
+
+        from golem.mouth import triage_memory_input
+        action, proposal = await triage_memory_input(user_notes, session=matched_session)
+
         MemoryManager.log_event(
             "learn_crystallized",
             task_id=f"learn-{int(time.time())}",
@@ -1139,15 +1145,15 @@ async def handle_learn_request(
             channel=channel,
             thread_ts=thread_ts
         )
-        try:
-            from golem.wiki import GolemWiki
-            wiki = GolemWiki()
-            wiki.logbook_append(
-                entry=user_notes or "Operational lesson codified into memory.",
-                title="Operational Learning (/learn)",
+
+        if action == "proposal" and proposal:
+            card_msg = proposal.to_slack_card()
+            await client.chat_postMessage(
+                channel=channel,
+                thread_ts=thread_ts,
+                text=sanitize_for_slack(card_msg)
             )
-        except Exception as we:
-            logger.debug(f"Wiki logbook append note: {we}")
+            return
 
         msg = f"🧠 *Operational Lesson Crystallized:* {user_notes or 'Lesson codified into operational memory.'}"
         if react_ts and hasattr(client, "reactions_add"):
@@ -1287,6 +1293,40 @@ async def process_user_prompt(event: Dict[str, Any], client: Any) -> None:
 
     session_key = f"{channel}:{thread_ts}"
     session = sessions.get(session_key)
+
+    # 0. Memory Proposal Interactive Confirmation
+    if session and getattr(session, "pending_memory_proposal", None):
+        pending = session.pending_memory_proposal
+        clean_lower = clean_text.strip().lower().rstrip(".!")
+        if is_approval_reply(clean_text) or clean_lower in ("confirm", "commit", "yes", "looks good", "lgtm", "approve", "apply", "ok", "proceed") or clean_lower.startswith(("confirm", "commit")):
+            try:
+                from golem.wiki import GolemWiki
+                wiki = GolemWiki()
+                commit_hash = wiki.confirm_update(pending.token)
+                session.pending_memory_proposal = None
+                succ_msg = f"✅ *Memory Committed to Wiki* [{commit_hash}]"
+                if not is_imessage and ts:
+                    await add_reacji(client, channel, ts, "white_check_mark")
+                await client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=sanitize_for_slack(succ_msg))
+            except Exception as e:
+                logger.error(f"Error confirming memory proposal: {e}")
+                err_msg = f"❌ *Memory Commit Failed:* {e}"
+                await client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=sanitize_for_slack(err_msg))
+            return
+        elif is_rejection_reply(clean_text) or clean_lower in ("reject", "discard", "cancel", "abort", "no", "deny") or clean_lower.startswith(("reject", "discard")):
+            try:
+                from golem.wiki import GolemWiki
+                wiki = GolemWiki()
+                wiki.reject_update(pending.token)
+                token = pending.token
+                session.pending_memory_proposal = None
+                discard_msg = f"❌ *Memory Proposal Discarded* [{token}]"
+                if not is_imessage and ts:
+                    await add_reacji(client, channel, ts, "x")
+                await client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=sanitize_for_slack(discard_msg))
+            except Exception as e:
+                logger.error(f"Error rejecting memory proposal: {e}")
+            return
 
     # 1. Approval Relay: If agent is currently blocked waiting for interactive confirmation
     if session and getattr(session, "status", None) == "blocked":

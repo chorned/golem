@@ -438,3 +438,64 @@ class DualPaneHarness:
         Closes a workspace by workspace_id or session label.
         """
         await self.teardown(workspace_id)
+
+    async def dispatch_hand(
+        self,
+        session_id: str,
+        task_description: str,
+        target_node: str = "localhost",
+        worker: str = "agy",
+        cwd: Optional[str] = None,
+        yield_timeout: float = 3.0,
+        **kwargs: Any,
+    ) -> Any:
+        """
+        Prepend pre-flight node invariants and dispatch command to runner pane.
+        """
+        invariants = get_preflight_node_invariants(target_node)
+        effective_task = task_description
+        if invariants:
+            effective_task = f"[Node Context & Invariants]\n{invariants}\n\n[Task]\n{task_description}"
+
+        return await self.execute_command(
+            session_id=session_id,
+            command=effective_task,
+            yield_timeout=yield_timeout,
+            **kwargs,
+        )
+
+
+def get_preflight_node_invariants(target_node: str = "localhost") -> str:
+    """
+    Retrieve pre-flight node facts and topology from wiki:
+    Checks context/rules/<target_node>.md and context/topology.md.
+    """
+    invariants = []
+    try:
+        from golem.wiki import GolemWiki
+        wiki = GolemWiki()
+        node_name = (target_node or "localhost").strip().lower()
+        if node_name == "localhost":
+            node_name = "hermes"
+
+        node_rule_path = f"context/rules/{node_name}.md"
+        if wiki.exists(node_rule_path):
+            content = wiki.read(node_rule_path).strip()
+            if content:
+                invariants.append(f"--- Node Invariants ({node_name}) ---\n{content}")
+
+        if wiki.exists("context/topology.md"):
+            topo_content = wiki.read("context/topology.md").strip()
+            if topo_content:
+                invariants.append(f"--- Fleet Topology ---\n{topo_content}")
+    except Exception as e:
+        logger.debug(f"Error reading preflight node invariants: {e}")
+
+    return "\n\n".join(invariants)
+
+
+__all__ = [
+    "OpaquePaneCoordinate",
+    "DualPaneHarness",
+    "get_preflight_node_invariants",
+]

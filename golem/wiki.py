@@ -152,6 +152,8 @@ class GolemWiki:
     Supports atomic multi-file changesets across 4 memory tiers under single prop_ tokens.
     """
 
+    _global_pending_updates: Dict[str, Any] = {}
+
     def __init__(self, wiki_dir: Optional[str] = None):
         self.wiki_dir = os.path.abspath(
             wiki_dir or os.environ.get("GOLEM_WIKI_DIR") or DEFAULT_WIKI_DIR
@@ -161,7 +163,7 @@ class GolemWiki:
         self._thread_lock = threading.RLock()
         self._lock_depth = 0
         self._lock_file = None
-        self._pending_updates: Dict[str, Any] = {}
+        self._pending_updates = GolemWiki._global_pending_updates
         self.last_commit_hash: Optional[str] = None
         self.init_repo()
 
@@ -290,6 +292,16 @@ class GolemWiki:
                         )
                     except Exception as e:
                         logger.debug(f"Git commit for default templates notice: {e}")
+
+    def exists(self, rel_path: str) -> bool:
+        """Check if relative path exists within wiki repository."""
+        target = self._safe_path(rel_path)
+        with self.file_lock():
+            return os.path.exists(target)
+
+    def list_files(self, category: Optional[str] = None) -> List[str]:
+        """Alias for list_documents."""
+        return self.list_documents(category)
 
     def read(self, rel_path: str) -> Optional[str]:
         """Read content of a wiki document relative to the wiki root."""

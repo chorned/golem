@@ -12,6 +12,8 @@ Golem is the open-source evolution of First Mate, powered by Herdr's distributed
 
 from __future__ import annotations
 
+import os
+import re
 import time
 import inspect
 import asyncio
@@ -161,6 +163,13 @@ class ShoulderTapEventBus:
         Publish an alert non-blockingly to all registered subscribers and matching session queues.
         Safe to call from async coroutines or synchronous callbacks.
         """
+        # Flow matching on sensory blocker before alerting human
+        if (alert.is_blocker or alert.alert_type == "blocker" or getattr(alert, "data", {}).get("severity") == "blocker"):
+            if not alert.data.get("matched_flow"):
+                matched = match_flow_runbook(alert)
+                if matched:
+                    alert.data["matched_flow"] = matched
+
         # 1. Enqueue to session queue if alert has session_id and queue exists
         if alert.session_id and alert.session_id in self._session_queues:
             queue = self._session_queues[alert.session_id]
@@ -324,3 +333,72 @@ def reset_default_event_bus() -> None:
     if _GLOBAL_BUS is not None:
         _GLOBAL_BUS.clear()
     _GLOBAL_BUS = None
+
+
+def match_flow_runbook(alert: ShoulderTapAlert) -> Optional[Dict[str, Any]]:
+    """
+    Scan ~/.golem/wiki/runbooks/flows/ for a matching trigger pattern when
+    a blocker fires (e.g. Eyes spots an OAuth screen or password prompt).
+    Returns dict with flow metadata if a flow matches, else None.
+    """
+    try:
+        from golem.wiki import GolemWiki
+        wiki = GolemWiki()
+        flows = wiki.list_files("runbooks/flows")
+        if not flows:
+            return None
+
+        # Gather alert textual tokens
+        alert_data = getattr(alert, "data", {}) or {}
+        alert_text = (
+            f"{alert.summary} "
+            f"{alert_data.get('prompt', '')} "
+            f"{alert_data.get('blocker_prompt', '')} "
+            f"{alert_data.get('type', '')} "
+            f"{alert_data.get('blocker_type', '')} "
+            f"{alert_data.get('url', '')} "
+            f"{alert_data.get('buffer_tail', '')} "
+            f"{str(alert_data)}"
+        ).lower()
+
+        for flow_path in flows:
+            if not flow_path.endswith(".md"):
+                continue
+            content = wiki.read(flow_path)
+            if not content:
+                continue
+
+            # Extract trigger patterns from flow
+            # e.g., "Trigger: Eyes matches Google OAuth -> AX automation"
+            # or "# Triggers: oauth, google login, token refresh"
+            lines = content.splitlines()
+            trigger_lines = [
+                line.split(":", 1)[1].strip().lower()
+                for line in lines
+                if line.lower().startswith(("trigger:", "triggers:", "match:"))
+            ]
+            flow_name = os.path.basename(flow_path).replace(".md", "")
+
+            matched = False
+            for trig in trigger_lines:
+                # Split comma/semicolon/arrow separated keywords
+                keywords = [k.strip() for k in re.split(r"[,;|\->]+", trig) if k.strip()]
+                if any(kw in alert_text for kw in keywords if len(kw) > 2):
+                    matched = True
+                    break
+
+            if not matched:
+                # Match flow name tokens if specific (e.g. oauth, audiobookshelf)
+                name_tokens = [tok for tok in flow_name.split("_") if len(tok) > 3]
+                if any(tok in alert_text for tok in name_tokens):
+                    matched = True
+
+            if matched:
+                return {
+                    "flow_path": flow_path,
+                    "flow_name": flow_name,
+                    "content": content,
+                }
+    except Exception as e:
+        logger.debug(f"Error matching flow runbook: {e}")
+    return None

@@ -49,6 +49,19 @@ DUAL_PANE_EXECUTION_RULES = """--- Dual-Pane Execution & Delegation Guardrail --
 • 3-Second Non-Blocking Yield: Any execution in Pane 2 exceeding 3.0 seconds automatically yields an active handle (`{status: "running", pid: ...}`). When a command yields, immediately report progress and remain responsive to incoming user messages.
 • Out-of-Band Status Checking & Conversational Reaction: To inspect background progress, interactive prompts, or OAuth URLs, or to converse mid-stream while Pane 2 is busy, query Pane 2 and respond dynamically via the Mouth LLM out-of-band without blocking behind sequential session locks or rigid regex gates."""
 
+OPERATIONAL_MEMORY_RULES = """--- 4-Tier Institutional Memory & Triage Directive ---
+• Operational Learning & Memorization (propose_memory_update):
+  - When Carl says "Remember that...", "Note that...", "Remember this:", or provides operational guidelines/learnings:
+  - Do NOT merely reply with polite conversational agreement or say "Logged into operational memory".
+  - Classify the input across the 4 memory tiers:
+    1. Facts: Host invariants, hardware, IPs, TCC/AX permissions ──► context/rules/<node>.md or context/topology.md.
+    2. Capabilities: Installed packages, tool specs, affordances ──► context/capabilities.md.
+    3. Skills: Execution recipes, scripts, CLI instructions ──► runbooks/skills/<name>/SKILL.md.
+    4. Flows: Event bus triggers, blocker reactions, automated chains ──► runbooks/flows/<name>.md.
+    (Plus Logbook: Free-write reflections, task receipts ──► logbook/YYYY-MM-DD.md).
+  - Notes spanning multiple tiers MUST generate multiple items in the changes array.
+  - Invoke `propose_memory_update` with summary and changes."""
+
 CALIBRATION_PROMPT = f"""{SLACK_MRKDWN_RULES}
 
 {CHOICE_FORMATTING_RULES}
@@ -57,7 +70,9 @@ CALIBRATION_PROMPT = f"""{SLACK_MRKDWN_RULES}
 
 {TRIAGE_SUPPRESSION_RULES}
 
-{DUAL_PANE_EXECUTION_RULES}"""
+{DUAL_PANE_EXECUTION_RULES}
+
+{OPERATIONAL_MEMORY_RULES}"""
 
 
 def get_calibration_rules() -> str:

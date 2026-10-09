@@ -14,6 +14,7 @@ from .calibration import (
     PACING_CALIBRATION_RULES,
     TRIAGE_SUPPRESSION_RULES,
     DUAL_PANE_EXECUTION_RULES,
+    OPERATIONAL_MEMORY_RULES,
     get_calibration_rules,
     build_calibrated_system_prompt,
 )
@@ -25,6 +26,7 @@ __all__ = [
     "PACING_CALIBRATION_RULES",
     "TRIAGE_SUPPRESSION_RULES",
     "DUAL_PANE_EXECUTION_RULES",
+    "OPERATIONAL_MEMORY_RULES",
     "get_calibration_rules",
     "build_calibrated_system_prompt",
 ]

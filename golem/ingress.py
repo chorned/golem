@@ -185,6 +185,51 @@ SHARE_ARTIFACT_TOOL_DECLARATION: Dict[str, Any] = {
     },
 }
 
+PROPOSE_MEMORY_UPDATE_TOOL_DECLARATION: Dict[str, Any] = {
+    "name": "propose_memory_update",
+    "description": (
+        "Triggered when the user instructs Golem to remember a rule, environment fact, "
+        "tool capability, procedural skill, or reactive flow. "
+        "Stages updates across the 4 memory tiers for human confirmation."
+    ),
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "summary": {
+                "type": "STRING",
+                "description": "Concise summary of what is being learned or updated.",
+            },
+            "changes": {
+                "type": "ARRAY",
+                "description": "List of staged changes across the 4 memory tiers.",
+                "items": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "tier": {
+                            "type": "STRING",
+                            "enum": ["fact", "capability", "skill", "flow", "logbook"],
+                            "description": "Memory tier: 'fact', 'capability', 'skill', 'flow', or 'logbook'.",
+                        },
+                        "rel_path": {
+                            "type": "STRING",
+                            "description": (
+                                "Path relative to ~/.golem/wiki/ (e.g., context/rules/hermes.md, "
+                                "context/capabilities.md, runbooks/skills/tool/SKILL.md, runbooks/flows/flow.md)"
+                            ),
+                        },
+                        "content": {
+                            "type": "STRING",
+                            "description": "Complete updated file content to be written.",
+                        },
+                    },
+                    "required": ["tier", "rel_path", "content"],
+                },
+            },
+        },
+        "required": ["summary", "changes"],
+    },
+}
+
 
 class MouthToolsList(list):
     """
@@ -208,6 +253,7 @@ def get_mouth_tools_declaration() -> List[Dict[str, Any]]:
         {
             "functionDeclarations": [
                 SHARE_ARTIFACT_TOOL_DECLARATION,
+                PROPOSE_MEMORY_UPDATE_TOOL_DECLARATION,
             ]
         },
     ])
@@ -1609,6 +1655,21 @@ class IngressGateway:
 
             elif cmd_token in ("/learn", "!learn"):
                 user_notes = clean_text[len(cmd_token):].strip()
+                session, _ = await self.router.get_or_create(
+                    channel=channel,
+                    thread_ts=thread_ts,
+                    target_cwd=target_cwd,
+                    is_imessage=is_imessage,
+                )
+                from golem.mouth import triage_memory_input
+                action, proposal = await triage_memory_input(user_notes, session=session)
+                if action == "proposal" and proposal:
+                    card_msg = proposal.to_slack_card()
+                    if ts:
+                        await swap_reaction(client, channel, ts, "gear", "brain")
+                    await self._post_response(client, channel, thread_ts, card_msg, is_imessage)
+                    return
+
                 msg = f"🧠 *Operational Lesson Crystallized:* {user_notes or 'Lesson codified into operational memory.'}"
                 if ts:
                     await swap_reaction(client, channel, ts, "gear", "white_check_mark")
@@ -1858,6 +1919,58 @@ class IngressGateway:
                         prompt_to_send = f"[Active Session Artifact: {art_name} at {art_p}]\n\n{prompt_to_send}"
                 except Exception as e:
                     logger.debug(f"Error hydrating artifact context: {e}")
+
+            # Memory Proposal Interactive Confirmation
+            if getattr(session, "pending_memory_proposal", None):
+                pending = session.pending_memory_proposal
+                clean_stripped = clean_text.strip().lower().rstrip(".!")
+                affirmative_keywords = (
+                    "confirm", "commit", "yes", "looks good", "lgtm", "approve", "apply", "ok", "proceed", "sounds good"
+                )
+                is_affirmative = (
+                    clean_stripped in affirmative_keywords
+                    or any(k in clean_stripped for k in ("confirm", "commit", "looks good", "lgtm", "approve", "apply", "yes"))
+                )
+                rejection_keywords = (
+                    "reject", "discard", "cancel", "abort", "no", "deny"
+                )
+                is_rejection = (
+                    clean_stripped in rejection_keywords
+                    or any(k in clean_stripped for k in ("reject", "discard", "cancel", "abort", "deny"))
+                )
+
+                if is_affirmative:
+                    from golem.wiki import GolemWiki
+                    try:
+                        wiki = GolemWiki()
+                        commit_hash = wiki.confirm_update(pending.token)
+                        session.pending_memory_proposal = None
+                        msg = f"✅ *Memory Committed to Wiki* [{commit_hash}]"
+                        if ts:
+                            await swap_reaction(client, channel, ts, "gear", "white_check_mark")
+                        await self._post_response(client, channel, thread_ts, msg, is_imessage)
+                        return
+                    except Exception as we:
+                        logger.error(f"Error confirming memory proposal: {we}")
+                        if ts:
+                            await swap_reaction(client, channel, ts, "gear", "boom")
+                        await self._post_response(client, channel, thread_ts, f"❌ *Memory Commit Failed:* {we}", is_imessage)
+                        return
+
+                elif is_rejection:
+                    from golem.wiki import GolemWiki
+                    try:
+                        wiki = GolemWiki()
+                        wiki.reject_update(pending.token)
+                    except Exception as we:
+                        logger.debug(f"Error rejecting memory proposal: {we}")
+                    token = pending.token
+                    session.pending_memory_proposal = None
+                    msg = f"❌ *Memory Proposal Discarded* [{token}]"
+                    if ts:
+                        await swap_reaction(client, channel, ts, "gear", "x")
+                    await self._post_response(client, channel, thread_ts, msg, is_imessage)
+                    return
 
             # Out-of-band triage if session is actively executing in Pane 2 (or busy)
             if not (session.is_busy or session.is_executing) and session.runner_pane and is_out_of_band_message(clean_text):
@@ -2278,6 +2391,16 @@ class IngressGateway:
 
         effective_worker = WorkerDelegator.normalize_worker_name(worker or get_default_hand_worker())
         effective_node = target_node or "localhost"
+        node_label = effective_node
+
+        # Pre-Flight Node Facts Injection (Hand Dispatch)
+        try:
+            from golem.harness import get_preflight_node_invariants
+            node_invariants = get_preflight_node_invariants(effective_node)
+            if node_invariants:
+                task_desc = f"[Node Context & Invariants]\n{node_invariants}\n\n[Task]\n{task_desc}"
+        except Exception as e:
+            logger.debug(f"Error retrieving preflight node invariants: {e}")
 
         # On-demand delegation to specialized workers (OpenCode, Hermes)
         if effective_worker not in ("agy", "antigravity"):
@@ -2376,10 +2499,12 @@ class IngressGateway:
                         if client and channel:
                             resp = await self._post_response(client, channel, thread_ts, ack_msg, is_imessage)
                             if resp:
+                                raw_data = getattr(resp, "data", None)
+                                data_dict = raw_data if isinstance(raw_data, dict) else {}
                                 msg_ts = (
                                     resp.get("ts")
                                     if isinstance(resp, dict)
-                                    else getattr(resp, "ts", getattr(resp, "data", {}).get("ts") if hasattr(resp, "data") else None)
+                                    else getattr(resp, "ts", data_dict.get("ts", None))
                                 )
                                 if msg_ts:
                                     accumulator.interim_message_ts = str(msg_ts)
@@ -2416,17 +2541,24 @@ class IngressGateway:
                             alert = sq_task.result()
                             if alert and getattr(alert, "alert_type", None) == "blocker":
                                 blocker_data = getattr(alert, "data", {})
-                                b_type = blocker_data.get("type", blocker_data.get("blocker_type", "prompt"))
-                                if b_type == "oauth":
-                                    url = blocker_data.get("url") or blocker_data.get("blocker_url", "")
-                                    card = f"🔐 *Authentication Required:* Runner is waiting for OAuth authorization:\n<{url}|Click here to authenticate>"
+                                matched_flow = blocker_data.get("matched_flow")
+                                if matched_flow:
+                                    flow_name = matched_flow.get("flow_name", "automated_flow")
+                                    flow_path = matched_flow.get("flow_path", "")
+                                    card = f"⚡ *Automated Reflex Triggered:* Blocker matched flow runbook `{flow_path}`. Executing flow `{flow_name}`..."
+                                    logger.info(f"Triggered automated flow '{flow_name}' from {flow_path}")
                                 else:
-                                    content = blocker_data.get("content") or blocker_data.get("prompt") or blocker_data.get("blocker_prompt", "")
-                                    card = f"⚠️ *Confirmation Required:* Runner is waiting for input:\n> `{content}`"
-                                if ts and client:
-                                    await swap_reaction(client, channel, ts, "gear", "warning")
-                                    if thread_ts:
-                                        await set_assistant_status(client, channel, thread_ts, "Awaiting input...")
+                                    b_type = blocker_data.get("type", blocker_data.get("blocker_type", "prompt"))
+                                    if b_type == "oauth":
+                                        url = blocker_data.get("url") or blocker_data.get("blocker_url", "")
+                                        card = f"🔐 *Authentication Required:* Runner is waiting for OAuth authorization:\n<{url}|Click here to authenticate>"
+                                    else:
+                                        content = blocker_data.get("content") or blocker_data.get("prompt") or blocker_data.get("blocker_prompt", "")
+                                        card = f"⚠️ *Confirmation Required:* Runner is waiting for input:\n> `{content}`"
+                                    if ts and client:
+                                        await swap_reaction(client, channel, ts, "gear", "warning")
+                                        if thread_ts:
+                                            await set_assistant_status(client, channel, thread_ts, "Awaiting input...")
                                 if client and channel:
                                     await self._post_response(client, channel, thread_ts, card, is_imessage)
                             if eq_task not in done:
@@ -2730,6 +2862,23 @@ class IngressGateway:
 
         return meta
 
+    async def _execute_propose_memory_update(
+        self,
+        summary: str,
+        changes: List[Dict[str, Any]],
+        session: Optional[Any] = None,
+    ) -> Any:
+        """
+        Execute propose_memory_update tool call via GolemWiki.propose_multi_update.
+        Stages updates across the 4 memory tiers and attaches pending proposal to session.
+        """
+        from golem.wiki import GolemWiki
+        wiki = GolemWiki()
+        proposal = wiki.propose_multi_update(changes=changes, summary=summary)
+        if session is not None:
+            session.pending_memory_proposal = proposal
+        return proposal
+
     async def _handle_mouth_turn(
         self,
         session: SessionHandle,
@@ -2810,8 +2959,29 @@ class IngressGateway:
             "omit the path to auto-share the active session artifact.\n"
             "5. SLACK FORMATTING: Always use single asterisks *bold*, inline `code`, multiline ```diff```, "
             "and clean bullet lists. Never use markdown ATX hashes (###) or double asterisks (**).\n"
-            "6. OUTCOMES OVER MACHINERY: Direct, grounded, quiet competence. No filler greetings."
+            "6. OUTCOMES OVER MACHINERY: Direct, grounded, quiet competence. No filler greetings.\n"
+            "7. OPERATIONAL MEMORY & LEARNING (4-Tier Institutional Memory):\n"
+            "   - When Carl says 'Remember that...', 'Note that...', or gives operational instructions:\n"
+            "     Do NOT merely reply with polite conversational agreement.\n"
+            "     Classify the input across the 4 tiers:\n"
+            "       • Facts: Host invariants, hardware, IPs, TCC/AX permissions ──► context/rules/<node>.md or context/topology.md\n"
+            "       • Capabilities: Installed packages, tool specs, affordances ──► context/capabilities.md\n"
+            "       • Skills: Execution flags, scripts, CLI instructions ──► runbooks/skills/<name>/SKILL.md\n"
+            "       • Flows: Event bus triggers, blocker reactions, automated chains ──► runbooks/flows/<name>.md\n"
+            "       • Logbook: Free-write reflections, task receipts ──► logbook/YYYY-MM-DD.md\n"
+            "     Notes spanning multiple tiers must generate multiple items in the changes array.\n"
+            "     Call `propose_memory_update` with summary and changes."
         )
+
+        # Pre-flight Capabilities Injection from Wiki
+        try:
+            from golem.wiki import GolemWiki
+            wiki = GolemWiki()
+            cap_content = wiki.read("context/capabilities.md")
+            if cap_content and cap_content.strip():
+                sys_prompt += f"\n\n--- Active Fleet Capabilities ---\n{cap_content.strip()}"
+        except Exception:
+            pass
 
         tools = get_mouth_tools_declaration()
         payload = {
@@ -2899,6 +3069,21 @@ class IngressGateway:
                     channel=channel,
                     thread_ts=thread_ts,
                 )
+            elif fn_name == "propose_memory_update":
+                summary = fn_args.get("summary") or "Operational memory update"
+                changes_arg = fn_args.get("changes") or []
+                proposal = await self._execute_propose_memory_update(
+                    summary=summary,
+                    changes=changes_arg,
+                    session=session,
+                )
+                tool_result = {
+                    "status": "SUCCESS",
+                    "token": proposal.token,
+                    "summary": proposal.summary,
+                    "changes_count": len(proposal.changes),
+                    "card": proposal.to_slack_card(),
+                }
             else:
                 task_desc = fn_args.get("task_description") or prompt
                 worker = fn_args.get("worker") or get_default_hand_worker() or "agy"
@@ -3037,7 +3222,11 @@ class IngressGateway:
         clean_briefing, file_targets = extract_and_strip_file_directives(briefing_text)
 
         # Reaction target determination
-        if fn_name == "check_eyes" and tool_result.get("state") == "BLOCKER":
+        if fn_name == "propose_memory_update":
+            target_reaction = "brain"
+            if tool_result.get("card") and "Memory Distillation Proposal" not in clean_briefing:
+                clean_briefing = tool_result.get("card")
+        elif fn_name == "check_eyes" and tool_result.get("state") == "BLOCKER":
             target_reaction = "warning"
         elif fn_name == "check_nose" and tool_result.get("smells_off"):
             target_reaction = "warning"
@@ -3359,6 +3548,7 @@ __all__ = [
     "BackstageExecutionAccumulator",
     "DISPATCH_TASK_TOOL_DECLARATION",
     "SHARE_ARTIFACT_TOOL_DECLARATION",
+    "PROPOSE_MEMORY_UPDATE_TOOL_DECLARATION",
     "get_mouth_tools_declaration",
     "call_gemini_api",
     "download_slack_file",
