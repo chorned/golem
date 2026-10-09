@@ -7,6 +7,10 @@
 
 > **"Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh."**
 
+<p align="center">
+  <img src="docs/assets/golem_architecture.png" alt="Golem Architecture Diagram: Powered by Herdr Distributed PTY Mesh" width="100%">
+</p>
+
 **Golem** is an open-source coordinator and personal Chief of Staff designed to run across multiple machines. It pairs a conversational liaison (accessible via Slack and BlueBubbles) with a headless, distributed pseudo-terminal (PTY) execution grid that spans local machines, homelab servers, GPU workstations, and cloud VPS instances.
 
 ---
@@ -96,6 +100,52 @@ To solve these constraints, Golem separates high-level conversational flow from 
 3. **Sensory Plane (The Eyes & The Nose):**
    - **The Eyes (`EyesTaskObserver`):** Checks running terminal buffers on a 15–30 second interval. It uses SHA-256 delta hashing to skip LLM calls entirely if output is unchanged, pinging the Mouth only when user action is required (such as an auth prompt) or when a task finishes.
    - **The Nose (`NoseSentinel`):** A lightweight background check that runs every 15 minutes to review error logs, container status, and machine reachability, alerting the Mouth via the `ShoulderTapEventBus` if an anomaly is detected.
+
+---
+
+## 4-Tier Institutional Memory Architecture
+
+Golem integrates a structured, Git-backed Institutional Memory Engine (`~/.golem/wiki/`) designed for multi-tier knowledge distillation rather than flat append-only logbook dumping:
+
+```
+~/.golem/wiki/
+├── .wiki.lock                          # POSIX flock descriptor
+├── context/                            # Tier 1 (Facts) & Tier 2 (Capabilities)
+│   ├── rules/
+│   │   ├── hermes.md                   # Tier 1: Host invariants, OS, TCC/AX permissions
+│   │   ├── desktop-pc.md               # Tier 1: CUDA, WSL2 paths, latency profile
+│   │   └── oci-machine.md              # Tier 1: Cloud sandbox rules, open ports
+│   ├── topology.md                     # Tier 1: Fleet-wide IPs, Tailscale endpoints
+│   └── capabilities.md                 # Tier 2: Available tools, CLIs, package affordances
+├── runbooks/                           # Tier 3 (Skills) & Tier 4 (Flows)
+│   ├── skills/                         # Tier 3: Procedural execution recipes
+│   │   └── macos_computer_use/
+│   │       ├── SKILL.md                # CLI flags, argument schemas, execution instructions
+│   │       └── harness.sh              # Script harness for backstage Hands
+│   └── flows/                          # Tier 4: Reactive reflexes & event-driven orchestration
+│       ├── oauth_token_refresh.md      # Trigger: Eyes matches Google OAuth -> AX automation
+│       └── audiobookshelf_sync.md      # Trigger: Scheduled sync or port failure reflex
+└── logbook/                            # Chronological Operational Journal
+    ├── legacy_ledger.md                # Ingested historical events from migration
+    └── YYYY-MM-DD.md                   # Instant-commit daily journal entries
+```
+
+### Institutional Memory Tiers
+1. **Tier 1 (Facts):** Machine-specific invariants, hardware limits, OS permissions (TCC/Accessibility/Screen Recording), and Tailscale endpoints (`context/rules/<node>.md`, `context/topology.md`).
+2. **Tier 2 (Capabilities):** Installed packages, tool specifications, CLI affordances, and library availability (`context/capabilities.md`).
+3. **Tier 3 (Skills):** Reusable procedural execution recipes, CLI flags, schemas, and script harnesses (`runbooks/skills/<name>/SKILL.md`).
+4. **Tier 4 (Flows):** Reactive event-driven reflexes, event bus triggers, and automated chains (`runbooks/flows/<name>.md`).
+5. **Logbook:** Instant-commit chronological operational notes and retrospectives (`logbook/YYYY-MM-DD.md`).
+
+### Multi-File Atomic Staging & Review Cards
+- **`propose_memory_update` Meta-Tool:** When operational instructions or lessons are learned, the Mouth decomposes changes across the 4 tiers, generating consolidated unified diff previews under a single `prop_<token>` lifecycle.
+- **Interactive Review Card:** Formatted in Slack/iMessage with token and diff snippets. Replying `confirm` or `commit` triggers atomic temporary file replacement (`.<uuid>.tmp` + `os.fsync` + `os.replace`), single Git commit (`memory: [token] {summary}`), and automatic rollback on failure. Replying `reject` safely drops the staged proposal.
+- **`/learn` Conversational Triage:** Pure daily reflections commit immediately to today's logbook; structured facts, capabilities, skills, or flows invoke `propose_memory_update` for review.
+
+### Pre-Flight Retrieval Wiring
+- **Mouth Planning:** Eagerly reads `context/capabilities.md` into system context at the start of a turn, grounding tool selection in active fleet capabilities.
+- **Hand Dispatch:** Pre-flight checks `context/rules/<target_node>.md` and `context/topology.md`, prepending node facts to dispatched runner tasks.
+- **Sensory Blocker Reflexes:** When a `ShoulderTapAlert` with severity `blocker` fires on the `ShoulderTapEventBus` (e.g. an interactive OAuth or login prompt), Golem scans `runbooks/flows/` to match trigger patterns and execute automated reflexes (e.g. `oauth_token_refresh.md`) prior to human escalation.
 
 ---
 

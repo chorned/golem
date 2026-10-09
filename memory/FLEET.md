@@ -1,9 +1,11 @@
 # Fleet Topology & Node Profiles
 
 ## Fleet Machines
-- **`hermes` (`localhost` / `fleet-control`):**
-  - Chief of Staff & Primary Development Anchor.
-  - 24/7 uptime, handles local development, repository management, unit test runs, and orchestration.
+- **`hermes` Node (`localhost` / `fleet-control`):**
+  - Chief of Staff & Primary Development Anchor (24/7 uptime).
+  - Physical macOS controller machine running under `/Users/hermes` system user account.
+  - **`hermes` CLI / Prototype Agent**: Standalone prototype agent executable invoked via `hermes` in terminal; predecessor to Golem leveraged backstage as an execution hand (Docker, storage, homelab ops).
+  - **macOS Computer Use**: `macos-computer-use-kit` (AX Accessibility and Screen Recording permissions verified active). Enables GUI automation, AX tree inspection, desktop capture, and autonomous Chrome OAuth/token refresh flows.
 - **`desktop-pc` (`100.80.59.45` / `compute-grid`):**
   - Dedicated Windows CUDA workstation and compute lane.
   - Handles NVIDIA GPU / CUDA workloads, PyTorch, model training, and heavy benchmarks.
