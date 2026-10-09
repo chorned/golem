@@ -565,6 +565,15 @@
             }
         }
 
+        function escapeHtml(str) {
+            if (!str) return '';
+            return str
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;');
+        }
+
         function renderTree(tree) {
             const container = document.getElementById('wiki-tree');
             container.innerHTML = '';
@@ -588,8 +597,18 @@
                     const item = document.createElement('a');
                     item.className = 'tree-item' + (docPath === currentPath ? ' active' : '');
                     item.dataset.path = docPath;
-                    const displayName = docPath.split('/').pop();
-                    item.innerHTML = `<span>${cat.icon}</span> <span>${displayName}</span>`;
+
+                    const parts = docPath.split('/');
+                    const baseName = parts[parts.length - 1];
+                    const isGeneric = /^(skill|readme|index|main|notes|config)\.(md|txt)$/i.test(baseName);
+
+                    let labelHtml = escapeHtml(baseName);
+                    if ((isGeneric && parts.length >= 2) || (parts.length > 2 && cat.key === 'runbooks')) {
+                        const parent = parts[parts.length - 2];
+                        labelHtml = `<span style="color: var(--runic-cyan); font-weight: 500;">${escapeHtml(parent)}</span> <span style="color: #64748b;">/</span> <span>${escapeHtml(baseName)}</span>`;
+                    }
+
+                    item.innerHTML = `<span>${cat.icon}</span> <span title="${escapeHtml(docPath)}" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${labelHtml}</span>`;
                     item.onclick = (e) => {
                         e.preventDefault();
                         loadDocument(docPath);
@@ -627,7 +646,12 @@
                     const reader = document.getElementById('wiki-reader');
                     reader.innerHTML = renderMarkdown(data.content);
                     document.getElementById('wiki-editor-area').value = data.content;
-                    document.getElementById('commit-msg-input').value = `feat(wiki): update ${relPath.split('/').pop()}`;
+
+                    const parts = relPath.split('/');
+                    const baseName = parts[parts.length - 1];
+                    const isGeneric = /^(skill|readme|index|main|notes|config)\.(md|txt)$/i.test(baseName);
+                    const targetLabel = (isGeneric && parts.length >= 2) ? `${parts[parts.length - 2]}/${baseName}` : baseName;
+                    document.getElementById('commit-msg-input').value = `feat(wiki): update ${targetLabel}`;
 
                     if (isEditMode) {
                         toggleEditMode(false);
