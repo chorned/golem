@@ -1954,6 +1954,12 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         default=None,
         help="Simulate N hand agents for testing/demonstration (e.g. --hands, --hands 6, or --hands -6)",
     )
+    parser.add_argument(
+        "--preflight",
+        dest="preflight",
+        action="store_true",
+        help="Run preflight readiness verification (e.g. on loopback port 8766) and exit cleanly",
+    )
     parsed, _ = parser.parse_known_args(argv if argv is not None else sys.argv[1:])
     return parsed
 
@@ -1962,6 +1968,24 @@ async def main(args: Optional[argparse.Namespace] = None):
     logger.info("Starting First Mate 2.0 Ingress Gateway (Herdr Runtime)...")
     if args is None:
         args = parse_args()
+
+    if getattr(args, "preflight", False):
+        logger.info("Running Golem preflight subsystem verification...")
+        p = getattr(args, "port", None) or 8766
+        h = getattr(args, "host", None) or "127.0.0.1"
+        try:
+            from golem.state import TaskLedger
+            from golem.wiki import GolemWiki
+            TaskLedger()
+            GolemWiki()
+            await start_webui_server(host=h, port=p)
+            await stop_webui_server()
+            print(f"[PREFLIGHT_OK] Golem preflight verified on {h}:{p}. All subsystems nominal.")
+            return 0
+        except Exception as pe:
+            logger.error(f"[PREFLIGHT_FAIL] Preflight verification failed: {pe}")
+            return 1
+
     loop = asyncio.get_running_loop()
     setup_signal_handlers(loop)
 
