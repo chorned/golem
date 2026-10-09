@@ -61,3 +61,4 @@ Thumbs.db
 
 # Agent metadata workspaces
 .agents/teamwork/
+.agents/wiki
