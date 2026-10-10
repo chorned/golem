@@ -555,7 +555,11 @@
                 if (data.ok) {
                     allDocs = data.docs || [];
                     renderTree(data.tree);
-                    if (allDocs.length > 0 && !currentPath) {
+                    const urlParams = new URLSearchParams(window.location.search);
+                    const targetDoc = urlParams.get('doc') || (window.location.hash ? window.location.hash.substring(1) : null);
+                    if (targetDoc && allDocs.includes(targetDoc)) {
+                        loadDocument(targetDoc);
+                    } else if (allDocs.length > 0 && !currentPath) {
                         loadDocument(allDocs[0]);
                     }
                 }
@@ -631,6 +635,11 @@
 
         async function loadDocument(relPath) {
             currentPath = relPath;
+            try {
+                const url = new URL(window.location);
+                url.searchParams.set('doc', relPath);
+                window.history.replaceState({}, '', url);
+            } catch (e) {}
             document.querySelectorAll('.tree-item').forEach(el => {
                 el.classList.toggle('active', el.dataset.path === relPath);
             });
