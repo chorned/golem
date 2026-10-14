@@ -154,11 +154,41 @@ class GolemWiki:
     """
 
     _global_pending_updates: Dict[str, Any] = {}
+    _test_hermetic_wiki_dir: Optional[str] = None
 
-    def __init__(self, wiki_dir: Optional[str] = None):
-        self.wiki_dir = os.path.abspath(
-            wiki_dir or os.environ.get("GOLEM_WIKI_DIR") or DEFAULT_WIKI_DIR
-        )
+    @classmethod
+    def _get_or_create_test_wiki_dir(cls) -> str:
+        if cls._test_hermetic_wiki_dir and os.path.exists(cls._test_hermetic_wiki_dir):
+            return cls._test_hermetic_wiki_dir
+        import tempfile
+        import shutil
+        tmp_dir = tempfile.mkdtemp(prefix="golem_hermetic_wiki_")
+        for subdir in ("context", "runbooks"):
+            src = Path(DEFAULT_WIKI_DIR) / subdir
+            dst = Path(tmp_dir) / subdir
+            if src.exists():
+                shutil.copytree(src, dst, symlinks=False, dirs_exist_ok=True)
+        cls._test_hermetic_wiki_dir = tmp_dir
+        os.environ["GOLEM_WIKI_DIR"] = tmp_dir
+        return tmp_dir
+
+    def __init__(self, wiki_dir: Optional[Union[str, Path]] = None):
+        if wiki_dir is None:
+            env_dir = os.environ.get("GOLEM_WIKI_DIR")
+            if env_dir:
+                resolved = env_dir
+            elif (
+                os.environ.get("GOLEM_TEST_MODE") == "1"
+                or os.environ.get("FIRSTMATE_TEST_MODE") == "1"
+                or "unittest" in sys.modules
+                or "pytest" in sys.modules
+            ):
+                resolved = self._get_or_create_test_wiki_dir()
+            else:
+                resolved = DEFAULT_WIKI_DIR
+        else:
+            resolved = wiki_dir
+        self.wiki_dir = os.path.abspath(str(resolved))
         self.lock_path = os.path.join(self.wiki_dir, ".wiki.lock")
         self._async_lock = asyncio.Lock()
         self._thread_lock = threading.RLock()

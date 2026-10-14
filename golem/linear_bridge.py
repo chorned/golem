@@ -10,6 +10,7 @@ Golem is the open-source evolution of First Mate, powered by Herdr's distributed
 from __future__ import annotations
 
 import os
+import re
 import asyncio
 import logging
 from pathlib import Path
@@ -79,6 +80,8 @@ class LinearBridge:
         self._project_id_cache: Optional[str] = None
         self._team_id_cache: Optional[str] = None
         self._state_cache: Dict[str, str] = {}
+        self._http_session: Optional[aiohttp.ClientSession] = None
+        self._session_loop: Optional[asyncio.AbstractEventLoop] = None
 
     def _headers(self) -> Dict[str, str]:
         if not self.api_key:
@@ -88,17 +91,48 @@ class LinearBridge:
             "Content-Type": "application/json",
         }
 
+    async def _get_http_session(self) -> aiohttp.ClientSession:
+        """Loop-aware persistent HTTP session helper reusing self._http_session with total timeout 15s."""
+        current_loop = asyncio.get_running_loop()
+        if (
+            self._http_session is not None
+            and not self._http_session.closed
+            and self._session_loop is current_loop
+        ):
+            return self._http_session
+
+        if self._http_session is not None and not self._http_session.closed:
+            try:
+                await self._http_session.close()
+            except Exception:
+                pass
+
+        timeout = aiohttp.ClientTimeout(total=15)
+        self._http_session = aiohttp.ClientSession(timeout=timeout)
+        self._session_loop = current_loop
+        return self._http_session
+
+    async def close(self) -> None:
+        """Close persistent HTTP session if open."""
+        if self._http_session is not None and not self._http_session.closed:
+            try:
+                await self._http_session.close()
+            except Exception:
+                pass
+            self._http_session = None
+            self._session_loop = None
+
     async def execute_query(self, query: str, variables: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as session:
-            payload = {"query": query, "variables": variables or {}}
-            async with session.post(LINEAR_GRAPHQL_ENDPOINT, headers=self._headers(), json=payload) as resp:
-                if resp.status != 200:
-                    body = await resp.text()
-                    raise LinearBridgeError(f"HTTP {resp.status} from Linear API: {body}")
-                data = await resp.json()
-                if "errors" in data and data["errors"]:
-                    raise LinearBridgeError(f"Linear GraphQL error: {data['errors']}")
-                return data.get("data", {})
+        session = await self._get_http_session()
+        payload = {"query": query, "variables": variables or {}}
+        async with session.post(LINEAR_GRAPHQL_ENDPOINT, headers=self._headers(), json=payload) as resp:
+            if resp.status != 200:
+                body = await resp.text()
+                raise LinearBridgeError(f"HTTP {resp.status} from Linear API: {body}")
+            data = await resp.json()
+            if "errors" in data and data["errors"]:
+                raise LinearBridgeError(f"Linear GraphQL error: {data['errors']}")
+            return data.get("data", {})
 
     async def resolve_project_and_states(self) -> Tuple[str, str, Dict[str, str]]:
         if self._project_id_cache and self._team_id_cache and self._state_cache:
@@ -205,8 +239,7 @@ class LinearBridge:
         parent_issue = p_res.get("issueCreate", {}).get("issue", {})
         parent_id = parent_issue.get("id")
 
-        # 2. Create Child Subtasks
-        created_subtasks = []
+        # 2. Create Child Subtasks concurrently via asyncio.gather
         child_mutation = """
         mutation CreateSubtask($input: IssueCreateInput!) {
             issueCreate(input: $input) {
@@ -215,7 +248,8 @@ class LinearBridge:
             }
         }
         """
-        for index, subtask_title in enumerate(subtasks, start=1):
+
+        async def _create_child(index: int, subtask_title: str) -> Dict[str, Any]:
             child_vars = {
                 "input": {
                     "teamId": team_id,
@@ -227,12 +261,15 @@ class LinearBridge:
             }
             c_res = await self.execute_query(child_mutation, child_vars)
             c_issue = c_res.get("issueCreate", {}).get("issue", {})
-            created_subtasks.append({
+            return {
                 "id": c_issue.get("id"),
                 "identifier": c_issue.get("identifier"),
                 "title": c_issue.get("title"),
                 "url": c_issue.get("url"),
-            })
+            }
+
+        child_coros = [_create_child(index, subtask_title) for index, subtask_title in enumerate(subtasks, start=1)]
+        created_subtasks = list(await asyncio.gather(*child_coros)) if child_coros else []
 
         return {
             "parent": {
@@ -524,9 +561,93 @@ class LinearBridge:
             raise LinearBridgeError(f"Issue '{key_or_id}' not found.")
         return issue["id"]
 
+    @staticmethod
+    def resolve_key_from_plan_cache(
+        plan_cache: Optional[Dict[str, Any]],
+        key_or_index: Any = None,
+        want_parent: bool = False,
+    ) -> str:
+        return resolve_key_from_plan_cache(plan_cache=plan_cache, key_or_index=key_or_index, want_parent=want_parent)
+
+
+def resolve_key_from_plan_cache(
+    plan_cache: Optional[Dict[str, Any]],
+    key_or_index: Any = None,
+    want_parent: bool = False,
+) -> str:
+    """
+    Resolves a Linear issue key from a plan cache dictionary:
+      - Returns parent_key / parent.identifier when want_parent=True and key_or_index is empty.
+      - Resolves subtask identifier (e.g. CHO-211) when key_or_index is:
+          * a 1-based integer index (1, "1", "[1/3]")
+          * a subtask title prefix or substring match
+          * an existing Linear key (CHO-xxx)
+    """
+    raw_str = str(key_or_index).strip() if key_or_index is not None else ""
+
+    # Case 1: want_parent with empty key_or_index
+    if want_parent and not raw_str:
+        if plan_cache:
+            parent = plan_cache.get("parent")
+            if isinstance(parent, dict) and parent.get("identifier"):
+                return str(parent["identifier"])
+            if plan_cache.get("parent_key"):
+                return str(plan_cache["parent_key"])
+        return ""
+
+    # Case 2: key_or_index already has standard Linear issue key format (e.g. CHO-123)
+    if re.match(r"^[A-Za-z]+-\d+$", raw_str):
+        return raw_str.upper()
+
+    subtasks = []
+    if plan_cache:
+        st = plan_cache.get("subtasks")
+        if isinstance(st, list):
+            subtasks = st
+
+    # Case 3: 1-based integer index, e.g. 1, "1", "[1/3]", "1/3"
+    idx_match = re.match(r"^\[?(\d+)(?:/\d+)?\]?$", raw_str)
+    if idx_match and subtasks:
+        try:
+            idx = int(idx_match.group(1))
+            if 1 <= idx <= len(subtasks):
+                child = subtasks[idx - 1]
+                if isinstance(child, dict) and child.get("identifier"):
+                    return str(child["identifier"])
+        except (ValueError, IndexError):
+            pass
+
+    # Case 4: matching subtask title prefix or substring
+    if raw_str and subtasks:
+        query = raw_str.lower()
+        for child in subtasks:
+            if isinstance(child, dict):
+                ctitle = str(child.get("title", "")).lower()
+                clean_title = re.sub(r"^\[\d+/\d+\]\s*", "", ctitle)
+                if ctitle.startswith(query) or clean_title.startswith(query):
+                    if child.get("identifier"):
+                        return str(child["identifier"])
+
+        for child in subtasks:
+            if isinstance(child, dict):
+                ctitle = str(child.get("title", "")).lower()
+                if query in ctitle and child.get("identifier"):
+                    return str(child["identifier"])
+
+    # Fallback: if want_parent and nothing resolved, return parent if available
+    if want_parent and plan_cache:
+        parent = plan_cache.get("parent")
+        if isinstance(parent, dict) and parent.get("identifier"):
+            return str(parent["identifier"])
+        if plan_cache.get("parent_key"):
+            return str(plan_cache["parent_key"])
+
+    return raw_str
+
 
 __all__ = [
     "LinearBridge",
     "LinearBridgeError",
     "LINEAR_GRAPHQL_ENDPOINT",
+    "resolve_key_from_plan_cache",
 ]

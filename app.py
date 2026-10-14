@@ -2025,13 +2025,35 @@ async def handle_bluebubbles_inbound_message(
     ).strip()
 
     client = bb_transport.get_client(chat_guid) if bb_transport else None
-    if raw_thread_originator and client:
+
+    # Check if raw_thread_originator matches a known separate session in session_router
+    is_separate_session = False
+    if raw_thread_originator and session_router is not None:
+        target_root = client.resolve_thread_root(raw_thread_originator) if client else raw_thread_originator
+        if hasattr(session_router, "has_thread") and (
+            session_router.has_thread(chat_guid, target_root) or session_router.has_thread(chat_guid, raw_thread_originator)
+        ):
+            is_separate_session = True
+        elif hasattr(session_router, "sessions"):
+            key1 = f"{chat_guid}:{target_root}"
+            key2 = f"{chat_guid}:{raw_thread_originator}"
+            if key1 in session_router.sessions or key2 in session_router.sessions:
+                is_separate_session = True
+            else:
+                for s in session_router.sessions.values():
+                    s_chan = getattr(s, "channel", None)
+                    s_th = getattr(s, "thread_ts", None)
+                    if (s_chan is None or str(s_chan) == chat_guid) and str(s_th) in (str(target_root), str(raw_thread_originator)):
+                        is_separate_session = True
+                        break
+
+    if is_separate_session and client:
         effective_thread_ts = client.resolve_thread_root(raw_thread_originator)
-    elif raw_thread_originator:
+    elif is_separate_session:
         effective_thread_ts = raw_thread_originator
     else:
-        # Model A (Strict Slack Threading): Top-level text box starts a brand new conversation
-        effective_thread_ts = ts_val
+        # Option 3 (Single Continuous Chat): All top-level & default iMessage conversation routes to chat_guid
+        effective_thread_ts = chat_guid
 
     event = {
         "channel": chat_guid,

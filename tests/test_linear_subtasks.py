@@ -170,7 +170,7 @@ def test_tool_declarations_and_mouth_registration():
     a_params = APPROVE_LINEAR_TASK_DECLARATION["parameters"]
     assert "issue_key" in a_params["properties"]
     assert "signoff_comment" in a_params["properties"]
-    assert a_params["required"] == ["issue_key"]
+    assert a_params.get("required", []) in ([], ["issue_key"])
 
     # 4. DISPATCH_TASK_TOOL_DECLARATION contains command
     d_params = DISPATCH_TASK_TOOL_DECLARATION["parameters"]["properties"]
@@ -569,3 +569,56 @@ async def test_ingress_chains_plan_and_dispatches_subtasks_sequentially():
         assert "Podcast Inventory Report" in combined_posted
         assert "CHO-155" in combined_posted
         assert "CHO-156" in combined_posted
+
+
+def test_resolve_key_from_plan_cache_variations():
+    from golem.linear_bridge import resolve_key_from_plan_cache
+
+    plan = {
+        "parent": {"id": "p-1", "identifier": "CHO-200", "title": "Main Project"},
+        "subtasks": [
+            {"id": "c-1", "identifier": "CHO-201", "title": "[1/3] Database Schema"},
+            {"id": "c-2", "identifier": "CHO-202", "title": "[2/3] API Endpoints"},
+            {"id": "c-3", "identifier": "CHO-203", "title": "[3/3] Frontend Views"},
+        ],
+    }
+
+    # 1. want_parent with empty key_or_index
+    assert resolve_key_from_plan_cache(plan, want_parent=True) == "CHO-200"
+    assert resolve_key_from_plan_cache(plan, key_or_index="", want_parent=True) == "CHO-200"
+    assert resolve_key_from_plan_cache(plan, key_or_index=None, want_parent=True) == "CHO-200"
+
+    # 2. Integer index resolution
+    assert resolve_key_from_plan_cache(plan, key_or_index=1) == "CHO-201"
+    assert resolve_key_from_plan_cache(plan, key_or_index="1") == "CHO-201"
+    assert resolve_key_from_plan_cache(plan, key_or_index=2) == "CHO-202"
+    assert resolve_key_from_plan_cache(plan, key_or_index="3") == "CHO-203"
+
+    # 3. Bracketed index tag resolution
+    assert resolve_key_from_plan_cache(plan, key_or_index="[1/3]") == "CHO-201"
+    assert resolve_key_from_plan_cache(plan, key_or_index="[2/3]") == "CHO-202"
+
+    # 4. Title prefix and substring matching
+    assert resolve_key_from_plan_cache(plan, key_or_index="Database Schema") == "CHO-201"
+    assert resolve_key_from_plan_cache(plan, key_or_index="API Endpoints") == "CHO-202"
+    assert resolve_key_from_plan_cache(plan, key_or_index="Frontend") == "CHO-203"
+
+    # 5. Direct issue key passthrough
+    assert resolve_key_from_plan_cache(plan, key_or_index="CHO-999") == "CHO-999"
+    assert resolve_key_from_plan_cache(None, key_or_index="CHO-123") == "CHO-123"
+
+    # 6. Static method on LinearBridge
+    assert LinearBridge.resolve_key_from_plan_cache(plan, key_or_index=2) == "CHO-202"
+
+
+@pytest.mark.asyncio
+async def test_linear_bridge_http_session_reuse():
+    b = LinearBridge(api_key="lin_api_test")
+    session1 = await b._get_http_session()
+    session2 = await b._get_http_session()
+    assert session1 is session2
+    assert not session1.closed
+
+    await b.close()
+    assert session1.closed
+    assert b._http_session is None

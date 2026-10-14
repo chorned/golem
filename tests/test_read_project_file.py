@@ -247,7 +247,7 @@ class TestReadProjectFile(unittest.IsolatedAsyncioTestCase):
 
             step2_call_args = mock_gemini.call_args_list[2][1]
             step2_payload = step2_call_args.get("payload", {})
-            self.assertEqual(step2_payload["toolConfig"]["functionCallingConfig"]["mode"], "NONE")
+            self.assertEqual(step2_payload["toolConfig"]["functionCallingConfig"]["mode"], "AUTO")
             step2_contents = step2_payload.get("contents", [])
             self.assertGreaterEqual(len(step2_contents), 5)
 

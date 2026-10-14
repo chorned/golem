@@ -308,8 +308,8 @@ class TestAudiobookshelfReadOnlyScope(unittest.TestCase):
 
     def test_abs_instruction_includes_read_only_rules(self):
         """Instruction explicitly instructs read-only scoping for Hand 1 and Hand 2 on oci-machine."""
-        self.assertIn("CHO-155", BASE_CHIEF_OF_STAFF_INSTRUCTION)
-        self.assertIn("CHO-156", BASE_CHIEF_OF_STAFF_INSTRUCTION)
+        self.assertNotIn("CHO-155", BASE_CHIEF_OF_STAFF_INSTRUCTION)
+        self.assertNotIn("CHO-156", BASE_CHIEF_OF_STAFF_INSTRUCTION)
         self.assertIn("read_only: true", BASE_CHIEF_OF_STAFF_INSTRUCTION)
         self.assertIn("http://localhost:13378/api/libraries", BASE_CHIEF_OF_STAFF_INSTRUCTION)
         self.assertIn("oci-machine", BASE_CHIEF_OF_STAFF_INSTRUCTION)

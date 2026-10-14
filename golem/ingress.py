@@ -75,6 +75,7 @@ from golem.mouth import (
     PLAN_TASK_WITH_SUBTASKS_DECLARATION,
     CHECK_LINEAR_TASK_STATUS_DECLARATION,
     APPROVE_LINEAR_TASK_DECLARATION,
+    CANCEL_ACTIVE_TASK_DECLARATION,
     build_mouth_system_instruction,
 )
 
@@ -87,14 +88,27 @@ CHAINABLE_TOOLS: Set[str] = {
     "check_linear_task_status",
     "search_operational_wiki",
     "read_operational_wiki",
-    # Checking the runner/fleet is a probe, not an answer: the Mouth must be able to act on what it sees.
-    # Previously these ended the turn in a tools-disabled synthesis, where the model could only narrate.
+    "check_eyes",
+    "check_nose",
+    "dispatch_task",
+    "dispatch_subtasks",
+    "approve_linear_task",
+    "cancel_active_task",
+}
+READ_ONLY_INSPECTION_TOOLS: Set[str] = {
+    "read_project_file",
+    "consult_memory",
+    "check_linear_task_status",
+    "search_operational_wiki",
+    "read_operational_wiki",
     "check_eyes",
     "check_nose",
 }
-READ_ONLY_INSPECTION_TOOLS: Set[str] = CHAINABLE_TOOLS
-MAX_HOPS: int = 8
+MAX_HOPS: int = 10
 MAX_TOOL_CHAIN_HOPS: int = MAX_HOPS
+
+# Fast in-memory 0ms plan cache across turns in the same thread
+_THREAD_PLAN_CACHE: Dict[str, Dict[str, Any]] = {}
 
 
 def build_hop_budget_note(max_hops: int, pending: List[str]) -> str:
@@ -399,6 +413,7 @@ def get_mouth_tools_declaration() -> List[Dict[str, Any]]:
                 PLAN_TASK_WITH_SUBTASKS_DECLARATION,
                 CHECK_LINEAR_TASK_STATUS_DECLARATION,
                 APPROVE_LINEAR_TASK_DECLARATION,
+                CANCEL_ACTIVE_TASK_DECLARATION,
             ]
         },
     ])
@@ -622,87 +637,15 @@ async def call_gemini_api(
     timeout_seconds: float = 30.0,
     **kwargs: Any,
 ) -> Optional[Dict[str, Any]]:
-    """Execute REST API POST call to Google Gemini endpoint or configured MOUTH_BACKEND."""
-    if payload is None:
-        payload = {}
-        if "contents" in kwargs:
-            payload["contents"] = kwargs["contents"]
-        if "tools" in kwargs:
-            payload["tools"] = kwargs["tools"]
-        if "tool_config" in kwargs:
-            tc = kwargs["tool_config"]
-            if isinstance(tc, dict) and "function_calling_config" in tc and "functionCallingConfig" not in tc:
-                tc = {"functionCallingConfig": tc["function_calling_config"]}
-            payload["toolConfig"] = tc
-        elif "toolConfig" in kwargs:
-            payload["toolConfig"] = kwargs["toolConfig"]
-        if "system_instruction" in kwargs:
-            si = kwargs["system_instruction"]
-            if isinstance(si, str):
-                payload["systemInstruction"] = {"parts": [{"text": si}]}
-            else:
-                payload["systemInstruction"] = si
-        elif "systemInstruction" in kwargs:
-            payload["systemInstruction"] = kwargs["systemInstruction"]
-        if "generationConfig" in kwargs:
-            payload["generationConfig"] = kwargs["generationConfig"]
-
-    backend = (os.environ.get("MOUTH_BACKEND") or os.environ.get("GOLEM_MOUTH_BACKEND") or "gemini").lower().strip()
-    if backend in ("openai", "openai-compatible", "openrouter", "groq", "ollama", "deepseek"):
-        return await call_openai_compatible_api(
-            payload=payload,
-            model=model,
-            api_key=api_key,
-            timeout_seconds=timeout_seconds,
-        )
-
-    key = api_key or get_gemini_api_key()
-    if not key:
-        return None
-    model_name = model or get_mouth_model()
-    url = GEMINI_API_URL.format(model=model_name)
-    if "?key=" in url or "&key=" in url:
-        raise ValueError("Security violation: Gemini API keys must not be passed via URL query parameters; use 'x-goog-api-key' header.")
-    timeout = aiohttp.ClientTimeout(total=timeout_seconds)
-
-    headers = {
-        "Content-Type": "application/json",
-        "x-goog-api-key": key,
-    }
-    user_project = (
-        os.environ.get("GOOGLE_CLOUD_PROJECT")
-        or os.environ.get("GCP_PROJECT")
-        or os.environ.get("VERTEX_PROJECT")
+    """Execute REST API POST call to Google Gemini endpoint or configured MOUTH_BACKEND with automatic failover and usage logging."""
+    from golem.mouth import call_gemini_api as _mouth_call_gemini_api
+    return await _mouth_call_gemini_api(
+        payload=payload,
+        model=model,
+        api_key=api_key,
+        timeout_seconds=timeout_seconds,
+        **kwargs,
     )
-    if user_project:
-        headers["x-goog-user-project"] = user_project.strip()
-
-    try:
-        async with aiohttp.ClientSession(timeout=timeout) as http_session:
-            async with http_session.post(url, json=payload, headers=headers) as resp:
-                if resp.status == 200:
-                    return await resp.json()
-                else:
-                    err_text = await resp.text()
-                    logger.warning(f"Gemini API returned status {resp.status}: {err_text}")
-                    return {
-                        "_error": True,
-                        "status": resp.status,
-                        "code": resp.status,
-                        "error_type": f"HTTP_{resp.status}",
-                        "raw_error": err_text,
-                        "message": err_text,
-                    }
-    except Exception as e:
-        logger.warning(f"Gemini API call failed: {e}")
-        return {
-            "_error": True,
-            "status": 500,
-            "code": 500,
-            "error_type": type(e).__name__,
-            "raw_error": str(e),
-            "message": str(e),
-        }
 
 
 class BackstageExecutionAccumulator:
@@ -1592,7 +1535,7 @@ class IngressGateway:
         channel: str,
         thread_ts: str,
         exclude_ts: Optional[str] = None,
-        limit: int = 15,
+        limit: int = 20,
         is_imessage: bool = False,
     ) -> str:
         """Fetch previous messages in the Slack thread or iMessage chat to provide continuity when rehydrating a session."""
@@ -1616,7 +1559,7 @@ class IngressGateway:
 
             context_lines = []
             bot_id = self.bot_user_id
-            max_char_len = 1200 if is_imessage else 300
+            max_char_len = 2500
             for msg in messages:
                 msg_ts = msg.get("ts")
                 if exclude_ts and msg_ts == exclude_ts:
@@ -1639,7 +1582,7 @@ class IngressGateway:
             if not context_lines:
                 return ""
 
-            recent_lines = context_lines[-10:]
+            recent_lines = context_lines[-20:]
             header = "[Previous iMessage Conversation Context:" if is_imessage else "[Previous Slack Thread Context:"
             formatted_context = f"{header}\n" + "\n".join(recent_lines) + "\n]"
             return formatted_context
@@ -1676,7 +1619,7 @@ class IngressGateway:
             raw_text = str(raw_text)
         channel = event.get("channel", "")
         is_imessage = bool(event.get("is_imessage", False))
-        thread_ts = event.get("thread_ts") or ts
+        thread_ts = event.get("thread_ts") or (channel if is_imessage else ts)
         target_cwd = event.get("cwd") or event.get("target_cwd")
 
         _orig_add_reaction = globals()["add_reaction"]
@@ -2219,7 +2162,7 @@ class IngressGateway:
 
             # Rehydrate thread history if message is in an active thread
             thread_context = ""
-            is_in_thread = bool(thread_ts and thread_ts != ts)
+            is_in_thread = is_imessage or bool(thread_ts and thread_ts != ts)
             if is_in_thread:
                 thread_context = await self._fetch_thread_context(
                     client, channel, thread_ts, exclude_ts=ts, is_imessage=is_imessage
@@ -2296,21 +2239,6 @@ class IngressGateway:
                     await self._post_response(client, channel, thread_ts, msg, is_imessage)
                     return
 
-            # Out-of-band triage if session is actively executing in Pane 2 (or busy)
-            if not (session.is_busy or session.is_executing) and session.runner_pane and is_out_of_band_message(clean_text):
-                try:
-                    await session.get_runner_status()
-                except Exception as e:
-                    logger.debug(f"Error probing runner status in ingress: {e}")
-
-            if session.is_busy or session.is_executing:
-                if is_cancellation_message(clean_text):
-                    await self._handle_out_of_band_cancellation(session, client, channel, thread_ts, ts, is_imessage)
-                    return
-                elif is_out_of_band_message(clean_text, session=session):
-                    await self._handle_out_of_band_status(session, client, channel, thread_ts, ts, is_imessage, clean_text)
-                    return
-
             # Check if running in mock / test environment or forced mouth
             is_test_env = os.environ.get("GOLEM_TEST_MODE") == "1"
             force_mouth = (getattr(session, "force_mouth", False) is True) or (os.environ.get("GOLEM_FORCE_MOUTH") == "1")
@@ -2329,6 +2257,69 @@ class IngressGateway:
             has_gemini_key = bool(get_gemini_api_key())
             gemini_mocked = _is_mock_object(getattr(self, "_call_gemini_api", None)) or _is_mock_object(call_gemini_api)
             use_mouth = force_mouth or gemini_mocked or (not is_test_env and not is_mock and has_gemini_key)
+
+            # Out-of-band triage if session is actively executing in Pane 2 (or busy)
+            if not (session.is_busy or session.is_executing) and session.runner_pane and is_out_of_band_message(clean_text):
+                try:
+                    await session.get_runner_status()
+                except Exception as e:
+                    logger.debug(f"Error probing runner status in ingress: {e}")
+
+            if session.is_busy or session.is_executing:
+                if clean_text.strip().lower() in ("/cancel", "!cancel", "/stop", "!stop", "/abort", "!abort") or is_cancellation_message(clean_text):
+                    await self._handle_out_of_band_cancellation(session, client, channel, thread_ts, ts, is_imessage)
+                    return
+                elif use_mouth:
+                    status_info = None
+                    if hasattr(session, "get_runner_status"):
+                        try:
+                            status_info = await session.get_runner_status()
+                        except Exception as e:
+                            logger.warning(f"Error querying runner status in ingress: {e}")
+                            status_info = {
+                                "status": "error",
+                                "error": str(e),
+                                "buffer_tail": f"Error querying runner buffer: {e}",
+                            }
+
+                    eyes_status = None
+                    if hasattr(session, "get_eyes_status"):
+                        try:
+                            res = session.get_eyes_status(status_info)
+                            eyes_status = await res if inspect.isawaitable(res) else res
+                        except Exception as e:
+                            logger.debug(f"Error resolving eyes_status in ingress: {e}")
+
+                    nose_status = None
+                    sentinel = self.get_nose_sentinel()
+                    if sentinel is not None:
+                        try:
+                            res = sentinel.get_telemetry_digest(trigger_fresh_sniff=False)
+                            nose_status = await res if inspect.isawaitable(res) else res
+                        except Exception as e:
+                            logger.debug(f"Error resolving nose_status in ingress: {e}")
+
+                    status_val = (status_info.get("status", "running") if isinstance(status_info, dict) else "running") or "running"
+                    cmd_val = (status_info.get("command", "") if isinstance(status_info, dict) else "") or ""
+                    eyes_val = eyes_status if eyes_status is not None else ""
+                    nose_val = nose_status if nose_status is not None else ""
+
+                    sensory_prefix = f"[Active Backstage Execution & Sensory State: status={status_val}, command={cmd_val}, eyes={eyes_val}, nose={nose_val}]"
+                    prompt_to_send = f"{sensory_prefix}\n\n{prompt_to_send}" if prompt_to_send else sensory_prefix
+
+                    await self._handle_mouth_turn(
+                        session=session,
+                        prompt=prompt_to_send,
+                        client=client,
+                        channel=channel,
+                        thread_ts=thread_ts,
+                        ts=ts,
+                        is_imessage=is_imessage,
+                    )
+                    return
+                elif is_out_of_band_message(clean_text, session=session):
+                    await self._handle_out_of_band_status(session, client, channel, thread_ts, ts, is_imessage, clean_text)
+                    return
 
             if use_mouth:
                 await self._handle_mouth_turn(
@@ -2872,6 +2863,7 @@ class IngressGateway:
         execution_mode: Optional[str] = None,
         parent_issue_key: Optional[str] = None,
         pane_id: Optional[str] = None,
+        natural_ack_text: Optional[str] = None,
         **kwargs: Any,
     ) -> Union[BackstageExecutionAccumulator, Dict[str, Any]]:
         """
@@ -3132,10 +3124,13 @@ class IngressGateway:
                     except asyncio.TimeoutError:
                         acknowledged_yield = True
                         node_label = effective_node
-                        ack_msg = (
-                            f"⚙️ *On it:* Dispatched backstage task to `{node_label}` via `{effective_worker}`. "
-                            "Execution is running silently; I'll brief you as soon as it settles."
-                        )
+                        if natural_ack_text and natural_ack_text.strip():
+                            ack_msg = natural_ack_text.strip()
+                        else:
+                            ack_msg = (
+                                f"⚙️ *On it:* Dispatched backstage task to `{node_label}` via `{effective_worker}`. "
+                                "Execution is running silently; I'll brief you as soon as it settles."
+                            )
                         if client and channel:
                             resp = await self._post_response(client, channel, thread_ts, ack_msg, is_imessage)
                             if resp:
@@ -3364,7 +3359,40 @@ class IngressGateway:
         return accumulator
 
     async def _load_linear_notes_block(self, thread_ref: str) -> str:
-        """Fetch this thread's Linear notes as a prompt block. Best-effort: '' on any failure or timeout."""
+        """Fetch this thread's Linear notes as a prompt block. Fast 0ms cache check first, then best-effort query."""
+        if not thread_ref:
+            return ""
+
+        # 1. 0ms memory cache hit
+        cached = _THREAD_PLAN_CACHE.get(thread_ref)
+        if cached:
+            parent = cached.get("parent", {})
+            subtasks = cached.get("subtasks", [])
+            subtasks_formatted = []
+            for st in subtasks:
+                st_ident = st.get("identifier", "")
+                st_title = st.get("title", "")
+                st_state = st.get("state", {}).get("name") if isinstance(st.get("state"), dict) else st.get("state", "Planned")
+                subtasks_formatted.append(f"[{st_ident}] {st_title} -> {st_state}")
+            notes = {
+                "identifier": parent.get("identifier", ""),
+                "title": parent.get("title", ""),
+                "state": parent.get("state", {}).get("name") if isinstance(parent.get("state"), dict) else parent.get("state", "In Progress"),
+                "subtasks": subtasks_formatted,
+                "comments": cached.get("comments", []),
+            }
+            return build_linear_notes_block(notes)
+
+        # 2. Check if bridge or fetch is mocked or eager fetching enabled
+        is_mocked = (
+            _is_mock_object(getattr(self, "_load_linear_notes_block", None))
+            or _is_mock_object(getattr(self, "_fetch_linear_thread_notes", None))
+            or _is_mock_object(getattr(self, "linear_bridge", None))
+        )
+        eager_fetch = os.environ.get("GOLEM_EAGER_LINEAR_FETCH") == "1"
+        if not is_mocked and not eager_fetch:
+            return ""
+
         try:
             from golem.linear_bridge import LinearBridge
             bridge = getattr(self, "linear_bridge", None) or LinearBridge()
@@ -3731,10 +3759,24 @@ class IngressGateway:
             bridge = getattr(self, "linear_bridge", None) or LinearBridge()
             parent_title = tool_args.get("parent_title") or ""
             parent_desc = tool_args.get("parent_description") or ""
-            if _THREAD_REF.get():
-                parent_desc = f"Thread: {_THREAD_REF.get()}\n{parent_desc}"
+            thread_ref = _THREAD_REF.get() or (f"{channel}:{thread_ts}" if channel and thread_ts else "")
+            if thread_ref:
+                parent_desc = f"Thread: {thread_ref}\n{parent_desc}"
             subtasks = tool_args.get("subtasks") or []
             plan = await bridge.create_plan_with_subtasks(parent_title, parent_desc, subtasks)
+            cached_plan = {
+                "parent": plan.get("parent", {}),
+                "subtasks": plan.get("subtasks", []),
+                "comments": [],
+            }
+            if session is not None:
+                session.linear_plan_cache = cached_plan
+                session.pending_subtasks = [
+                    st.get("identifier") or st.get("id") or str(idx)
+                    for idx, st in enumerate(plan.get("subtasks", []))
+                ]
+            if thread_ref:
+                _THREAD_PLAN_CACHE[thread_ref] = cached_plan
             return {
                 "status": "PLAN_CREATED",
                 "parent_key": plan.get("parent", {}).get("identifier", ""),
@@ -3761,7 +3803,17 @@ class IngressGateway:
         elif tool_name == "approve_linear_task":
             from golem.linear_bridge import LinearBridge
             bridge = getattr(self, "linear_bridge", None) or LinearBridge()
+            thread_ref = _THREAD_REF.get() or (f"{channel}:{thread_ts}" if channel and thread_ts else "")
+            cached = (getattr(session, "linear_plan_cache", None) if session else None) or _THREAD_PLAN_CACHE.get(thread_ref)
             issue_key = tool_args.get("issue_key") or ""
+            if not issue_key and cached:
+                issue_key = cached.get("parent", {}).get("identifier", "")
+            if cached:
+                if isinstance(cached.get("parent"), dict):
+                    cached["parent"]["state"] = "Completed"
+                for st in cached.get("subtasks", []):
+                    if isinstance(st, dict):
+                        st["state"] = "Completed"
             signoff = tool_args.get("signoff_comment") or "Approved by Carl."
             await bridge.approve_and_complete_tree(issue_key, signoff)
             webui = getattr(self, "webui_server", None)
@@ -3773,10 +3825,26 @@ class IngressGateway:
                 "status": "SUCCESS",
                 "message": f"Parent issue {issue_key} and all subtasks marked Completed.",
             }
+        elif tool_name == "cancel_active_task":
+            if session is not None and hasattr(session, "cancel_execution"):
+                await session.cancel_execution()
+            return {"status": "CANCELLED", "message": "Active backstage execution stopped."}
         elif tool_name == "dispatch_subtasks":
+            thread_ref = _THREAD_REF.get() or (f"{channel}:{thread_ts}" if channel and thread_ts else "")
+            cached = (getattr(session, "linear_plan_cache", None) if session else None) or _THREAD_PLAN_CACHE.get(thread_ref)
             parent_key = tool_args.get("parent_issue_key")
+            if not parent_key and cached:
+                parent_key = cached.get("parent", {}).get("identifier")
             mode = tool_args.get("execution_mode", "parallel")
             subtasks_list = tool_args.get("subtasks", [])
+            cached_subs = cached.get("subtasks", []) if cached else []
+            for idx, st_item in enumerate(subtasks_list):
+                st_key = st_item.get("issue_key")
+                subtask_idx = st_item.get("subtask_index")
+                if not st_key or (subtask_idx is not None and not str(st_key).startswith("CHO-")):
+                    target_i = (subtask_idx - 1) if (subtask_idx is not None and 1 <= subtask_idx <= len(cached_subs)) else idx
+                    if 0 <= target_i < len(cached_subs):
+                        st_item["issue_key"] = cached_subs[target_i].get("identifier", "")
             sub_kwargs = {k: v for k, v in tool_args.items() if k not in ("parent_issue_key", "execution_mode", "subtasks")}
             acc = await self._execute_backstage_task(
                 parent_issue_key=parent_key,
@@ -3934,6 +4002,10 @@ class IngressGateway:
         accumulator = None
         hop_budget_exhausted = False
         consecutive_read_only = 0
+        dispatch_repair_attempts = 0
+        skip_step2_synthesis = False
+        briefing_text = ""
+        error_info: Dict[str, Any] = {}
 
         while current_hop < MAX_TOOL_CHAIN_HOPS:
             current_hop += 1
@@ -3983,8 +4055,19 @@ class IngressGateway:
                             target_reaction = "brain"
                             if last_tool_result.get("card") and "Memory Distillation Proposal" not in clean_briefing:
                                 clean_briefing = last_tool_result.get("card")
+                        elif last_fn_name in ("dispatch_task", "dispatch_subtasks"):
+                            if turn_status in ("ERROR", "FAILED"):
+                                has_fatal_error = (
+                                    not full_output
+                                    or bool(error_msg)
+                                    or bool(re.search(r"\b(fatal error|operation failed|task failed|execution failed|unhandled exception|operation aborted|aborted|critical crash)\b", clean_briefing[:250], re.IGNORECASE))
+                                    or "❌" in clean_briefing[:250]
+                                )
+                                target_reaction = "x" if has_fatal_error else "white_check_mark"
+                            else:
+                                target_reaction = "white_check_mark"
 
-                        interim_ts = getattr(accumulator, "interim_message_ts", None) if accumulator else None
+                        interim_ts = accumulator.get("interim_message_ts") if isinstance(accumulator, dict) else (getattr(accumulator, "interim_message_ts", None) if accumulator else None)
                         await self._post_response(client, channel, thread_ts, clean_briefing, is_imessage, update_ts=interim_ts)
                         await self._broadcast_mouth_briefing(clean_briefing, model)
 
@@ -4077,8 +4160,9 @@ class IngressGateway:
                     bridge = getattr(self, "linear_bridge", None) or LinearBridge()
                     parent_title = fn_args.get("parent_title") or ""
                     parent_desc = fn_args.get("parent_description") or ""
-                    if _THREAD_REF.get():
-                        parent_desc = f"Thread: {_THREAD_REF.get()}\n{parent_desc}"
+                    thread_ref = _THREAD_REF.get() or (f"{channel}:{thread_ts}" if channel and thread_ts else "")
+                    if thread_ref:
+                        parent_desc = f"Thread: {thread_ref}\n{parent_desc}"
                     subtasks = fn_args.get("subtasks") or []
                     plan = await bridge.create_plan_with_subtasks(parent_title, parent_desc, subtasks)
                     subtasks_data = plan.get("subtasks", [])
@@ -4086,8 +4170,16 @@ class IngressGateway:
                         st.get("identifier") or st.get("id") or str(idx)
                         for idx, st in enumerate(subtasks_data)
                     ]
+                    cached_plan = {
+                        "parent": plan.get("parent", {}),
+                        "subtasks": subtasks_data,
+                        "comments": [],
+                    }
                     if session is not None:
+                        session.linear_plan_cache = cached_plan
                         session.pending_subtasks = list(pending_subtasks)
+                    if thread_ref:
+                        _THREAD_PLAN_CACHE[thread_ref] = cached_plan
                     tool_result = {
                         "status": "PLAN_CREATED",
                         "parent_key": plan.get("parent", {}).get("identifier", ""),
@@ -4114,7 +4206,17 @@ class IngressGateway:
                 elif fn_name == "approve_linear_task":
                     from golem.linear_bridge import LinearBridge
                     bridge = getattr(self, "linear_bridge", None) or LinearBridge()
+                    thread_ref = _THREAD_REF.get() or (f"{channel}:{thread_ts}" if channel and thread_ts else "")
+                    cached = (getattr(session, "linear_plan_cache", None) if session else None) or _THREAD_PLAN_CACHE.get(thread_ref)
                     issue_key = fn_args.get("issue_key") or ""
+                    if not issue_key and cached:
+                        issue_key = cached.get("parent", {}).get("identifier", "")
+                    if cached:
+                        if isinstance(cached.get("parent"), dict):
+                            cached["parent"]["state"] = "Completed"
+                        for st in cached.get("subtasks", []):
+                            if isinstance(st, dict):
+                                st["state"] = "Completed"
                     signoff = fn_args.get("signoff_comment") or "Approved by Carl."
                     await bridge.approve_and_complete_tree(issue_key, signoff)
                     webui = getattr(self, "webui_server", None)
@@ -4126,15 +4228,32 @@ class IngressGateway:
                         "status": "SUCCESS",
                         "message": f"Parent issue {issue_key} and all subtasks marked Completed.",
                     }
+                elif fn_name == "cancel_active_task":
+                    if session is not None and hasattr(session, "cancel_execution"):
+                        await session.cancel_execution()
+                    tool_result = {"status": "CANCELLED", "message": "Active backstage execution stopped."}
                 elif fn_name == "dispatch_subtasks":
+                    thread_ref = _THREAD_REF.get() or (f"{channel}:{thread_ts}" if channel and thread_ts else "")
+                    cached = (getattr(session, "linear_plan_cache", None) if session else None) or _THREAD_PLAN_CACHE.get(thread_ref)
                     parent_key = fn_args.get("parent_issue_key")
+                    if not parent_key and cached:
+                        parent_key = cached.get("parent", {}).get("identifier")
                     mode = fn_args.get("execution_mode", "parallel")
                     subtasks_list = fn_args.get("subtasks", [])
+                    cached_subs = cached.get("subtasks", []) if cached else []
+                    for idx, st_item in enumerate(subtasks_list):
+                        st_key = st_item.get("issue_key")
+                        subtask_idx = st_item.get("subtask_index")
+                        if not st_key or (subtask_idx is not None and not str(st_key).startswith("CHO-")):
+                            target_i = (subtask_idx - 1) if (subtask_idx is not None and 1 <= subtask_idx <= len(cached_subs)) else idx
+                            if 0 <= target_i < len(cached_subs):
+                                st_item["issue_key"] = cached_subs[target_i].get("identifier", "")
                     logger.info(
                         f"Mouth dispatched subtasks to backstage: parent={parent_key}, "
                         f"mode={mode}, count={len(subtasks_list)}"
                     )
                     sub_kwargs = {k: v for k, v in fn_args.items() if k not in ("parent_issue_key", "execution_mode", "subtasks")}
+                    natural_ack = "\n".join(text_parts).strip()
                     accumulator = await self._execute_backstage_task(
                         parent_issue_key=parent_key,
                         execution_mode=mode,
@@ -4145,6 +4264,7 @@ class IngressGateway:
                         thread_ts=thread_ts,
                         ts=ts,
                         is_imessage=is_imessage,
+                        natural_ack_text=natural_ack,
                         **sub_kwargs,
                     )
                 else:
@@ -4170,6 +4290,7 @@ class IngressGateway:
                     )
 
                     # Execute backstage silently with 3.0s yield
+                    natural_ack = "\n".join(text_parts).strip()
                     accumulator = await self._execute_backstage_task(
                         task_desc,
                         target_node,
@@ -4186,8 +4307,10 @@ class IngressGateway:
                         precedent_status=precedent_status,
                         precedent_source=precedent_source,
                         subtask_issue_id=subtask_issue_id,
+                        natural_ack_text=natural_ack,
                     )
 
+                if fn_name in ("dispatch_task", "dispatch_subtasks"):
                     # Unpack accumulator result (handles both accumulator instance and mock dict return)
                     if isinstance(accumulator, dict):
                         acc_status = accumulator.get("status", "SUCCESS")
@@ -4212,17 +4335,28 @@ class IngressGateway:
                             turn_status = acc_status
                             error_msg = accumulator.get("error", "")
                             full_output = acc_output
+                    elif accumulator is not None:
+                        acc_status = getattr(accumulator, "turn_status", "SUCCESS")
+                        acc_summary = accumulator.get_structured_summary() if hasattr(accumulator, "get_structured_summary") else {"status": acc_status, "output_tail": str(getattr(accumulator, "final_response", ""))[-8000:]}
+                        has_awaiting_input = getattr(accumulator, "has_awaiting_input", False)
+                        awaiting_prompt = getattr(accumulator, "awaiting_input_prompt", "")
+                        turn_status = acc_status
+                        error_msg = getattr(accumulator, "error_message", "")
+                        full_output = accumulator.get_full_output() if hasattr(accumulator, "get_full_output") else str(getattr(accumulator, "final_response", ""))
                     else:
-                        acc_status = accumulator.turn_status
-                        acc_summary = accumulator.get_structured_summary()
-                        has_awaiting_input = accumulator.has_awaiting_input
-                        awaiting_prompt = accumulator.awaiting_input_prompt
-                        turn_status = accumulator.turn_status
-                        error_msg = accumulator.error_message
-                        full_output = accumulator.get_full_output()
+                        acc_summary = {"status": "SUCCESS", "output_tail": ""}
+                        turn_status = "SUCCESS"
+                        has_awaiting_input = False
+                        awaiting_prompt = ""
 
                     tool_result = acc_summary
-                    self._record_hand_result_to_linear(task_desc, target_node, acc_summary)
+                    if fn_name == "dispatch_task" and "task_desc" in locals():
+                        self._record_hand_result_to_linear(task_desc, target_node, acc_summary)
+
+                    if turn_status in ("ERROR", "CONTRACT_VIOLATION", "FAILED"):
+                        dispatch_repair_attempts += 1
+                    else:
+                        dispatch_repair_attempts = 0
 
                     # Handle awaiting input
                     if has_awaiting_input:
@@ -4275,6 +4409,9 @@ class IngressGateway:
 
             # If the executed tool was a chainable tool or there are pending subtasks to dispatch, allow chaining in mode="AUTO"
             is_chainable = (fn_name in CHAINABLE_TOOLS) or (fn_name == "dispatch_task" and bool(pending_subtasks))
+            if fn_name == "dispatch_task" and dispatch_repair_attempts > 2:
+                is_chainable = False
+
             if fn_name in READ_ONLY_HOP_TOOLS:
                 consecutive_read_only += 1
             else:
@@ -4287,17 +4424,6 @@ class IngressGateway:
                 )
                 chain_tools = tools
                 chain_sys_prompt = sys_prompt
-                if consecutive_read_only >= MAX_CONSECUTIVE_READ_ONLY_HOPS:
-                    logger.info(
-                        f"{consecutive_read_only} consecutive read-only hops without dispatching; "
-                        f"withholding read-only tools so the next step must dispatch or ask Carl."
-                    )
-                    chain_tools = strip_read_only_tools(tools)
-                    chain_sys_prompt = (
-                        f"{sys_prompt}\n\nYou have already gathered context with {consecutive_read_only} read-only "
-                        "lookups this turn. Do not look anything else up: dispatch the backstage work now, or ask "
-                        "Carl the one specific question you need answered."
-                    )
                 chain_payload = {
                     "systemInstruction": {"parts": [{"text": chain_sys_prompt}]},
                     "contents": working_contents,
@@ -4318,6 +4444,18 @@ class IngressGateway:
                     next_resp = await self._call_gemini_api(payload=chain_payload, model=model, api_key=api_key)
                     if candidate_is_empty(next_resp):
                         logger.warning(f"Mouth chain retry also empty ({describe_candidate_shape(next_resp)}).")
+
+                if candidate_is_empty(next_resp) or not next_resp or next_resp.get("_error"):
+                    if fn_name == "dispatch_task":
+                        skip_step2_synthesis = True
+                        briefing_text = ""
+                        error_info = (
+                            next_resp.get("_error")
+                            if isinstance(next_resp, dict) and isinstance(next_resp.get("_error"), dict)
+                            else {"status": 500, "code": 500, "error_type": "SynthesisError", "message": "Synthesis failed with empty candidate text"}
+                        )
+                    break
+
                 if next_resp and not next_resp.get("_error") and next_resp.get("candidates"):
                     next_cands = next_resp.get("candidates", [])
                     if isinstance(next_cands, list) and next_cands and isinstance(next_cands[0], dict):
@@ -4338,30 +4476,31 @@ class IngressGateway:
             break
 
         # Step 2: Synthesize Executive Briefing via functionResponse
-        if thread_ts:
-            await set_assistant_status(client, channel, thread_ts, "Synthesizing executive briefing...")
+        if not skip_step2_synthesis:
+            if thread_ts:
+                await set_assistant_status(client, channel, thread_ts, "Synthesizing executive briefing...")
 
-        fn_name = last_fn_name
-        fn_call = last_fn_call or {}
-        tool_result = last_tool_result
+            fn_name = last_fn_name
+            fn_call = last_fn_call or {}
+            tool_result = last_tool_result
 
-        step2_extra: Dict[str, Any] = {}
-        if hop_budget_exhausted:
-            step2_extra["budget_note"] = build_hop_budget_note(MAX_TOOL_CHAIN_HOPS, list(pending_subtasks))
+            step2_extra: Dict[str, Any] = {}
+            if hop_budget_exhausted:
+                step2_extra["budget_note"] = build_hop_budget_note(MAX_TOOL_CHAIN_HOPS, list(pending_subtasks))
 
-        briefing_text, error_info = await self._execute_step2_synthesis(
-            sys_prompt=sys_prompt,
-            prompt=prompt,
-            candidate=last_candidate,
-            fn_call=fn_call,
-            fn_name=fn_name,
-            tool_result=tool_result,
-            model=model,
-            api_key=api_key,
-            tools=tools,
-            contents=working_contents if len(working_contents) >= 3 else None,
-            **step2_extra,
-        )
+            briefing_text, error_info = await self._execute_step2_synthesis(
+                sys_prompt=sys_prompt,
+                prompt=prompt,
+                candidate=last_candidate,
+                fn_call=fn_call,
+                fn_name=fn_name,
+                tool_result=tool_result,
+                model=model,
+                api_key=api_key,
+                tools=tools,
+                contents=working_contents if len(working_contents) >= 3 else None,
+                **step2_extra,
+            )
 
         if not briefing_text:
             # Fail loudly on Step 2 synthesis or runtime failure
@@ -4434,7 +4573,7 @@ class IngressGateway:
         else:
             target_reaction = "white_check_mark"
 
-        interim_ts = getattr(accumulator, "interim_message_ts", None) if "accumulator" in locals() and accumulator else None
+        interim_ts = accumulator.get("interim_message_ts") if isinstance(accumulator, dict) else (getattr(accumulator, "interim_message_ts", None) if "accumulator" in locals() and accumulator else None)
         await self._post_response(client, channel, thread_ts, clean_briefing, is_imessage, update_ts=interim_ts)
         await self._broadcast_mouth_briefing(clean_briefing, model)
 
@@ -4704,7 +4843,10 @@ class IngressGateway:
         api_key: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """Call Gemini REST API for Mouth turn processing."""
-        return await call_gemini_api(payload=payload, model=model, api_key=api_key)
+        try:
+            return await call_gemini_api(payload=payload, model=model, api_key=api_key)
+        except (StopIteration, StopAsyncIteration):
+            return None
 
     async def _fallback_direct_adapter_turn(
         self,

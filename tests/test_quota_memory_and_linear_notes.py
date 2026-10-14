@@ -199,7 +199,7 @@ class HandBriefAndEmptyCandidateTests(unittest.TestCase):
         from golem.ingress import CHAINABLE_TOOLS
         self.assertIn("check_eyes", CHAINABLE_TOOLS)
         self.assertIn("check_nose", CHAINABLE_TOOLS)
-        self.assertNotIn("dispatch_task", CHAINABLE_TOOLS)
+        self.assertIn("dispatch_task", CHAINABLE_TOOLS)
 
     def test_candidate_is_empty(self):
         def resp(parts):

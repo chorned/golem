@@ -7,6 +7,7 @@ entries to daily logbooks and scaffolding novel runbook proposals.
 Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
+import os
 import asyncio
 import logging
 from datetime import datetime, timezone
@@ -56,7 +57,8 @@ async def record_task_settlement_async(
             if not slug:
                 slug = f"novel_task_{task_id}"
             rel_target = f"runbooks/flows/{slug}.md"
-            target_path = Path(DEFAULT_WIKI_DIR) / rel_target
+            wiki_root = Path(os.environ.get("GOLEM_WIKI_DIR") or DEFAULT_WIKI_DIR)
+            target_path = wiki_root / rel_target
             if not target_path.exists():
                 draft_content = (
                     f"---\ntitle: {task_description[:50]}\nsummary: Automatically captured flow from task {task_id}\n---\n\n"
@@ -71,3 +73,33 @@ async def record_task_settlement_async(
                     logger.debug(f"propose_update error during reflection: {e}")
     except Exception as e:
         logger.debug(f"Error in record_task_settlement_async: {e}")
+
+
+def record_task_settlement(
+    task_id: str,
+    task_description: str,
+    target_node: str,
+    exit_code: int,
+    output_tail: str,
+    precedent_source: str,
+    precedent_status: str,
+) -> None:
+    """Synchronous wrapper for record_task_settlement_async."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    coro = record_task_settlement_async(
+        task_id=task_id,
+        task_description=task_description,
+        target_node=target_node,
+        exit_code=exit_code,
+        output_tail=output_tail,
+        precedent_source=precedent_source,
+        precedent_status=precedent_status,
+    )
+    if loop and loop.is_running():
+        asyncio.create_task(coro)
+    else:
+        asyncio.run(coro)

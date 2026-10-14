@@ -30,8 +30,11 @@ GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model
 
 
 def get_mouth_model() -> str:
-    """Resolve MOUTH_MODEL dynamically from environment, zero hardcoding."""
-    return _config_get_mouth_model()
+    """Resolve MOUTH_MODEL dynamically from environment, prioritizing MOUTH_MODEL over GEMINI_MODEL."""
+    val = (os.environ.get("MOUTH_MODEL") or os.environ.get("GOLEM_MOUTH_MODEL") or os.environ.get("GEMINI_MODEL") or "").strip()
+    if val:
+        return val
+    return "gemini-3.8-flash"
 
 
 def get_gemini_api_key() -> str:
@@ -140,6 +143,10 @@ DISPATCH_TASK_TOOL_DECLARATION: Dict[str, Any] = {
             "worker": {
                 "type": "STRING",
                 "description": "Optional worker engine to execute the task (defaults to 'agy').",
+            },
+            "read_only": {
+                "type": "BOOLEAN",
+                "description": "Set to True when running a non-mutating verification probe or inspection command.",
             },
         },
         "required": ["task_description"],
@@ -278,14 +285,14 @@ APPROVE_LINEAR_TASK_DECLARATION: Dict[str, Any] = {
         "properties": {
             "issue_key": {
                 "type": "STRING",
-                "description": "The Linear parent issue identifier (e.g. 'CHO-142').",
+                "description": "Optional Linear parent issue identifier (e.g. '<parent_key>'); auto-binds to the active Linear parent issue if omitted.",
             },
             "signoff_comment": {
                 "type": "STRING",
                 "description": "Carl's explicit signoff note or verification feedback.",
             },
         },
-        "required": ["issue_key"],
+        "required": [],
     },
 }
 
@@ -300,7 +307,7 @@ DISPATCH_SUBTASKS_TOOL_DECLARATION: Dict[str, Any] = {
         "properties": {
             "parent_issue_key": {
                 "type": "STRING",
-                "description": "Parent Linear issue key (e.g. 'CHO-154').",
+                "description": "Optional parent Linear issue key (e.g. '<parent_key>'); auto-binds from the active Linear plan if omitted.",
             },
             "execution_mode": {
                 "type": "STRING",
@@ -312,9 +319,13 @@ DISPATCH_SUBTASKS_TOOL_DECLARATION: Dict[str, Any] = {
                 "items": {
                     "type": "OBJECT",
                     "properties": {
+                        "subtask_index": {
+                            "type": "INTEGER",
+                            "description": "1-based subtask number (1..N) from the active plan; auto-resolves the Linear issue_key.",
+                        },
                         "issue_key": {
                             "type": "STRING",
-                            "description": "Linear subtask issue key (e.g. 'CHO-155').",
+                            "description": "Optional Linear subtask issue key (e.g. '<subtask_key>'); auto-resolves from plan if omitted.",
                         },
                         "target_node": {
                             "type": "STRING",
@@ -333,12 +344,26 @@ DISPATCH_SUBTASKS_TOOL_DECLARATION: Dict[str, Any] = {
                             "description": "Complete self-contained instruction/prompt for the Hand agent.",
                         },
                     },
-                    "required": ["issue_key", "task_brief"],
+                    "required": ["task_brief"],
                 },
                 "description": "List of subtask specifications to dispatch.",
             },
         },
-        "required": ["parent_issue_key", "execution_mode", "subtasks"],
+        "required": ["execution_mode", "subtasks"],
+    },
+}
+
+CANCEL_ACTIVE_TASK_DECLARATION: Dict[str, Any] = {
+    "name": "cancel_active_task",
+    "description": "Cancel or stop the currently running backstage Hand execution in this thread when Carl asks to stop, abort, or cancel it.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "reason": {
+                "type": "STRING",
+                "description": "Brief note on why the task is being cancelled.",
+            }
+        },
     },
 }
 
@@ -350,6 +375,7 @@ MOUTH_TOOLS: List[Dict[str, Any]] = [
     PLAN_TASK_WITH_SUBTASKS_DECLARATION,
     CHECK_LINEAR_TASK_STATUS_DECLARATION,
     APPROVE_LINEAR_TASK_DECLARATION,
+    CANCEL_ACTIVE_TASK_DECLARATION,
 ]
 
 BASE_CHIEF_OF_STAFF_INSTRUCTION = """
@@ -359,28 +385,35 @@ You have direct autonomous control over a distributed mesh:
 - desktop-pc: Windows CUDA workstation (heavy compute, PyTorch, InvokeAI)
 - oci-machine: Oracle Cloud Linux VPS (Audiobookshelf, scrapers, ingress daemons)
 
-OPERATIONAL MANDATE:
-1. BIAS TOWARD ACTION: When Carl asks you to inspect, verify, download, transfer, or sync, USE YOUR TOOLS IMMEDIATELY.
-2. DO NOT TALK ABOUT EXECUTING: Never reply saying "Starting transfer now", "Triggering script now", or "Spooling up backstage work" without calling `dispatch_task` or `dispatch_subtasks` in the same turn. If an action is required, call the tool.
-3. READ BEFORE ACTING: Use `read_project_file` to check manifests, JSON files, and local directories before guessing file paths.
-4. SYNTHESIZE OUTCOMES: Once your tools finish executing, report the actual output, verified artifacts, and live status directly to Carl.
-5. DISPATCH BACKSTAGE WORK FOR OPERATIONAL TASKS:
+OPERATIONAL MANDATE & UNIFIED "ONE MIND" LIFECYCLE:
+You are a single unified Chief of Staff persona across Planning, Execution, Validation, UAT, and Deployment:
+
+1. BIAS TOWARD ACTION: When Carl asks you to inspect, verify, download, transfer, or sync, USE YOUR TOOLS IMMEDIATELY. For simple 1-step requests or read-only checks, execute directly without ceremony.
+2. PLAN (CHECKPOINT 1): For multi-step engineering, refactors, migrations, or compound operations, call `plan_task_with_subtasks` to create the Linear parent + subtasks, share the concise plan + Linear link with Carl, and pause for Carl's approval before dispatching multi-step execution.
+3. EXECUTE (NATURAL >3s HEADS-UP): When calling `dispatch_task` or `dispatch_subtasks`, include a brief, natural 1-sentence status in your response text alongside the tool call (e.g., "Running the test suite on `hermes` now—I'll report back once I've verified the results."). If the task finishes in <3s, that interim text is suppressed automatically; if it runs >3s, it is posted as your natural heads-up.
+4. VALIDATE & SELF-REPAIR (SAME TURN): After a mutating `dispatch_task` or `dispatch_subtasks` returns, do not blindly claim success. In the same turn, verify the result (inspect exit code/output, or call a verification probe via `dispatch_task(read_only=True, ...)` or `read_project_file`). If verification fails, automatically dispatch a targeted fix (up to 2 self-repair rounds) and re-verify before reporting to Carl.
+5. UAT & DEPLOY (CHECKPOINT 2): Once verified, subtasks settle to 'Claimed Fixed' in Linear. Present the verified executive briefing to Carl and pause for his UAT / deployment approval. Only when Carl replies approving the work (e.g., "looks good", "approved", "deploy it"), execute any production deployment and call `approve_linear_task` to transition the Linear tree to 'Completed'.
+6. STRICT TOOL HONESTY: Never claim in prose to have consulted the wiki, created/updated Linear issues, or verified a fix unless you actually invoked the corresponding tool in this turn or are citing a real key present in `[Linear working notes]`. Note that your full wiki (`context/` and `runbooks/`) is already pre-loaded in your system prompt under `OPERATIONAL WIKI PERIPHERAL VISION`.
+7. DO NOT TALK ABOUT EXECUTING: Never reply saying "Starting transfer now", "Triggering script now", or "Spooling up backstage work" without calling `dispatch_task` or `dispatch_subtasks` in the same turn. If an action is required, call the tool.
+8. READ BEFORE ACTING: Use `read_project_file` to check manifests, JSON files, and local directories before guessing file paths.
+9. SYNTHESIZE OUTCOMES: Once your tools finish executing, report the actual output, verified artifacts, and live status directly to Carl.
+10. DISPATCH BACKSTAGE WORK FOR OPERATIONAL TASKS:
 When asked to perform operational tasks (e.g. Cloudflare tunnels, DNS updates, service configuration, deployments, code changes, system administration), inspection of files or wiki memory is only the pre-flight phase. You MUST call `dispatch_task` to perform the actual work (e.g., using `worker="agy"` or executing the necessary shell/python commands on the target node). NEVER terminate your turn after reading files with promises like "Executing now" or "Applying next". If the action is ready, CALL `dispatch_task`.
-6. MULTI-AGENT SUBTASK DISPATCH & AUDIOBOOKSHELF RULES:
+11. MULTI-AGENT SUBTASK DISPATCH & AUDIOBOOKSHELF RULES:
 When handling multi-part audits, parallel inspections, or tasks with multiple subtasks, use `dispatch_subtasks` with `execution_mode: "parallel"` (or `"sequential"`).
 Audiobookshelf Subtask & Inspection Rules (Strictly Read-Only):
 Audiobookshelf runs in Docker on `oci-machine` with access via curl to http://localhost:13378 or local SQLite/filesystem. Format subtask briefs as strictly read-only:
-- Hand 1 (CHO-155 - Series & Library Inventory): Target `oci-machine` via SSH, execute read-only query against local ABS REST API (`curl -s http://localhost:13378/api/libraries/b6967c3c-b061-4831-a06b-3e4aea9121ca/items`), output JSON summary of podcast series IDs, titles, and episode counts. Flag brief with `read_only: true`.
-- Hand 2 (CHO-156 - Episode Durations): Target `oci-machine` via SSH, execute read-only query against ABS item endpoints or inspect media files via `ffprobe` / `docker exec` SQLite read-only to calculate exact runtimes across all episodes. Flag brief with `read_only: true`.
-7. LINEAR IS YOUR MEMORY ACROSS TURNS:
+- Series & Library Inventory: Target `oci-machine` via SSH, execute read-only query against local ABS REST API (`curl -s http://localhost:13378/api/libraries/<library_id>/items`), output JSON summary of podcast series IDs, titles, and episode counts. Flag brief with `read_only: true`.
+- Episode Durations: Target `oci-machine` via SSH, execute read-only query against ABS item endpoints or inspect media files via `ffprobe` / `docker exec` SQLite read-only to calculate exact runtimes across all episodes. Flag brief with `read_only: true`.
+12. LINEAR IS YOUR MEMORY ACROSS TURNS:
 Nothing carries over between turns except the Slack thread and Linear. When a `[Linear working notes]` block appears in the prompt, treat its findings as verified by an earlier turn: do NOT repeat that discovery, continue from it. Hand results are recorded to the thread's Linear issue automatically. Never trust your own earlier chat briefings over the notes; if they disagree, the Linear notes win.
-8. DO NOT CLAIM CAPABILITIES YOU LACK:
+13. DO NOT CLAIM CAPABILITIES YOU LACK:
 You have no tool to switch models. Backstage model fallback (for example to Sonnet) is automatic inside the worker driver, so never tell Carl that you "switched" a worker's model. Report only what a tool result actually says.
-9. AN IDLE RUNNER IS NOT A CRASH:
+14. AN IDLE RUNNER IS NOT A CRASH:
 If `check_eyes` reports an idle runner whose only content is a shell prompt, that is a fresh runner waiting for a command. Nothing crashed. Dispatch the work instead of reporting a failure.
-10. DELEGATE WHOLE OBJECTIVES:
+15. DELEGATE WHOLE OBJECTIVES:
 A Hand is a capable agent, not a shell. Give `dispatch_task` the complete objective in `task_description` (goal, success criteria, known facts, where credentials live, what to report back) so it can work through many steps itself and verify its own result. Do not chop work into one-line probes, and do not repeat discovery that Linear notes or earlier results already contain.
-11. REPORT ONLY WHAT TOOLS CONFIRMED:
+16. REPORT ONLY WHAT TOOLS CONFIRMED:
 Never say a credential, tunnel, route, or policy is "verified", "configured", or "live" unless a tool result in this conversation shows it. If something was not checked, say it was not checked. If you need something from Carl (for example a credential's location), ask for that one thing plainly.
 """
 
@@ -677,6 +710,17 @@ async def generate_mouth_response(
             async with client_session.post(url, json=payload, headers=headers) as resp:
                 if resp.status == 200:
                     data = await resp.json()
+                    if isinstance(data, dict):
+                        usage = data.get("usageMetadata")
+                        if isinstance(usage, dict):
+                            logger.info(
+                                "Gemini usageMetadata (%s): promptTokenCount=%s, cachedContentTokenCount=%s, thoughtsTokenCount=%s, candidatesTokenCount=%s",
+                                model_name,
+                                usage.get("promptTokenCount"),
+                                usage.get("cachedContentTokenCount"),
+                                usage.get("thoughtsTokenCount"),
+                                usage.get("candidatesTokenCount"),
+                            )
                     candidates = data.get("candidates") if isinstance(data, dict) else None
                     if candidates and isinstance(candidates, list):
                         cand = candidates[0] if isinstance(candidates[0], dict) else {}
@@ -703,6 +747,158 @@ async def generate_mouth_response(
     except Exception as e:
         logger.warning(f"Gemini Mouth response generation encountered error: {e}")
         return f"⚠️ *Mouth Generation Error:* Failed to generate dynamic LLM response ({type(e).__name__}): {e}"
+
+
+def get_mouth_fallback_models() -> List[str]:
+    """Resolve ordered fallback models for Mouth LLM failover."""
+    try:
+        import golem.config as gcfg
+        if hasattr(gcfg, "get_mouth_fallback_models"):
+            res = gcfg.get_mouth_fallback_models()
+            if res:
+                return res
+    except Exception:
+        pass
+    raw = os.environ.get("GOLEM_MOUTH_FALLBACK_MODELS") or os.environ.get("MOUTH_FALLBACK_MODELS") or ""
+    if raw.strip():
+        return [m.strip() for m in raw.split(",") if m.strip()]
+    primary = (get_mouth_model() or "").lower()
+    if "argon" in primary or "gemini-4" in primary:
+        return ["gemini-3.8-flash"]
+    return ["gemini-3.8-flash"]
+
+
+async def call_gemini_api(
+    payload: Optional[Dict[str, Any]] = None,
+    model: Optional[str] = None,
+    api_key: Optional[str] = None,
+    timeout_seconds: float = 30.0,
+    **kwargs: Any,
+) -> Optional[Dict[str, Any]]:
+    """Execute REST API POST call to Google Gemini endpoint or configured MOUTH_BACKEND with automatic failover and usage logging."""
+    import aiohttp
+
+    if payload is None:
+        payload = {}
+        if "contents" in kwargs:
+            payload["contents"] = kwargs["contents"]
+        if "tools" in kwargs:
+            payload["tools"] = kwargs["tools"]
+        if "tool_config" in kwargs:
+            tc = kwargs["tool_config"]
+            if isinstance(tc, dict) and "function_calling_config" in tc and "functionCallingConfig" not in tc:
+                tc = {"functionCallingConfig": tc["function_calling_config"]}
+            payload["toolConfig"] = tc
+        elif "toolConfig" in kwargs:
+            payload["toolConfig"] = kwargs["toolConfig"]
+        if "system_instruction" in kwargs:
+            si = kwargs["system_instruction"]
+            if isinstance(si, str):
+                payload["systemInstruction"] = {"parts": [{"text": si}]}
+            else:
+                payload["systemInstruction"] = si
+        elif "systemInstruction" in kwargs:
+            payload["systemInstruction"] = kwargs["systemInstruction"]
+        if "generationConfig" in kwargs:
+            payload["generationConfig"] = kwargs["generationConfig"]
+
+    backend = (os.environ.get("MOUTH_BACKEND") or os.environ.get("GOLEM_MOUTH_BACKEND") or "gemini").lower().strip()
+    if backend in ("openai", "openai-compatible", "openrouter", "groq", "ollama", "deepseek"):
+        from golem.ingress import call_openai_compatible_api
+        return await call_openai_compatible_api(
+            payload=payload,
+            model=model,
+            api_key=api_key,
+            timeout_seconds=timeout_seconds,
+        )
+
+    key = api_key or get_gemini_api_key()
+    if not key:
+        return None
+
+    configured_primary = get_mouth_model()
+    is_default_mouth = (model is None or model == configured_primary)
+    models_to_try = [model or configured_primary]
+    if is_default_mouth:
+        fallbacks = get_mouth_fallback_models()
+        for fb in fallbacks:
+            if fb and fb not in models_to_try:
+                models_to_try.append(fb)
+
+    timeout = aiohttp.ClientTimeout(total=timeout_seconds)
+    headers = {
+        "Content-Type": "application/json",
+        "x-goog-api-key": key,
+    }
+    user_project = (
+        os.environ.get("GOOGLE_CLOUD_PROJECT")
+        or os.environ.get("GCP_PROJECT")
+        or os.environ.get("VERTEX_PROJECT")
+    )
+    if user_project:
+        headers["x-goog-user-project"] = user_project.strip()
+
+    last_error_res: Optional[Dict[str, Any]] = None
+    for attempt_idx, current_model in enumerate(models_to_try):
+        url = GEMINI_API_URL.format(model=current_model)
+        if "?key=" in url or "&key=" in url:
+            raise ValueError("Security violation: Gemini API keys must not be passed via URL query parameters; use 'x-goog-api-key' header.")
+
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as http_session:
+                async with http_session.post(url, json=payload, headers=headers) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        if isinstance(data, dict):
+                            usage = data.get("usageMetadata")
+                            if isinstance(usage, dict):
+                                logger.info(
+                                    "Gemini usageMetadata (%s): promptTokenCount=%s, cachedContentTokenCount=%s, thoughtsTokenCount=%s, candidatesTokenCount=%s",
+                                    current_model,
+                                    usage.get("promptTokenCount"),
+                                    usage.get("cachedContentTokenCount"),
+                                    usage.get("thoughtsTokenCount"),
+                                    usage.get("candidatesTokenCount"),
+                                )
+                        return data
+                    else:
+                        err_text = await resp.text()
+                        logger.warning(f"Gemini API ({current_model}) returned status {resp.status}: {err_text}")
+                        last_error_res = {
+                            "_error": True,
+                            "status": resp.status,
+                            "code": resp.status,
+                            "error_type": f"HTTP_{resp.status}",
+                            "raw_error": err_text,
+                            "message": err_text,
+                        }
+                        is_quota_or_server_err = (
+                            resp.status == 429
+                            or resp.status >= 500
+                            or "quota" in err_text.lower()
+                            or "resource_exhausted" in err_text.lower()
+                        )
+                        if is_quota_or_server_err and attempt_idx < len(models_to_try) - 1:
+                            logger.info(f"Retrying Gemini call with fallback model '{models_to_try[attempt_idx + 1]}' due to HTTP {resp.status}")
+                            continue
+                        return last_error_res
+        except (asyncio.TimeoutError, aiohttp.ClientError, Exception) as e:
+            logger.warning(f"Gemini API call ({current_model}) failed: {e}")
+            last_error_res = {
+                "_error": True,
+                "status": 500,
+                "code": 500,
+                "error_type": type(e).__name__,
+                "raw_error": str(e),
+                "message": str(e),
+            }
+            if attempt_idx < len(models_to_try) - 1:
+                logger.info(f"Retrying Gemini call with fallback model '{models_to_try[attempt_idx + 1]}' after error: {e}")
+                continue
+            return last_error_res
+
+    return last_error_res
+
 
 
 async def triage_memory_input(

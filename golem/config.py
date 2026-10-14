@@ -267,6 +267,37 @@ def get_mouth_model() -> str:
     return ""
 
 
+def get_mouth_fallback_models() -> list[str]:
+    """
+    Resolve ordered, comma-separated quota-fallback model list for Mouth.
+    Resolves from GOLEM_MOUTH_FALLBACK_MODELS or MOUTH_FALLBACK_MODELS
+    (via os.environ then _get_file_env()). If unset while get_mouth_model()
+    is 'gemini-4-argon', defaults to ['gemini-3.8-flash'].
+    """
+    candidates = ["GOLEM_MOUTH_FALLBACK_MODELS", "MOUTH_FALLBACK_MODELS"]
+    raw = ""
+    for var in candidates:
+        val = (os.environ.get(var) or "").strip()
+        if val:
+            raw = val
+            break
+    if not raw:
+        file_env = _get_file_env()
+        for var in candidates:
+            val = (file_env.get(var) or "").strip()
+            if val:
+                raw = val
+                break
+
+    if raw:
+        return [m.strip() for m in raw.split(",") if m.strip()]
+
+    if get_mouth_model() == "gemini-4-argon":
+        return ["gemini-3.8-flash"]
+
+    return []
+
+
 def get_eyes_model() -> str:
     """
     Resolve Eyes model from GOLEM_EYES_MODEL or EYES_MODEL.
@@ -382,6 +413,7 @@ def get_config_dict() -> Dict[str, str]:
         "default_hand_worker": get_default_hand_worker(),
         "engine_model": get_engine_model(),
         "mouth_model": get_mouth_model(),
+        "mouth_fallback_models": ",".join(get_mouth_fallback_models()),
         "eyes_model": get_eyes_model(),
         "nose_model": get_nose_model(),
         "host_dir": get_host_dir(),

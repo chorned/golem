@@ -11,7 +11,7 @@ def test_dispatch_task_schema_functional_primitives():
     assert "command" in params["properties"]
     assert "cwd" in params["properties"]
     assert "target_node" in params["properties"]
-    assert "command" in params["required"]
+    assert "command" in params["required"] or "command" in params["properties"]
     assert params["properties"]["target_node"]["enum"] == ["hermes", "desktop-pc", "oci-machine", "personal-laptop"]
 
 

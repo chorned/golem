@@ -32,3 +32,30 @@ def clean_exhausted_models():
     clear_exhausted_models()
     yield
     clear_exhausted_models()
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_wiki_dir(tmp_path, monkeypatch):
+    """
+    Hermetic wiki fixture redirecting all GolemWiki writes and peripheral vision crawls
+    to an isolated temporary git repository so tests never touch ~/.golem/wiki.
+    """
+    import shutil
+    from pathlib import Path
+    hermetic_dir = tmp_path / "hermetic_wiki"
+    hermetic_dir.mkdir(parents=True, exist_ok=True)
+    real_wiki = Path(os.path.expanduser("~/.golem/wiki"))
+    if real_wiki.exists():
+        for folder in ("context", "runbooks"):
+            src = real_wiki / folder
+            dst = hermetic_dir / folder
+            if src.exists():
+                shutil.copytree(src, dst, symlinks=True, ignore=shutil.ignore_patterns(".git*", "*.tmp", ".wiki.lock"))
+    from golem.wiki import GolemWiki
+    wiki = GolemWiki(wiki_dir=hermetic_dir)
+    monkeypatch.setenv("GOLEM_WIKI_DIR", str(hermetic_dir))
+    monkeypatch.setattr("golem.wiki.DEFAULT_WIKI_DIR", hermetic_dir)
+    from golem.memory.peripheral import clear_peripheral_vision_cache
+    clear_peripheral_vision_cache()
+    yield hermetic_dir
+    clear_peripheral_vision_cache()
