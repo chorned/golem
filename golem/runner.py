@@ -67,6 +67,12 @@ class TaskHandle:
         start_time: Optional[float] = None,
         exit_code: Optional[int] = None,
         output_tail: Optional[str] = None,
+        precedent_status: Optional[str] = None,
+        precedent_source: Optional[str] = None,
+        target_node: Optional[str] = None,
+        description: Optional[str] = None,
+        linear_issue_id: Optional[str] = None,
+        subtask_issue_id: Optional[str] = None,
     ):
         now = time.time()
         self.status = status
@@ -76,6 +82,11 @@ class TaskHandle:
         self.message = message
         self.terminal_id = terminal_id
         self.task_id = task_id or f"task_{int(now * 1000)}_{os.urandom(3).hex()}"
+        self.precedent_status = precedent_status or ""
+        self.precedent_source = precedent_source or ""
+        self.target_node = target_node or "localhost"
+        self.description = description or command
+        self.linear_issue_id = linear_issue_id or subtask_issue_id or ""
 
         coord = opaque_coordinate or pane or ""
         self._coordinate = coord
@@ -234,6 +245,7 @@ class RunnerExecutor:
         self.sensory_bus = sensory_bus or bus or event_bus or (get_default_event_bus() if callable(get_default_event_bus) else None)
         self.webui_server = webui_server
         self._active_observers: Dict[str, Any] = {}
+        self._active_handles: Dict[str, Any] = {}
         if hasattr(self.sensory_bus, "subscribe"):
             try:
                 self._bus_unsubscribe = self.sensory_bus.subscribe(
@@ -279,10 +291,16 @@ class RunnerExecutor:
         except Exception as e:
             logger.debug(f"Error handling sensory alert in RunnerExecutor: {e}")
 
-    async def settle_command(self, pane: str = "runner", returncode: int = 0) -> None:
+    async def settle_command(
+        self,
+        pane: str = "runner",
+        returncode: int = 0,
+        task_handle: Optional[Any] = None,
+    ) -> None:
         """
         Record command settlement, emit structured settlement log marker,
-        and cleanly unmount/stop any active EyesTaskObserver for the pane.
+        cleanly unmount/stop any active EyesTaskObserver for the pane,
+        and trigger non-blocking post-flight reflection to logbook.
         """
         marker = f"[INFO] Golem.Hands: Command settled with exit code {returncode}"
         hands_logger.info(marker)
@@ -298,6 +316,64 @@ class RunnerExecutor:
                             await obs.stop()
                     except Exception as e:
                         logger.debug(f"Error stopping observer for pane '{p}': {e}")
+
+        # Asynchronous Post-Flight Settlement Reflection
+        try:
+            from golem.memory.reflection import record_task_settlement_async
+            th = task_handle or (getattr(self, "_active_handles", {}).get(pane) if hasattr(self, "_active_handles") else None)
+            t_id = getattr(th, "task_id", f"task_{pane}_{int(time.time())}") if th else f"task_{pane}_{int(time.time())}"
+            t_desc = getattr(th, "description", getattr(th, "command", "")) if th else ""
+            t_node = getattr(th, "target_node", "localhost") if th else "localhost"
+            t_out = (getattr(th, "stdout", "") or getattr(th, "output_tail", "")) if th else ""
+            p_source = getattr(th, "precedent_source", "") if th else ""
+            p_status = getattr(th, "precedent_status", "") if th else ""
+            asyncio.create_task(
+                record_task_settlement_async(
+                    task_id=t_id,
+                    task_description=t_desc,
+                    target_node=t_node,
+                    exit_code=returncode,
+                    output_tail=t_out,
+                    precedent_source=p_source,
+                    precedent_status=p_status,
+                )
+            )
+        except Exception as e:
+            logger.debug(f"Failed to spawn reflection task in settle_command: {e}")
+
+        # Linear Subtask Settlement & Parent Evaluation
+        try:
+            th = task_handle or (getattr(self, "_active_handles", {}).get(pane) if hasattr(self, "_active_handles") else None)
+            subtask_id = getattr(th, "linear_issue_id", None) if th else None
+            if subtask_id:
+                from golem.linear_bridge import LinearBridge
+                linear_bridge = LinearBridge()
+                coord = getattr(th, "opaque_coordinate", pane)
+                t_id = getattr(th, "task_id", f"task_{int(time.time())}")
+                out_str = (getattr(th, "stdout", "") or getattr(th, "output_tail", "") or "")
+                tail_out = out_str[-800:] if out_str else "(empty)"
+                receipt = (
+                    f"### Subtask Hand Settled (`{coord}`)\n"
+                    f"- **Exit Code:** `{returncode}`\n"
+                    f"- **Task ID:** `{t_id}`\n"
+                    f"- **Outbox:** `~/.golem/outbox/{t_id}/`\n\n"
+                    f"**Tail Output:**\n```\n{tail_out}\n```"
+                )
+
+                async def _settle_and_check():
+                    try:
+                        res = await linear_bridge.settle_subtask_and_evaluate_parent(
+                            subtask_id=subtask_id,
+                            settlement_receipt=receipt,
+                        )
+                        if res.get("parent_settled"):
+                            logger.info(f"All subtasks finished. Parent {res.get('parent_key')} marked Claimed Fixed.")
+                    except Exception as ex:
+                        logger.debug(f"Linear subtask settlement failed in runner: {ex}")
+
+                asyncio.create_task(_settle_and_check())
+        except Exception as e:
+            logger.debug(f"Failed to initiate linear settlement in settle_command: {e}")
 
     async def settle_pane(self, pane: str = "runner", returncode: int = 0) -> None:
         """Alias for settle_command."""
@@ -414,6 +490,24 @@ class RunnerExecutor:
                 stderr=asyncio.subprocess.PIPE
             )
             pid = getattr(proc, "pid", None)
+            sub_id = kwargs.get("subtask_issue_id") or kwargs.get("linear_issue_id")
+            provisional_handle = TaskHandle(
+                status="running",
+                pane=str(effective_pane),
+                opaque_coordinate=str(target_pane),
+                command=command,
+                pid=pid,
+                dispatched_at=dispatched_at,
+                start_time=dispatched_at,
+                task_id=task_id,
+                terminal_id=terminal_id,
+                linear_issue_id=sub_id,
+                message="Command dispatched to pane.",
+            )
+            self._active_handles[str(target_pane)] = provisional_handle
+            self._active_handles[str(effective_pane)] = provisional_handle
+            self._active_handles["runner"] = provisional_handle
+
             disp_marker = f"[INFO] Golem.Hands: Dispatched command to pane '{effective_pane}' [PID: {pid}]"
             hands_logger.info(disp_marker)
             logger.info(disp_marker)

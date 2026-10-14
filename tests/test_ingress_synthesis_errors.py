@@ -154,7 +154,8 @@ class TestIngressSynthesisErrors(unittest.IsolatedAsyncioTestCase):
         turn2_empty = {"candidates": [{"content": {"parts": []}}]}
 
         with patch("golem.ingress.call_gemini_api", new_callable=AsyncMock) as mock_gemini:
-            mock_gemini.side_effect = [turn1_dispatch, turn2_empty, turn1_dispatch, turn2_empty]
+            # Per message: initial call, chain call, chain retry, Step 2, fallback.
+            mock_gemini.side_effect = [turn1_dispatch] + [turn2_empty] * 4 + [turn1_dispatch] + [turn2_empty] * 4
             with patch.object(self.gateway, "_execute_check_eyes", new_callable=AsyncMock) as mock_eyes:
                 mock_eyes.return_value = {"state": "IDLE", "buffer_tail": "idle"}
 
@@ -247,7 +248,7 @@ class TestIngressSynthesisErrors(unittest.IsolatedAsyncioTestCase):
         turn2_empty = {"candidates": [{"content": {"parts": []}}]}
 
         with patch("golem.ingress.call_gemini_api", new_callable=AsyncMock) as mock_gemini:
-            mock_gemini.side_effect = [turn1_dispatch, turn2_empty]
+            mock_gemini.side_effect = [turn1_dispatch] + [turn2_empty] * 4
             with patch.object(self.gateway, "_execute_check_eyes", side_effect=RuntimeError("PTY coordinate unmapped")):
                 event = {
                     "channel": "C_TEST",

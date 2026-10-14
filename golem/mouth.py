@@ -107,18 +107,84 @@ PROPOSE_MEMORY_UPDATE_TOOL_DECLARATION: Dict[str, Any] = {
 DISPATCH_TASK_TOOL_DECLARATION: Dict[str, Any] = {
     "name": "dispatch_task",
     "description": (
-        "Dispatch an operational task (coding, file modification, shell command, "
-        "build, git operation, test suite, or system maintenance) backstage to The Hands."
+        "Hand an objective to a capable backstage agent (a Hand) that works on it autonomously across many steps "
+        "via Herdr: inspecting systems, running commands, editing config, calling APIs, and verifying the result. "
+        "Describe the WHOLE objective, what 'done' looks like, and the facts it needs (hosts, paths, ports, where "
+        "credentials are stored). Do not split an objective into shell one-liners and do not micro-manage steps: "
+        "one dispatch should cover a whole piece of work. Never paste secrets into the brief; tell the Hand where "
+        "they are stored instead."
     ),
     "parameters": {
         "type": "OBJECT",
         "properties": {
-            "task_description": {"type": "STRING", "description": "Clear technical instructions."},
-            "worker": {"type": "STRING", "description": "Hand worker engine ('agy', 'opencode', 'hermes')."},
-            "target_node": {"type": "STRING", "description": "Target fleet node."},
-            "cwd": {"type": "STRING", "description": "Working directory."},
+            "task_description": {
+                "type": "STRING",
+                "description": (
+                    "The full objective for the Hand: what to accomplish, success criteria, relevant context and "
+                    "constraints, and what to report back."
+                ),
+            },
+            "command": {
+                "type": "STRING",
+                "description": "Optional suggested starting command or script. The Hand may adapt or replace it.",
+            },
+            "cwd": {
+                "type": "STRING",
+                "description": "Optional working directory for execution (e.g., '/Users/hermes/projects/podcast-bot').",
+            },
+            "target_node": {
+                "type": "STRING",
+                "enum": ["hermes", "desktop-pc", "oci-machine", "personal-laptop"],
+                "description": "Target fleet node (localhost / hermes).",
+            },
+            "worker": {
+                "type": "STRING",
+                "description": "Optional worker engine to execute the task (defaults to 'agy').",
+            },
         },
         "required": ["task_description"],
+    },
+}
+
+CONSULT_MEMORY_TOOL_DECLARATION: Dict[str, Any] = {
+    "name": "consult_memory",
+    "description": "Read the exact content of an operational runbook, capability, or node rule from ~/.golem/wiki/.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "path": {
+                "type": "STRING",
+                "description": "Relative path to wiki document, e.g. 'runbooks/flows/oauth_token_refresh.md'",
+            }
+        },
+        "required": ["path"],
+    },
+}
+
+READ_PROJECT_FILE_DECLARATION: Dict[str, Any] = {
+    "name": "read_project_file",
+    "description": (
+        "Directly read a local file or inspect a directory on the host filesystem "
+        "(e.g., project registries, JSON databases, configs, dossiers, or logs). "
+        "Use this for fast, non-mutating inspection without dispatching a heavy Hand."
+    ),
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "path": {
+                "type": "STRING",
+                "description": "Absolute or home-relative path to inspect (e.g. '/Users/hermes/projects/podcast-bot/the_unmade_god_episodes.json').",
+            },
+            "max_lines": {
+                "type": "INTEGER",
+                "description": "Maximum number of lines to return from file content (default: 200).",
+            },
+            "pattern": {
+                "type": "STRING",
+                "description": "Optional glob pattern if inspecting a directory (e.g. '*episodes*.json').",
+            },
+        },
+        "required": ["path"],
     },
 }
 
@@ -156,13 +222,177 @@ SHARE_ARTIFACT_TOOL_DECLARATION: Dict[str, Any] = {
     },
 }
 
+PLAN_TASK_WITH_SUBTASKS_DECLARATION: Dict[str, Any] = {
+    "name": "plan_task_with_subtasks",
+    "description": (
+        "Create a parent task and broken-down child subtasks in Linear (Golem_Brain project). "
+        "MANDATORY for compound or multi-stage operations (e.g. podcast series generation, "
+        "multi-file refactors, migrations) BEFORE dispatching the first backstage Hand."
+    ),
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "parent_title": {
+                "type": "STRING",
+                "description": "High-level deliverable title (e.g., 'Produce 10-Episode Podcast Curriculum').",
+            },
+            "parent_description": {
+                "type": "STRING",
+                "description": "Comprehensive scope and final success criteria.",
+            },
+            "subtasks": {
+                "type": "ARRAY",
+                "items": {"type": "STRING"},
+                "description": "Ordered list of discrete subtask milestones to execute sequentially.",
+            },
+        },
+        "required": ["parent_title", "parent_description", "subtasks"],
+    },
+}
+
+CHECK_LINEAR_TASK_STATUS_DECLARATION: Dict[str, Any] = {
+    "name": "check_linear_task_status",
+    "description": (
+        "Inspect active parent tasks and child subtask trees in Golem_Brain. "
+        "Use this first whenever Carl asks for progress, status, or updates on deliverables."
+    ),
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "query": {
+                "type": "STRING",
+                "description": "Optional keyword or ticket identifier.",
+            }
+        },
+    },
+}
+
+APPROVE_LINEAR_TASK_DECLARATION: Dict[str, Any] = {
+    "name": "approve_linear_task",
+    "description": (
+        "Transition a parent task and all child subtasks from 'Claimed Fixed' to 'Completed'. "
+        "STRICT INVARIANT: MUST ONLY be called when Carl explicitly verifies and approves the deliverable."
+    ),
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "issue_key": {
+                "type": "STRING",
+                "description": "The Linear parent issue identifier (e.g. 'CHO-142').",
+            },
+            "signoff_comment": {
+                "type": "STRING",
+                "description": "Carl's explicit signoff note or verification feedback.",
+            },
+        },
+        "required": ["issue_key"],
+    },
+}
+
+DISPATCH_SUBTASKS_TOOL_DECLARATION: Dict[str, Any] = {
+    "name": "dispatch_subtasks",
+    "description": (
+        "Dispatch multiple broken-down subtasks concurrently or sequentially across fleet nodes. "
+        "Each subtask is bound to a dedicated Hand agent and tracked under its Linear issue key."
+    ),
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "parent_issue_key": {
+                "type": "STRING",
+                "description": "Parent Linear issue key (e.g. 'CHO-154').",
+            },
+            "execution_mode": {
+                "type": "STRING",
+                "enum": ["parallel", "sequential"],
+                "description": "Whether to execute subtasks concurrently ('parallel') or in order ('sequential').",
+            },
+            "subtasks": {
+                "type": "ARRAY",
+                "items": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "issue_key": {
+                            "type": "STRING",
+                            "description": "Linear subtask issue key (e.g. 'CHO-155').",
+                        },
+                        "target_node": {
+                            "type": "STRING",
+                            "description": "Target fleet node (e.g. 'oci-machine', 'localhost', 'desktop-pc').",
+                        },
+                        "role_name": {
+                            "type": "STRING",
+                            "description": "Descriptive role or subtask name (e.g. 'Series Inventory').",
+                        },
+                        "read_only": {
+                            "type": "BOOLEAN",
+                            "description": "True if this subtask performs read-only inspection.",
+                        },
+                        "task_brief": {
+                            "type": "STRING",
+                            "description": "Complete self-contained instruction/prompt for the Hand agent.",
+                        },
+                    },
+                    "required": ["issue_key", "task_brief"],
+                },
+                "description": "List of subtask specifications to dispatch.",
+            },
+        },
+        "required": ["parent_issue_key", "execution_mode", "subtasks"],
+    },
+}
+
 MOUTH_TOOLS: List[Dict[str, Any]] = [
     DISPATCH_TASK_TOOL_DECLARATION,
-    CHECK_EYES_TOOL_DECLARATION,
-    CHECK_NOSE_TOOL_DECLARATION,
-    SHARE_ARTIFACT_TOOL_DECLARATION,
-    PROPOSE_MEMORY_UPDATE_TOOL_DECLARATION,
+    DISPATCH_SUBTASKS_TOOL_DECLARATION,
+    READ_PROJECT_FILE_DECLARATION,
+    CONSULT_MEMORY_TOOL_DECLARATION,
+    PLAN_TASK_WITH_SUBTASKS_DECLARATION,
+    CHECK_LINEAR_TASK_STATUS_DECLARATION,
+    APPROVE_LINEAR_TASK_DECLARATION,
 ]
+
+BASE_CHIEF_OF_STAFF_INSTRUCTION = """
+You are Golem, Chief of Staff for Carl's distributed computing fleet and homelab.
+You have direct autonomous control over a distributed mesh:
+- hermes: Local macOS controller & homelab operations
+- desktop-pc: Windows CUDA workstation (heavy compute, PyTorch, InvokeAI)
+- oci-machine: Oracle Cloud Linux VPS (Audiobookshelf, scrapers, ingress daemons)
+
+OPERATIONAL MANDATE:
+1. BIAS TOWARD ACTION: When Carl asks you to inspect, verify, download, transfer, or sync, USE YOUR TOOLS IMMEDIATELY.
+2. DO NOT TALK ABOUT EXECUTING: Never reply saying "Starting transfer now", "Triggering script now", or "Spooling up backstage work" without calling `dispatch_task` or `dispatch_subtasks` in the same turn. If an action is required, call the tool.
+3. READ BEFORE ACTING: Use `read_project_file` to check manifests, JSON files, and local directories before guessing file paths.
+4. SYNTHESIZE OUTCOMES: Once your tools finish executing, report the actual output, verified artifacts, and live status directly to Carl.
+5. DISPATCH BACKSTAGE WORK FOR OPERATIONAL TASKS:
+When asked to perform operational tasks (e.g. Cloudflare tunnels, DNS updates, service configuration, deployments, code changes, system administration), inspection of files or wiki memory is only the pre-flight phase. You MUST call `dispatch_task` to perform the actual work (e.g., using `worker="agy"` or executing the necessary shell/python commands on the target node). NEVER terminate your turn after reading files with promises like "Executing now" or "Applying next". If the action is ready, CALL `dispatch_task`.
+6. MULTI-AGENT SUBTASK DISPATCH & AUDIOBOOKSHELF RULES:
+When handling multi-part audits, parallel inspections, or tasks with multiple subtasks, use `dispatch_subtasks` with `execution_mode: "parallel"` (or `"sequential"`).
+Audiobookshelf Subtask & Inspection Rules (Strictly Read-Only):
+Audiobookshelf runs in Docker on `oci-machine` with access via curl to http://localhost:13378 or local SQLite/filesystem. Format subtask briefs as strictly read-only:
+- Hand 1 (CHO-155 - Series & Library Inventory): Target `oci-machine` via SSH, execute read-only query against local ABS REST API (`curl -s http://localhost:13378/api/libraries/b6967c3c-b061-4831-a06b-3e4aea9121ca/items`), output JSON summary of podcast series IDs, titles, and episode counts. Flag brief with `read_only: true`.
+- Hand 2 (CHO-156 - Episode Durations): Target `oci-machine` via SSH, execute read-only query against ABS item endpoints or inspect media files via `ffprobe` / `docker exec` SQLite read-only to calculate exact runtimes across all episodes. Flag brief with `read_only: true`.
+7. LINEAR IS YOUR MEMORY ACROSS TURNS:
+Nothing carries over between turns except the Slack thread and Linear. When a `[Linear working notes]` block appears in the prompt, treat its findings as verified by an earlier turn: do NOT repeat that discovery, continue from it. Hand results are recorded to the thread's Linear issue automatically. Never trust your own earlier chat briefings over the notes; if they disagree, the Linear notes win.
+8. DO NOT CLAIM CAPABILITIES YOU LACK:
+You have no tool to switch models. Backstage model fallback (for example to Sonnet) is automatic inside the worker driver, so never tell Carl that you "switched" a worker's model. Report only what a tool result actually says.
+9. AN IDLE RUNNER IS NOT A CRASH:
+If `check_eyes` reports an idle runner whose only content is a shell prompt, that is a fresh runner waiting for a command. Nothing crashed. Dispatch the work instead of reporting a failure.
+10. DELEGATE WHOLE OBJECTIVES:
+A Hand is a capable agent, not a shell. Give `dispatch_task` the complete objective in `task_description` (goal, success criteria, known facts, where credentials live, what to report back) so it can work through many steps itself and verify its own result. Do not chop work into one-line probes, and do not repeat discovery that Linear notes or earlier results already contain.
+11. REPORT ONLY WHAT TOOLS CONFIRMED:
+Never say a credential, tunnel, route, or policy is "verified", "configured", or "live" unless a tool result in this conversation shows it. If something was not checked, say it was not checked. If you need something from Carl (for example a credential's location), ask for that one thing plainly.
+"""
+
+BASE_SYSTEM_INSTRUCTION: str = BASE_CHIEF_OF_STAFF_INSTRUCTION
+
+
+def build_mouth_system_instruction() -> str:
+    """Build Mouth system prompt including Ambient Peripheral Vision."""
+    from golem.memory.peripheral import compile_peripheral_vision
+    peripheral_vision = compile_peripheral_vision()
+    return f"{BASE_CHIEF_OF_STAFF_INSTRUCTION}\n\n{peripheral_vision}"
+
 
 
 def is_cancellation_message(text: str) -> bool:
@@ -278,6 +508,7 @@ async def generate_mouth_response(
     timeout_seconds: float = 30.0,
     eyes_status: Optional[Dict[str, Any]] = None,
     nose_status: Optional[Dict[str, Any]] = None,
+    worker_registry_state: Optional[str] = None,
 ) -> str:
     """
     Generate dynamic Mouth response using Gemini Flash LLM.
@@ -358,29 +589,34 @@ async def generate_mouth_response(
             "Respond naturally, directly, and conversationally like a trusted senior colleague.\n"
             "Strictly adhere to Slack mrkdwn syntax: *bold*, `code`, <URL|Label>.\n"
             "Never dump terminal escape codes, ANSI colors, or box drawing characters.\n"
+            "CRITICAL GROUNDING INVARIANT:\n"
+            "You must ALWAYS ground your status reports strictly in [CURRENT WORKER REGISTRY STATE].\n"
+            "If Active Workers is 0 (or 'None running'), NEVER state or imply that workers, agents, or subtasks are running, attached, or active. State plainly and factually that 0 workers are active.\n\n"
             "If Carl asks if he can ask something mid-stream or converse, reassure him warmly and answer his question.\n"
             "If Carl asks about what The Eyes see or what The Nose smells mid-stream, answer factually using the current sensory state.\n"
             "If Carl asks about the fleet, machines, or which machine is the PC, answer factually using the fleet topology above.\n"
-            "If Carl asks for status or progress, report current progress accurately.\n"
+            "If Carl asks for status or progress, report current progress accurately based on the worker registry.\n"
             "Keep answers focused, high-signal, and proportionate to Carl's question."
         )
 
-        # Pre-flight Capabilities Injection from Wiki (~/.golem/wiki/context/capabilities.md)
+        # Ambient Peripheral Vision & Capabilities Injection from Wiki
         try:
-            from golem.wiki import GolemWiki
-            wiki = GolemWiki()
-            cap_content = wiki.read("context/capabilities.md")
-            if cap_content and cap_content.strip():
-                sys_prompt += f"\n\n--- Active Fleet Capabilities ---\n{cap_content.strip()}"
+            from golem.memory.peripheral import compile_peripheral_vision
+            pv_content = compile_peripheral_vision()
+            if pv_content and pv_content.strip():
+                sys_prompt += f"\n\n{pv_content.strip()}"
         except Exception:
             pass
 
-        state_ctx_lines = [
+        state_ctx_lines = []
+        if worker_registry_state:
+            state_ctx_lines.append(worker_registry_state)
+        state_ctx_lines.extend([
             f"Runner Status: {status_val}",
             f"Active Command: {command}",
             f"PID: {pid}",
             f"Buffer Tail:\n{tail}",
-        ]
+        ])
         if eyes_status is not None:
             e_st = eyes_status.get("state", "IDLE")
             e_cmd = eyes_status.get("active_command") or eyes_status.get("command", "")

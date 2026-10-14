@@ -358,7 +358,19 @@ class SessionRouter:
             for key in expired_keys:
                 s = self.sessions.pop(key, None)
                 if s:
-                    await s.close(reason="inactivity_timeout")
+                    if s.is_expired():
+                        reason = "inactivity_timeout"
+                    elif s.state == SessionState.FAILED:
+                        reason = "session_failed"
+                    else:
+                        reason = "session_closed"
+                    idle_s = time.time() - getattr(s, "last_active_ts", time.time())
+                    logger.warning(
+                        f"Reaping session '{key}': reason={reason} state={getattr(s.state, 'value', s.state)} "
+                        f"idle={idle_s:.0f}s timeout={s.timeout_seconds:.0f}s "
+                        f"last_prompt={str(getattr(s, 'last_prompt', ''))[:80]!r}"
+                    )
+                    await s.close(reason=reason)
                     if not getattr(s, "_harness_torn_down", False) and self.harness and getattr(s, "workspace_id", None):
                         try:
                             res = self.harness.teardown(s.workspace_id)

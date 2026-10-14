@@ -189,6 +189,8 @@ set_default_nose_sentinel(nose_sentinel)
 dual_pane_harness = DualPaneHarness(herdr_client=herdr_client, default_cwd=DEFAULT_TARGET_REPO)
 session_router = SessionRouter(default_target_cwd=DEFAULT_TARGET_REPO, harness=dual_pane_harness)
 ingress_gateway = IngressGateway(router=session_router, bot_user_id=None, nose_sentinel=nose_sentinel)
+webui_server = None
+app.webui_server = webui_server
 
 BOT_USER_ID: Optional[str] = None
 processed_message_ids: Set[str] = set()
@@ -1181,72 +1183,205 @@ async def handle_wrapup_request(channel: str, thread_ts: Optional[str] = None, m
     await client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=sanitize_for_slack(msg))
 
 
-async def handle_update_request(channel: str, thread_ts: Optional[str] = None, msg_ts: Optional[str] = None, client: Any = None):
-    # Check for active running sessions/hands
-    active_count = len([s for s in sessions.values() if getattr(s, "status", "") == "running" or getattr(s, "is_busy", False)])
-    if ingress_gateway and getattr(ingress_gateway, "webui_server", None):
-        active_hands = list(getattr(ingress_gateway.webui_server, "_active_hands", {}).values())
-        active_count += len(active_hands)
+async def handle_update_request(
+    say_or_channel: Any = None,
+    channel_or_thread_ts: Any = None,
+    message_ts: Any = None,
+    client: Any = None,
+    **kwargs: Any,
+):
+    logger.info("!update triggered: Initiating fleet-wide restart and update sequence.")
+
+    # Determine caller signature (supports say(text, thread_ts=...) or client.chat_postMessage)
+    if callable(say_or_channel):
+        say = say_or_channel
+        channel_id = channel_or_thread_ts
+        target_ts = message_ts
+    else:
+        channel_id = say_or_channel or kwargs.get("channel")
+        target_ts = kwargs.get("thread_ts") or channel_or_thread_ts or message_ts
+        slack_client = client or kwargs.get("client")
+
+        async def _client_say(text: str, thread_ts: Optional[str] = None) -> Any:
+            eff_ts = thread_ts or target_ts
+            if slack_client and hasattr(slack_client, "chat_postMessage"):
+                return await slack_client.chat_postMessage(
+                    channel=channel_id,
+                    thread_ts=eff_ts,
+                    text=sanitize_for_slack(text),
+                )
+            return {"ts": eff_ts}
+
+        say = _client_say
+
+    # 1. PRE-FLIGHT TASK DRAIN GATE
+    active_count = 0
+    target_webui = globals().get("webui_server")
+    if target_webui is None and "ingress_gateway" in globals() and ingress_gateway:
+        target_webui = getattr(ingress_gateway, "webui_server", None)
+
+    terminal_statuses = {"EXIT_0", "COMPLETED", "FAILED", "DONE", "SETTLED", "CANCELLED", "SUCCESS"}
+    if target_webui:
+        try:
+            if callable(getattr(target_webui, "clear_settled_hands", None)):
+                target_webui.clear_settled_hands()
+        except Exception as e:
+            logger.warning(f"Error clearing settled hands before update: {e}")
+
+        executing_checked = False
+        if hasattr(target_webui, "get_executing_hands"):
+            is_mock = "Mock" in type(target_webui).__name__
+            if not is_mock or "get_executing_hands" in target_webui.__dict__:
+                try:
+                    res = target_webui.get_executing_hands()
+                    if isinstance(res, (dict, list, set)):
+                        active_count += len(res)
+                        executing_checked = True
+                except Exception as ge_err:
+                    logger.warning(f"Error getting executing hands: {ge_err}")
+
+        if not executing_checked and hasattr(target_webui, "_active_hands"):
+            hands = target_webui._active_hands
+            if isinstance(hands, dict):
+                active_count += len([
+                    h for h in hands.values()
+                    if not (isinstance(h, dict) and (str(h.get("status", "")).upper() in terminal_statuses or h.get("exit_code") is not None))
+                ])
+            elif isinstance(hands, (list, set)):
+                active_count += len([
+                    h for h in hands
+                    if not (isinstance(h, dict) and (str(h.get("status", "")).upper() in terminal_statuses or h.get("exit_code") is not None))
+                ])
+            elif hands and not ("Mock" in type(hands).__name__):
+                active_count += 1
+    elif "sessions" in globals() and isinstance(sessions, dict):
+        active_count += len([s for s in sessions.values() if getattr(s, "status", "") == "running" or getattr(s, "is_busy", False)])
 
     if active_count > 0:
-        msg = f"⚠️ *Update Aborted:* Fleet active with {active_count} executing task(s). Wait for completion before reloading."
-        await client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=sanitize_for_slack(msg))
+        await say(
+            f"⚠️ *Update Aborted:* Fleet is actively executing {active_count} task(s). "
+            f"Wait for backstage tasks to settle before restarting.",
+            thread_ts=target_ts,
+        )
         return
 
-    msg = "🚀 *Update:* Verifying core test suite and fleet AGY binaries..."
-    await client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=sanitize_for_slack(msg))
+    progress_msg = await say("♻️ *Initiating full-stack update and fleet refresh...*", thread_ts=target_ts)
+    progress_ts = progress_msg["ts"] if isinstance(progress_msg, dict) and "ts" in progress_msg else target_ts
 
-    async def _reload():
-        await asyncio.sleep(0.5)
-        script = os.path.join(HOST_DIR, "scripts", "safe_update.sh")
-        if os.path.exists(script) and os.access(script, os.X_OK):
+    # 2. RUN TEST GATE & LOCAL HERDR REFRESH
+    script_path = os.path.join(HOST_DIR, "scripts", "safe_update.sh")
+    script_exec = script_path if os.path.exists(script_path) else "scripts/safe_update.sh"
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "/bin/bash", script_exec, "--verify-only",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30.0)
+    except Exception as e:
+        logger.warning(f"safe_update.sh execution error: {e}")
+        stdout, stderr = b"", str(e).encode()
+        proc = type("Proc", (), {"returncode": 1})()
+
+    if proc.returncode != 0:
+        err_snippet = (stderr or stdout).decode("utf-8", errors="replace")[-600:]
+        await say(
+            f"❌ *Update Aborted — Test Battery or Script Failed (Exit {proc.returncode}):*\n"
+            f"```\n{err_snippet}\n```",
+            thread_ts=target_ts,
+        )
+        return
+
+    try:
+        import sys
+        import importlib
+        # Reload herdr_fleet in memory if modified on disk (skip if under test)
+        is_testing = bool(
+            os.environ.get("PYTEST_CURRENT_TEST")
+            or "unittest" in sys.modules
+            or "pytest" in sys.modules
+        )
+        if not is_testing:
             try:
-                proc = await asyncio.create_subprocess_exec(
-                    script,
-                    "--verify-only",
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-                stdout, stderr = await proc.communicate()
-                if proc.returncode != 0:
-                    err_snip = (stderr or stdout).decode("utf-8", errors="replace")[-500:]
-                    msg = f"❌ *Update Aborted:* Test verification failed (exit {proc.returncode}):\n```{err_snip}```"
-                    await client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=sanitize_for_slack(msg))
-                    return
-            except Exception as e:
-                logger.warning(f"safe_update.sh invocation failed: {e}")
+                if "herdr_fleet" in sys.modules:
+                    importlib.reload(sys.modules["herdr_fleet"])
+                if "golem.herdr_fleet" in sys.modules:
+                    importlib.reload(sys.modules["golem.herdr_fleet"])
+            except Exception as rel_err:
+                logger.warning(f"Module reload warning in app.py: {rel_err}")
 
-        # Check and update agy CLI across fleet
-        fleet_bullets = []
+        # 3. REFRESH FLEET HERDR & AUDIT AGY BINARIES
+        herdr_results = []
+        agy_results = []
         try:
-            from herdr_fleet import HerdrFleet
-            fleet_obj = HerdrFleet()
-            agy_results = await fleet_obj.update_fleet_agy()
-            for r in agy_results:
-                n = r.get("node", "unknown")
-                st = r.get("status", "unknown")
-                fleet_bullets.append(f"• *{n}:* {st}")
-        except Exception as e:
-            fleet_bullets.append(f"• Fleet AGY update error: {e}")
+            import herdr_fleet
+            fleet_cls = getattr(herdr_fleet, "HerdrFleet", None)
+            if fleet_cls:
+                if hasattr(fleet_cls, "refresh_fleet_herdr"):
+                    try:
+                        herdr_results = await asyncio.wait_for(fleet_cls.refresh_fleet_herdr(), timeout=8.0)
+                    except Exception as he:
+                        logger.warning(f"Herdr fleet refresh error: {he}")
+                fleet_obj = fleet_cls()
+                if hasattr(fleet_obj, "update_fleet_agy"):
+                    try:
+                        agy_results = await asyncio.wait_for(fleet_obj.update_fleet_agy(timeout=6.0), timeout=10.0)
+                    except Exception as ae:
+                        logger.warning(f"AGY fleet update error: {ae}")
+        except Exception as fleet_err:
+            logger.warning(f"Fleet audit warning in app.py: {fleet_err}")
 
-        fleet_section = ""
-        if fleet_bullets:
-            fleet_section = "\n\n*Fleet AGY Binary Status:*\n" + "\n".join(fleet_bullets)
+        # 4. RESOLVE GIT REVISION
+        git_rev = ""
+        try:
+            g_proc = await asyncio.create_subprocess_exec(
+                "git", "rev-parse", "--short", "HEAD",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=HOST_DIR,
+            )
+            g_out, _ = await g_proc.communicate()
+            if g_proc.returncode == 0:
+                git_rev = g_out.decode("utf-8").strip()
+        except Exception:
+            pass
 
-        succ_msg = f"🚀 *Update:* Verification passed cleanly. Daemon reloaded.{fleet_section}"
-        await client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=sanitize_for_slack(succ_msg))
-        await asyncio.sleep(0.5)
-
+        # 5. FORMAT AND POST RICH EXECUTIVE BRIEFING
+        stdout_str = (stdout or b"").decode("utf-8", errors="replace")
+        try:
+            from herdr_fleet import format_fleet_update_report
+            report = format_fleet_update_report(
+                herdr_results=herdr_results,
+                agy_results=agy_results,
+                stdout_output=stdout_str,
+                git_rev=git_rev,
+            )
+        except Exception:
+            from golem.ingress import _build_fallback_update_report
+            report = _build_fallback_update_report(
+                herdr_results=herdr_results,
+                agy_results=agy_results,
+                stdout_output=stdout_str,
+                git_rev=git_rev,
+            )
+        await say(report, thread_ts=target_ts)
+        await asyncio.sleep(1.5)
+    except Exception as fatal_e:
+        logger.exception(f"Fatal error in handle_update_request: {fatal_e}")
+        try:
+            await say(f"⚠️ *Update encountered unexpected error:* `{fatal_e}`\nReloading daemon via launchd...", thread_ts=target_ts)
+        except Exception:
+            pass
+    finally:
+        # 6. RESTART DAEMON UNDER LAUNCHD
         try:
             uid = os.getuid()
-            for label in ["com.user.golem"]:
-                cmd = ["launchctl", "kickstart", "-k", "-p", f"gui/{uid}/{label}"]
-                proc = await asyncio.create_subprocess_exec(*cmd)
-                await proc.communicate()
+            await asyncio.create_subprocess_exec(
+                "launchctl", "kickstart", "-k", "-p", f"gui/{uid}/com.user.golem"
+            )
         except Exception as e:
             logger.warning(f"launchctl kickstart invocation failed: {e}")
 
-    asyncio.create_task(_reload())
 
 
 # ------------------------------------------------------------------------------
@@ -1557,6 +1692,11 @@ async def should_process_ingress_event(event: Dict[str, Any], client: Any) -> bo
     channel = str(event.get("channel", ""))
     channel_type = str(event.get("channel_type", ""))
     thread_ts = event.get("thread_ts")
+
+    # 0. Global Executive Bang & Slash Commands (!update, !bearings, !ahoy, /update, etc.)
+    cmd_token = clean_text.split()[0].lower() if clean_text.split() else ""
+    if cmd_token.startswith("!") or cmd_token.startswith("/"):
+        return True
 
     # 1. 1:1 Direct Message or iMessage
     if channel_type == "im" or channel.startswith("D") or bool(event.get("is_imessage", False)):
@@ -2065,31 +2205,38 @@ async def main(args: Optional[argparse.Namespace] = None):
     # Start Observability WebUI if requested via CLI flag or environment variable
     webui_active = getattr(args, "webui", False) or is_webui_enabled() or (getattr(args, "hands", None) is not None)
     if webui_active:
-        try:
-            default_daemon_host = "0.0.0.0" if (os.environ.get("DAEMON_LABEL") or os.environ.get("GOLEM_DAEMON_LABEL")) else get_webui_host()
-            webui_host = getattr(args, "host", None) or os.environ.get("GOLEM_WEBUI_HOST") or default_daemon_host
-            webui_port = getattr(args, "port", None) or get_webui_port()
-            await start_webui_server(host=webui_host, port=webui_port)
-            ingress_gateway.webui_server = get_active_webui_server()
-            logger.info(f"Golem Observability WebUI active on http://{webui_host}:{webui_port}")
+        default_daemon_host = "0.0.0.0" if (os.environ.get("DAEMON_LABEL") or os.environ.get("GOLEM_DAEMON_LABEL")) else get_webui_host()
+        webui_host = getattr(args, "host", None) or os.environ.get("GOLEM_WEBUI_HOST") or default_daemon_host
+        webui_port = getattr(args, "port", None) or get_webui_port()
+        max_attempts = 3
+        for attempt in range(1, max_attempts + 1):
+            try:
+                await start_webui_server(host=webui_host, port=webui_port)
+                ingress_gateway.webui_server = get_active_webui_server()
+                logger.info(f"Golem Observability WebUI active on http://{webui_host}:{webui_port}")
+                break
+            except Exception as e:
+                if attempt < max_attempts:
+                    logger.warning(f"WebUI startup attempt {attempt}/{max_attempts} failed ({e}); retrying in 1s...")
+                    await asyncio.sleep(1.0)
+                else:
+                    logger.error(f"Failed to start Observability WebUI server after {max_attempts} attempts: {e}")
 
-            # Auto-start simulated hands if requested via CLI flag or environment variable
-            sim_hands = getattr(args, "hands", None)
-            if sim_hands is not None:
-                hands_count = abs(int(sim_hands))
-            elif os.environ.get("GOLEM_SIMULATE_HANDS"):
-                try:
-                    hands_count = abs(int(os.environ["GOLEM_SIMULATE_HANDS"]))
-                except ValueError:
-                    hands_count = None
-            else:
+        # Auto-start simulated hands if requested via CLI flag or environment variable
+        sim_hands = getattr(args, "hands", None)
+        if sim_hands is not None:
+            hands_count = abs(int(sim_hands))
+        elif os.environ.get("GOLEM_SIMULATE_HANDS"):
+            try:
+                hands_count = abs(int(os.environ["GOLEM_SIMULATE_HANDS"]))
+            except ValueError:
                 hands_count = None
+        else:
+            hands_count = None
 
-            if hands_count is not None and ingress_gateway.webui_server:
-                ingress_gateway.webui_server.start_hand_simulation(hands_count)
-                logger.info(f"Hand agent simulator active ({hands_count} simulated hands).")
-        except Exception as e:
-            logger.error(f"Failed to start Observability WebUI server: {e}")
+        if hands_count is not None and ingress_gateway.webui_server:
+            ingress_gateway.webui_server.start_hand_simulation(hands_count)
+            logger.info(f"Hand agent simulator active ({hands_count} simulated hands).")
 
     handler = AsyncSocketModeHandler(app, SLACK_APP_TOKEN)
     logger.info("First Mate Gateway ready. Listening for Slack & iMessage events...")

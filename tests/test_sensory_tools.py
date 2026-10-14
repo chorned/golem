@@ -169,7 +169,7 @@ class TestSensoryToolDeclarations(unittest.TestCase):
         tools = get_mouth_tools_declaration()
         raw_json = json.dumps(tools)
         decoded = json.loads(raw_json)
-        self.assertEqual(len(decoded[0]["functionDeclarations"]), 3)
+        self.assertEqual(len(decoded[0]["functionDeclarations"]), 4)
 
 
 class TestSensoryToolExecution(unittest.IsolatedAsyncioTestCase):

@@ -69,6 +69,7 @@ class TestTier2PortBoundaries(unittest.TestCase):
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         s.bind(("127.0.0.1", 0))
+        s.listen(1)  # a real occupant is a live listening daemon
         occupied_port = s.getsockname()[1]
 
         try:

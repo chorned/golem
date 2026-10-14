@@ -82,7 +82,7 @@ class TestDualPaneHarness(unittest.IsolatedAsyncioTestCase):
         self.assertIn("--cwd", calls[0][0][0])
 
         # 2. agent start (Pane 1)
-        self.assertEqual(calls[1][0][0], ["agent", "start", "fm-sess-liaison", "--kind", "agy", "--pane", "1"])
+        self.assertEqual(calls[1][0][0], ["agent", "start", "fm-sess-liaison", "--kind", "agy", "--pane", "ws-m4-1:p1"])
 
         # 3. pane create (Pane 2)
         self.assertEqual(calls[2][0][0], ["pane", "create", "--workspace", "fm-sess", "--label", "runner"])

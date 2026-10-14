@@ -208,7 +208,8 @@ class TestGatewayR1Resiliency(unittest.IsolatedAsyncioTestCase):
         }
 
         with patch("golem.gateway.ingress.call_gemini_api", new_callable=AsyncMock) as mock_gemini:
-            mock_gemini.side_effect = [turn1_resp, turn2_error]
+            # Chain call consumes the first error; Step 2 synthesis gets the second.
+            mock_gemini.side_effect = [turn1_resp, turn2_error, turn2_error]
 
             with patch.object(self.gateway, "_execute_check_nose", new_callable=AsyncMock) as mock_exec_nose:
                 mock_exec_nose.return_value = {

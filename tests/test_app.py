@@ -993,11 +993,13 @@ class TestThinIngressGateway(unittest.IsolatedAsyncioTestCase):
             "text": "/update",
         }
 
-        with patch.object(gateway, "_post_response", new_callable=AsyncMock) as mock_post:
+        with patch.object(gateway, "_post_response", new_callable=AsyncMock) as mock_post, \
+             patch("asyncio.create_task") as mock_task:
             await gateway.handle_message(event, client)
             mock_post.assert_awaited_once()
             posted_text = mock_post.call_args[0][3]
             self.assertIn("Update:", posted_text)
+            mock_task.assert_called_once()
 
 
 if __name__ == "__main__":

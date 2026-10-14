@@ -172,6 +172,101 @@ class TestMouthSynthesisEmptyCandidate(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("⚠️ *Executive Synthesis Failed*", posted)
                 self.assertIn("Raw sensory data returned above", posted)
 
+    async def test_tool_error_with_attempted_tool_call_during_synthesis_recovers_cleanly(self):
+        """
+        When backstage task raises an error (such as UnboundLocalError 'node_label')
+        and Step 2 synthesis model attempts another tool call ('dispatch_task'),
+        fallback synthesis extracts the error details and produces a clean executive briefing
+        without crashing or dumping raw unformatted JSON.
+        """
+        turn1_dispatch = {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [
+                            {
+                                "functionCall": {
+                                    "name": "dispatch_task",
+                                    "args": {
+                                        "task_description": "check /Users/hermes/projects/podcast-bot",
+                                    },
+                                }
+                            }
+                        ]
+                    },
+                    "finishReason": "STOP",
+                }
+            ]
+        }
+        # Step 2: Model attempts to invoke dispatch_task again when it sees the error
+        turn2_tool_call_attempt = {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [
+                            {
+                                "functionCall": {
+                                    "name": "dispatch_task",
+                                    "args": {
+                                        "task_description": "retry podcast-bot generation",
+                                    },
+                                }
+                            }
+                        ]
+                    },
+                    "finishReason": "STOP",
+                }
+            ]
+        }
+        # Fallback text synthesis successfully briefs Carl on the failure
+        fallback_briefing = {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [
+                            {
+                                "text": "❌ *Task Blocked:* Backstage execution failed due to an `UnboundLocalError` (`node_label`). "
+                                        "I diagnosed the unassociated variable in `ingress.py`."
+                            }
+                        ]
+                    },
+                    "finishReason": "STOP",
+                }
+            ]
+        }
+
+        with patch("golem.gateway.ingress.call_gemini_api", new_callable=AsyncMock) as mock_gemini:
+            mock_gemini.side_effect = [turn1_dispatch, turn2_tool_call_attempt, fallback_briefing]
+            with patch.object(
+                self.gateway,
+                "_execute_backstage_task",
+                side_effect=UnboundLocalError("cannot access local variable 'node_label' where it is not associated with a value"),
+            ):
+                event = {
+                    "channel": "C_PODCAST",
+                    "ts": "100.003",
+                    "thread_ts": "100.003",
+                    "text": "<@U_GOLEM> generate podcast series",
+                }
+                await self.gateway.handle_message(event, self.client)
+
+                self.assertTrue(len(self.client.posted_messages) >= 1)
+                posted = self.client.posted_messages[-1]["text"]
+
+                # Must NOT fail loudly with Executive Synthesis Failed
+                self.assertNotIn("⚠️ *Executive Synthesis Failed*", posted)
+                self.assertNotIn("Raw sensory data returned above", posted)
+                self.assertNotIn("Model attempted tool call", posted)
+
+                # Must contain clean executive briefing
+                self.assertIn("Task Blocked", posted)
+                self.assertIn("UnboundLocalError", posted)
+
+                # Must set 'x' reaction for error rather than 'boom'
+                added_reactions = [r["name"] for r in self.client.reactions_added]
+                self.assertIn("x", added_reactions)
+                self.assertNotIn("boom", added_reactions)
+
 
 if __name__ == "__main__":
     unittest.main()

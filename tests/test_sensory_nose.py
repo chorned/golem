@@ -170,5 +170,43 @@ class TestSensoryNose(unittest.IsolatedAsyncioTestCase):
                              "Recent nose logs must not grow during quiescent telemetry ticks")
 
 
+    async def test_probe_tailscale_empty_output_handled_gracefully(self) -> None:
+        """probe_tailscale gracefully returns Offline when stdout is empty instead of throwing JSONDecodeError."""
+        from golem.nose import NoseSentinel
+
+        sentinel = NoseSentinel()
+        sentinel.tailscale_bin = "tailscale"
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+
+        with patch("os.path.exists", return_value=True), \
+             patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+            res = await sentinel.probe_tailscale(timeout=2.0)
+            self.assertFalse(res["online"])
+            self.assertEqual(res["backend_state"], "Offline")
+            self.assertIn("empty output", res["error"])
+
+    async def test_fleet_reachability_probe_wait_closed_timeout(self) -> None:
+        """FleetReachabilityProbe._probe_one does not hang when writer.wait_closed blocks."""
+        from golem.nose import FleetReachabilityProbe
+
+        probe = FleetReachabilityProbe(targets={"test-node": ("127.0.0.1", 12345)}, timeout=1.0)
+
+        mock_writer = MagicMock()
+        mock_writer.close = MagicMock()
+
+        async def _hang():
+            await asyncio.sleep(5.0)
+
+        mock_writer.wait_closed = AsyncMock(side_effect=_hang)
+
+        with patch("asyncio.open_connection", AsyncMock(return_value=(MagicMock(), mock_writer))):
+            name, info = await probe._probe_one("test-node", "127.0.0.1", 12345)
+            self.assertEqual(name, "test-node")
+            self.assertTrue(info["online"])
+            self.assertEqual(info["status"], "Online")
+
+
 if __name__ == "__main__":
     unittest.main()

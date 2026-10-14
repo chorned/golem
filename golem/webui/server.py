@@ -124,6 +124,17 @@ class _SyncAndAwaitableNone:
         return _noop().__await__()
 
 
+class _SyncAndAwaitableList(list):
+    """
+    Polymorphic list enabling dual sync/async method execution.
+    Can be inspected/iterated directly as a list, or awaited.
+    """
+    def __await__(self):
+        async def _noop():
+            return self
+        return _noop().__await__()
+
+
 def format_sse_event(event: str, data: Any) -> str:
     """
     Format a valid Server-Sent Events (SSE) message chunk.
@@ -257,12 +268,15 @@ class WebUIServer:
 
         self._on_loop(_send)
 
-    def _allocate_hand_key(self, pane_id: str, node: str, identity: tuple) -> str:
+    def _allocate_hand_key(self, pane_id: str, node: str = "localhost", identity: Optional[tuple] = None) -> str:
         """
-        Pick the registry key for a hand. The same (node, pane) re-registering replaces itself;
+        Pick the registry key for a hand. The same (node, pane, pane_id) re-registering replaces itself;
         a *different* hand that happens to share a pane label (e.g. every node has a 'runner')
-        gets its own key so it can never silently overwrite another running agent.
+        or a distinct subtask (e.g. hand_CHO-155 vs hand_CHO-156) gets its own key so it can
+        never silently overwrite another running agent.
         """
+        if identity is None:
+            identity = (node, pane_id, pane_id)
         candidates = [pane_id, f"{pane_id}@{node}"]
         n = 2
         while True:
@@ -300,7 +314,7 @@ class WebUIServer:
         **kwargs: Any,
     ) -> str:
         herdr_pane = kwargs.get("herdr_pane_id") or pane_id
-        identity = (node, herdr_pane)
+        identity = kwargs.get("identity") or (node, herdr_pane, pane_id)
         key = self._allocate_hand_key(pane_id, node, identity)
         if key != pane_id:
             logger.warning(
@@ -386,6 +400,83 @@ class WebUIServer:
     async def update_hand_buffer_async(self, pane_id: str, delta: str, node: Optional[str] = None) -> None:
         """Asynchronous variant of update_hand_buffer."""
         self.update_hand_buffer(pane_id, delta, node)
+
+    def settle_active_hand(
+        self,
+        pane_id: str,
+        exit_code: int = 0,
+        status: Optional[str] = None,
+        node: Optional[str] = None,
+    ) -> Any:
+        """
+        Mark a hand agent as COMPLETED / EXIT_0 / FAILED, retaining it in _active_hands
+        for WebUI multi-agent visibility until explicitly cleared by a parent task resolution.
+        """
+        key = self._resolve_hand_key(pane_id, node)
+        if key is not None and key in self._active_hands:
+            status_str = status or ("COMPLETED" if exit_code == 0 else "FAILED")
+            self._active_hands[key]["status"] = status_str
+            self._active_hands[key]["exit_code"] = exit_code
+            self._active_hands[key]["settled_at"] = time.time()
+            self._mirror_detach(key)
+            self.broadcast("hand_settle", {
+                "pane_id": key,
+                "exit_code": exit_code,
+                "status": status_str,
+            })
+            self._broadcast_hands()
+        return _SyncAndAwaitableNone()
+
+    async def settle_active_hand_async(
+        self,
+        pane_id: str,
+        exit_code: int = 0,
+        status: Optional[str] = None,
+        node: Optional[str] = None,
+    ) -> None:
+        """Asynchronous variant of settle_active_hand."""
+        self.settle_active_hand(pane_id, exit_code, status, node)
+
+    def clear_settled_hands(self, parent_key: Optional[str] = None) -> Any:
+        """
+        Clear retained COMPLETED / EXIT_0 / FAILED hand cards from active registry
+        upon parent task resolution or explicit drain.
+        """
+        to_remove = []
+        terminal_statuses = {"COMPLETED", "EXIT_0", "FAILED", "DONE", "SETTLED", "CANCELLED", "SUCCESS"}
+        for k, h in list(self._active_hands.items()):
+            st = str(h.get("status", "")).upper()
+            if st in terminal_statuses or h.get("exit_code") is not None:
+                to_remove.append(k)
+        for k in to_remove:
+            self._active_hands.pop(k, None)
+            self._hand_meta.pop(k, None)
+            self._pane_targets.pop(k, None)
+            self._mirror_detach(k)
+        if to_remove:
+            self.broadcast("parent_resolution", {"parent_key": parent_key or "", "cleared": to_remove})
+            self._broadcast_hands()
+        return _SyncAndAwaitableList(to_remove)
+
+    async def clear_settled_hands_async(self, parent_key: Optional[str] = None) -> None:
+        """Asynchronous variant of clear_settled_hands."""
+        self.clear_settled_hands(parent_key)
+
+    def get_executing_hands(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Return dict of hands that are actively running, filtering out settled,
+        finished, or terminated hands.
+        """
+        executing: Dict[str, Dict[str, Any]] = {}
+        terminal_statuses = {"EXIT_0", "COMPLETED", "FAILED", "DONE", "SETTLED", "CANCELLED", "SUCCESS"}
+        for k, h in list(self._active_hands.items()):
+            st = str(h.get("status", "")).upper()
+            if st in terminal_statuses:
+                continue
+            if h.get("exit_code") is not None:
+                continue
+            executing[k] = h
+        return executing
 
     def unregister_active_hand(self, pane_id: str, node: Optional[str] = None) -> Any:
         """Remove a settled hand agent from active registry."""
@@ -615,14 +706,24 @@ class WebUIServer:
                 html = _DASHBOARD_FILE.read_text(encoding="utf-8")
             except Exception:
                 pass
-        return web.Response(text=html, content_type="text/html", charset="utf-8")
+        return web.Response(
+            text=html,
+            content_type="text/html",
+            charset="utf-8",
+            headers={"Cache-Control": "no-cache, must-revalidate"},
+        )
 
     async def handle_wiki(self, request: web.Request) -> web.Response:
         """Render Golem Operational Memory Wiki UI."""
         if _WIKI_FILE.exists():
             try:
                 html = _WIKI_FILE.read_text(encoding="utf-8")
-                return web.Response(text=html, content_type="text/html", charset="utf-8")
+                return web.Response(
+                    text=html,
+                    content_type="text/html",
+                    charset="utf-8",
+                    headers={"Cache-Control": "no-cache, must-revalidate"},
+                )
             except Exception as e:
                 logger.error(f"Error reading wiki template: {e}")
         return web.Response(text="<h1>Golem Memory Wiki</h1><p>Template missing.</p>", content_type="text/html")
@@ -631,7 +732,7 @@ class WebUIServer:
         """Return categorized tree of all documents in ~/.golem/wiki/."""
         from golem.wiki import GolemWiki
         wiki = GolemWiki()
-        docs = wiki.list_documents()
+        docs = await asyncio.to_thread(wiki.list_documents)
         tree: Dict[str, List[str]] = {"context": [], "runbooks": [], "logbook": [], "other": []}
         for d in docs:
             parts = d.split("/", 1)
@@ -647,7 +748,7 @@ class WebUIServer:
         from golem.wiki import GolemWiki
         wiki = GolemWiki()
         try:
-            content = wiki.read(path)
+            content = await asyncio.to_thread(wiki.read, path)
             if content is None:
                 return web.json_response({"ok": False, "error": f"Document '{path}' not found"}, status=404)
             abs_p = wiki._safe_path(path)
@@ -667,7 +768,8 @@ class WebUIServer:
                 return web.json_response({"ok": False, "error": "Path required"}, status=400)
             from golem.wiki import GolemWiki
             wiki = GolemWiki()
-            success = wiki.write(
+            success = await asyncio.to_thread(
+                wiki.write,
                 rel_path=path,
                 content=content,
                 commit_msg=commit_msg,
@@ -682,7 +784,7 @@ class WebUIServer:
         query = request.query.get("q", "").strip()
         from golem.wiki import GolemWiki
         wiki = GolemWiki()
-        results = wiki.search(query)
+        results = await asyncio.to_thread(wiki.search, query)
         return web.json_response({"ok": True, "results": results})
 
     async def handle_colossus_bg(self, request: web.Request) -> web.Response:
@@ -724,7 +826,7 @@ class WebUIServer:
 
     async def handle_status(self, request: web.Request) -> web.Response:
         """Return full current system snapshot."""
-        status = get_system_status()
+        status = await asyncio.to_thread(get_system_status)
         status["port"] = self.port
         status["host"] = self.host
         status["subscribers"] = self.subscriber_count
@@ -853,6 +955,7 @@ class WebUIServer:
                 "Cache-Control": "no-cache",
                 "Connection": "keep-alive",
                 "Access-Control-Allow-Origin": "*",
+                "X-Accel-Buffering": "no",
             },
         )
         await response.prepare(request)
@@ -881,7 +984,12 @@ class WebUIServer:
 
         try:
             while True:
-                msg = await queue.get()
+                try:
+                    msg = await asyncio.wait_for(queue.get(), timeout=15.0)
+                except asyncio.TimeoutError:
+                    # SSE keepalive comment resets reverse proxy (e.g. Nginx 60s) read timeouts
+                    await response.write(b": keepalive\n\n")
+                    continue
                 if msg is None:  # Shutdown sentinel
                     break
                 await response.write(msg.encode("utf-8"))
@@ -1061,14 +1169,34 @@ class WebUIServer:
                     self.broadcast("mouth_telemetry", status.get("mouth", {}))
                     self.broadcast("hands_status", status.get("hands", []))
 
+                    # Prune settled hands older than TTL (default 120s)
+                    now_ts = time.time()
+                    ttl = float(os.environ.get("GOLEM_SETTLED_HANDS_TTL", "120.0"))
+                    prune_keys = []
+                    terminal_statuses = {"COMPLETED", "EXIT_0", "FAILED", "DONE", "SETTLED", "CANCELLED", "SUCCESS"}
+                    for k, h in list(self._active_hands.items()):
+                        st = str(h.get("status", "")).upper()
+                        if st in terminal_statuses or h.get("exit_code") is not None:
+                            settled_at = h.get("settled_at") or h.get("started_at", 0)
+                            if settled_at and (now_ts - settled_at) > ttl:
+                                prune_keys.append(k)
+                    for k in prune_keys:
+                        self._active_hands.pop(k, None)
+                        self._hand_meta.pop(k, None)
+                        self._pane_targets.pop(k, None)
+                        self._mirror_detach(k)
+                    if prune_keys:
+                        self._broadcast_hands()
+
                     # Periodic proof-of-life pulse every ~30 seconds (12 ticks * 2.5s)
                     if pulse_ticks >= 12:
                         pulse_ticks = 0
                         now_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
                         self._append_recent_log("eyes", f"{now_str} [PULSE] Golem.Sensory.Eyes: Terminal watcher active (quiescent buffer state, 0 blockers)")
+                        has_executing = bool(self.get_executing_hands())
                         self.broadcast("eye_log", {
                             "message": "[PULSE] Terminal watcher active (quiescent buffer state, 0 blockers)",
-                            "state": "IDLE" if not self._active_hands else "RUNNING",
+                            "state": "RUNNING" if has_executing else "IDLE",
                             "timestamp": time.time(),
                         })
             except asyncio.CancelledError:
@@ -1428,6 +1556,7 @@ class WebUILauncher:
 
         # Check socket availability immediately to catch port collision synchronously
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as test_sock:
+            test_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try:
                 test_sock.bind((host, port))
             except OSError as err:
@@ -1747,16 +1876,26 @@ def get_system_status() -> Dict[str, Any]:
     }
     if active_server is not None and getattr(active_server, "_active_hands", None):
         try:
-            hands_list = list(active_server._active_hands.values())
+            if hasattr(active_server, "get_executing_hands"):
+                executing = active_server.get_executing_hands()
+                executing_list = list(executing.values())
+            else:
+                terminal_statuses = {"EXIT_0", "COMPLETED", "FAILED", "DONE", "SETTLED", "CANCELLED", "SUCCESS"}
+                executing_list = [
+                    h for h in list(active_server._active_hands.values())
+                    if not (isinstance(h, dict) and (str(h.get("status", "")).upper() in terminal_statuses or h.get("exit_code") is not None))
+                ]
         except Exception:
-            hands_list = []
-        if hands_list:
-            first_hand = hands_list[0]
+            executing_list = []
+        if executing_list:
+            first_hand = executing_list[0]
             eyes_data["state"] = "RUNNING"
             eyes_data["active_command"] = first_hand.get("command", "")
             eyes_data["command"] = first_hand.get("command", "")
             eyes_data["pid"] = first_hand.get("pid")
             eyes_data["buffer_tail"] = first_hand.get("buffer_tail", "")
+        else:
+            eyes_data["state"] = "IDLE"
 
     # 3. Mouth status
     mouth_model = ""

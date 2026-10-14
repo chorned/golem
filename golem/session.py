@@ -532,12 +532,43 @@ class SessionHandle:
                 nose_status = await sentinel.get_telemetry_digest(trigger_fresh_sniff=False)
         except Exception as e:
             logger.debug(f"Error resolving nose_status in _stream_out_of_band_impl: {e}")
+
+        # Resolve active worker registry state from webui_server for sensory grounding
+        webui = getattr(self, "webui_server", None)
+        if webui is None and hasattr(self, "harness"):
+            webui = getattr(self.harness, "webui_server", None)
+        if webui is None and hasattr(self, "router"):
+            webui = getattr(self.router, "webui_server", None)
+        if webui is None:
+            try:
+                from golem.webui.server import get_active_webui_server
+                webui = get_active_webui_server()
+            except Exception:
+                pass
+
+        active_hands_dict = getattr(webui, "_active_hands", {}) if webui else {}
+        if active_hands_dict:
+            worker_lines = []
+            for h_key, h_data in active_hands_dict.items():
+                node = h_data.get("node", "localhost")
+                st = h_data.get("status", "RUNNING")
+                worker_lines.append(f"- {h_key}: {st} (Node: {node})")
+            workers_str = "\n".join(worker_lines)
+            registry_header = (
+                f"[CURRENT WORKER REGISTRY STATE]\n"
+                f"Active Workers: {len(active_hands_dict)}\n"
+                f"Workers:\n{workers_str}"
+            )
+        else:
+            registry_header = "[CURRENT WORKER REGISTRY STATE]\nActive Workers: 0 (None running)"
+
         msg = await generate_mouth_response(
             prompt,
             status_info,
             session=self,
             eyes_status=eyes_status,
             nose_status=nose_status,
+            worker_registry_state=registry_header,
         )
 
         blocker = status_info.get("blocker")
@@ -648,6 +679,13 @@ class SessionHandle:
                         else:
                             if self.state != SessionState.CLOSED:
                                 self.state = SessionState.FAILED
+                                ev_err = getattr(event, "error", None) or (
+                                    event.get("error") if isinstance(event, dict) else None
+                                )
+                                logger.warning(
+                                    f"Session '{self.session_id}' marked FAILED: turn finished with "
+                                    f"status={status!r} error={str(ev_err)[:300]!r} prompt={str(prompt)[:80]!r}"
+                                )
 
                     yield event
 

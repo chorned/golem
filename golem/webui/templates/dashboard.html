@@ -2681,12 +2681,18 @@
                             item.exit_code = exitCode;
                             updateCardUi(item);
 
-                            // Graceful settlement unmount after 5 seconds to return to standby if all hands settle
+                            // Retain settled cards on WebUI for multi-agent observability until parent task resolution
                             if (item.settleTimeout) clearTimeout(item.settleTimeout);
-                            item.settleTimeout = setTimeout(() => {
-                                unmountHandCard(paneId);
-                            }, 5000);
                         }
+                    } catch (_) {}
+                });
+
+                eventSource.addEventListener('parent_resolution', function(e) {
+                    try {
+                        const data = JSON.parse(e.data);
+                        const cleared = data.cleared || [];
+                        cleared.forEach(id => unmountHandCard(id));
+                        renderHandsState();
                     } catch (_) {}
                 });
 

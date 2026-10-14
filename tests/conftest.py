@@ -23,3 +23,12 @@ def clean_engine_env():
     yield
     for key in ("GOLEM_DEFAULT_HAND_WORKER", "GOLEM_ENGINE", "FIRSTMATE_DEFAULT_HAND_WORKER"):
         os.environ.pop(key, None)
+
+
+@pytest.fixture(autouse=True)
+def clean_exhausted_models():
+    """The AGY quota-exhaustion registry is process-wide; keep it from leaking between tests."""
+    from golem.drivers.antigravity import clear_exhausted_models
+    clear_exhausted_models()
+    yield
+    clear_exhausted_models()

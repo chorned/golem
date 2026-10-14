@@ -28,7 +28,7 @@ DEFAULT_INTERVAL = 3.0
 LIST_TIMEOUT = 4.0
 MISSING_BINARY_BACKOFF = 30.0
 # Transport panes to remote nodes and the Mouth liaison are not hands; each has its own place in the UI.
-DEFAULT_HIDE_LABELS = "oci-worker,laptop-worker,pc-worker,chief-of-staff"
+DEFAULT_HIDE_LABELS = "oci-worker,laptop-worker,pc-worker,chief-of-staff,liaison,golem_liaison"
 WORKTREE_MARKER = "/.herdr/worktrees/"
 
 _STATUS_MAP = {
@@ -62,13 +62,44 @@ def parse_pane_list(raw: str) -> List[Dict[str, Any]]:
 def is_hand_pane(pane: Dict[str, Any], hide_labels: Set[str]) -> bool:
     """A pane is a hand if Herdr sees an agent in it, or it is a task worktree pane."""
     label = (pane.get("label") or pane.get("name") or "").strip()
-    if label and label in hide_labels:
-        return False
-    if pane.get("agent") or pane.get("agent_session"):
-        return True
+    if label:
+        if (
+            label in hide_labels
+            or label.endswith("-liaison")
+            or label.endswith("_liaison")
+            or label.startswith("g_")
+            or label == "chief-of-staff"
+        ):
+            return False
+
+    pane_id = str(pane.get("pane_id") or "").strip()
+    agent = (pane.get("agent") or (pane.get("agent_session") or {}).get("agent") or "").strip()
+    agent_session = pane.get("agent_session") or {}
+    agent_name = (pane.get("agent_name") or agent_session.get("name") or "").strip()
+    if agent_name:
+        if (
+            agent_name in hide_labels
+            or agent_name.endswith("-liaison")
+            or agent_name.endswith("_liaison")
+            or agent_name.startswith("g_")
+            or agent_name == "chief-of-staff"
+        ):
+            return False
+
+    has_worktree = False
     for key in ("cwd", "foreground_cwd"):
         if WORKTREE_MARKER in (pane.get(key) or ""):
-            return True
+            has_worktree = True
+            break
+
+    # Root pane 1 running agy without a worktree marker is the session liaison pane, not a worker hand
+    if (pane_id.endswith(":p1") or pane_id == "1") and agent in ("agy", "antigravity") and not has_worktree:
+        return False
+
+    if pane.get("agent") or pane.get("agent_session"):
+        return True
+    if has_worktree:
+        return True
     return False
 
 

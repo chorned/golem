@@ -412,7 +412,22 @@ class FleetSniffer:
                 }
 
             raw_json = stdout.decode("utf-8", errors="replace").strip()
-            data = json.loads(raw_json)
+            if not raw_json:
+                return {
+                    "backend_state": "Offline",
+                    "online": False,
+                    "error": "Tailscale status produced empty output",
+                    "peers": {},
+                }
+            try:
+                data = json.loads(raw_json)
+            except Exception as je:
+                return {
+                    "backend_state": "Error",
+                    "online": False,
+                    "error": f"Invalid Tailscale JSON: {je}",
+                    "peers": {},
+                }
             backend_state = data.get("BackendState", "Unknown")
             is_running = (str(backend_state).lower() == "running")
 
@@ -1722,7 +1737,7 @@ class FleetReachabilityProbe:
             _, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=self.timeout)
             writer.close()
             try:
-                await writer.wait_closed()
+                await asyncio.wait_for(writer.wait_closed(), timeout=0.5)
             except Exception:
                 pass
             latency = round((time.monotonic() - started) * 1000.0, 1)

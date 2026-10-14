@@ -32,11 +32,12 @@ import subprocess
 import contextlib
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Dict, Any, Optional, List, Union
 
 logger = logging.getLogger("Golem.Wiki")
 
-DEFAULT_WIKI_DIR = os.path.expanduser("~/.golem/wiki")
+DEFAULT_WIKI_DIR = Path(os.environ.get("GOLEM_WIKI_DIR") or os.path.expanduser("~/.golem/wiki")).resolve()
 
 DEFAULT_CAPABILITIES_TEMPLATE = """# Fleet Capabilities & Affordances
 
@@ -716,6 +717,35 @@ class GolemWiki:
         del self._pending_updates[token]
         return True
 
+    def list_pending_updates(self) -> List[Any]:
+        """Returns a list of all currently pending updates/proposals."""
+        return list(self._pending_updates.values())
+
+
+def logbook_append(entry: str, title: Optional[str] = None, wiki_dir: Optional[Union[str, Path]] = None) -> str:
+    """Append an operational journal entry to today's logbook file."""
+    wiki = GolemWiki(wiki_dir=str(wiki_dir) if wiki_dir else None)
+    return wiki.logbook_append(entry=entry, title=title)
+
+
+def propose_update(
+    rel_path: str,
+    content: str,
+    reason: str = "",
+    summary: Optional[str] = None,
+    tier: Optional[str] = None,
+    wiki_dir: Optional[Union[str, Path]] = None,
+) -> Union[MemoryProposal, Dict[str, Any]]:
+    """Stage a proposed runbook or memory update requiring confirmation."""
+    wiki = GolemWiki(wiki_dir=str(wiki_dir) if wiki_dir else None)
+    return wiki.propose_update(rel_path=rel_path, content=content, reason=reason or summary or "")
+
+
+def read_wiki_document(rel_path: str, wiki_dir: Optional[Union[str, Path]] = None) -> str:
+    """Read content of a wiki document relative to ~/.golem/wiki/."""
+    wiki = GolemWiki(wiki_dir=str(wiki_dir) if wiki_dir else None)
+    return wiki.read(rel_path=rel_path)
+
 
 __all__ = [
     "GolemWiki",
@@ -727,4 +757,8 @@ __all__ = [
     "DEFAULT_WIKI_DIR",
     "DEFAULT_CAPABILITIES_TEMPLATE",
     "DEFAULT_TOPOLOGY_TEMPLATE",
+    "logbook_append",
+    "propose_update",
+    "read_wiki_document",
 ]
+

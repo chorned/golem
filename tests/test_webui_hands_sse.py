@@ -462,6 +462,48 @@ class TestSystemStatusActiveHandsReflection(unittest.IsolatedAsyncioTestCase):
         status_cleared = get_system_status()
         self.assertEqual(len(status_cleared["hands"]), 0)
 
+    async def test_get_executing_hands_and_eyes_idle_when_settled(self) -> None:
+        """get_executing_hands ignores settled tasks and eyes state becomes IDLE."""
+        server = get_active_webui_server()
+        self.assertIsNotNone(server)
+
+        server.register_active_hand(
+            pane_id="task_run_1",
+            node="oci-machine",
+            command="docker ps",
+            pid=1234,
+        )
+        self.assertEqual(len(server.get_executing_hands()), 1)
+        status_running = get_system_status()
+        self.assertEqual(status_running["eyes"]["state"], "RUNNING")
+
+        # Settle the hand
+        server.settle_active_hand("task_run_1", exit_code=0, status="EXIT_0", node="oci-machine")
+        self.assertEqual(len(server.get_executing_hands()), 0)
+        self.assertEqual(len(server._active_hands), 1)
+
+        # Eyes state must transition to IDLE even though card is retained for dashboard visibility
+        status_settled = get_system_status()
+        self.assertEqual(status_settled["eyes"]["state"], "IDLE")
+        self.assertEqual(len(status_settled["hands"]), 1)
+
+        # Clear settled hands
+        cleared = server.clear_settled_hands()
+        self.assertEqual(len(cleared), 1)
+        self.assertEqual(len(server._active_hands), 0)
+
+    async def test_handle_events_headers(self) -> None:
+        """handle_events includes X-Accel-Buffering: no header to prevent proxy buffering."""
+        async with aiohttp.ClientSession() as session:
+            async with session.get(f"http://127.0.0.1:{self.port}/events") as resp:
+                self.assertEqual(resp.status, 200)
+                self.assertEqual(resp.headers.get("X-Accel-Buffering"), "no")
+                self.assertEqual(resp.headers.get("Content-Type"), "text/event-stream")
+                # Read initial connect event line
+                line = await resp.content.readline()
+                self.assertEqual(line.decode().strip(), "event: connected")
+                resp.close()
+
 
 if __name__ == "__main__":
     unittest.main()

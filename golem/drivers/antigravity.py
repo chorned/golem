@@ -71,6 +71,58 @@ def is_quota_error(text: Optional[str]) -> bool:
     return bool(text) and bool(QUOTA_ERROR_PATTERN.search(str(text)))
 
 
+# Process-wide registry of models known to be quota-exhausted: model -> epoch seconds when usable again.
+# New drivers (e.g. a replacement session after a FAILED turn) consult it so they start on a healthy
+# model instead of re-spawning on the exhausted default and paying for a fallback on every turn.
+_EXHAUSTED_MODELS: Dict[str, float] = {}
+DEFAULT_EXHAUSTED_TTL_SECONDS: float = 900.0
+MAX_EXHAUSTED_TTL_SECONDS: float = 48 * 3600.0
+
+_RESET_IN_PATTERN = re.compile(
+    r"resets?\s+in\s*~?\s*(?:(\d+)\s*d)?\s*(?:(\d+)\s*h)?\s*(?:(\d+)\s*m)?\s*(?:(\d+)\s*s)?",
+    re.IGNORECASE,
+)
+
+
+def parse_quota_reset_seconds(text: Optional[str]) -> Optional[float]:
+    """Extract a 'Resets in 30h51m12s' style countdown from a quota error. None if absent."""
+    if not text:
+        return None
+    m = _RESET_IN_PATTERN.search(str(text))
+    if not m:
+        return None
+    d, h, mi, s = (int(g) if g else 0 for g in m.groups())
+    total = d * 86400 + h * 3600 + mi * 60 + s
+    return float(total) if total > 0 else None
+
+
+def mark_model_exhausted(model: Optional[str], reason: Optional[str] = None) -> None:
+    """Record that `model` is out of quota until the reset time parsed from `reason` (or a short default)."""
+    if not model:
+        return
+    ttl = parse_quota_reset_seconds(reason) or DEFAULT_EXHAUSTED_TTL_SECONDS
+    ttl = min(ttl, MAX_EXHAUSTED_TTL_SECONDS)
+    _EXHAUSTED_MODELS[model] = time.time() + ttl
+
+
+def is_model_exhausted(model: Optional[str]) -> bool:
+    """True if `model` is currently marked quota-exhausted. Expired entries are dropped."""
+    if not model:
+        return False
+    until = _EXHAUSTED_MODELS.get(model)
+    if until is None:
+        return False
+    if time.time() >= until:
+        _EXHAUSTED_MODELS.pop(model, None)
+        return False
+    return True
+
+
+def clear_exhausted_models() -> None:
+    """Forget all recorded exhaustion (used by tests and manual resets)."""
+    _EXHAUSTED_MODELS.clear()
+
+
 class AntigravityDriver(BaseAgentDriver):
     """
     Antigravity CLI execution driver (The Hands) wrapping agy stream-json mode.
@@ -107,6 +159,16 @@ class AntigravityDriver(BaseAgentDriver):
                     fallback_models = []
             else:
                 fallback_models = []
+
+        # Start on the first healthy model in the chain so an exhausted default is not respawned every session.
+        chain = [m for m in [resolved_model, *fallback_models] if m]
+        healthy = [m for m in chain if not is_model_exhausted(m)]
+        if resolved_model and healthy and healthy[0] != resolved_model:
+            logger.warning(
+                f"AGY model '{resolved_model}' is quota-exhausted; starting on '{healthy[0]}' instead."
+            )
+            resolved_model = healthy[0]
+            fallback_models = healthy[1:]
 
         super().__init__(
             cwd=cwd,
@@ -397,10 +459,14 @@ class AntigravityDriver(BaseAgentDriver):
         Resumes the same conversation so context carries over. Returns the new model, or None
         if the fallback chain is exhausted.
         """
+        old_model = self.model
+        mark_model_exhausted(old_model, reason)
+        # Skip fallback candidates already known to be exhausted.
+        while self.fallback_models and is_model_exhausted(self.fallback_models[0]):
+            self.fallback_models.pop(0)
         if not self.fallback_models:
             return None
         new_model = self.fallback_models.pop(0)
-        old_model = self.model
         conv_id = self.conversation_id
         try:
             await self.terminate_session()
@@ -446,12 +512,14 @@ class AntigravityDriver(BaseAgentDriver):
                 async for event in gen:
                     if (
                         isinstance(event, FinishEvent)
-                        and self.fallback_models
                         and event.status == "ERROR"
                         and is_quota_error(event.error or event.response)
                     ):
-                        quota_reason = str(event.error or event.response)
-                        break
+                        # Remember exhaustion even with no fallback left, so the next session avoids this model.
+                        mark_model_exhausted(self.model, str(event.error or event.response))
+                        if self.fallback_models:
+                            quota_reason = str(event.error or event.response)
+                            break
                     yield event
             except RuntimeError as e:
                 # e.g. agy exited prematurely on start with a quota message in stderr

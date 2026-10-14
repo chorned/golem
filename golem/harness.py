@@ -98,7 +98,12 @@ class DualPaneHarness:
             Tuple[str, str]: (liaison_pane, runner_pane)
         """
         effective_cwd = cwd or self.default_cwd
-        liaison_name = f"{session_id}-liaison"
+        import re
+        if re.match(r"^[a-z][a-z0-9_-]{0,23}$", session_id):
+            liaison_name = f"{session_id}-liaison"
+        else:
+            clean = re.sub(r"[^a-z0-9_-]", "_", session_id.lower()).strip("_")
+            liaison_name = f"g_{clean}"[:32] if clean else "golem_liaison"
         runner_pane_label = "runner"
 
         # 1. Create Herdr workspace
@@ -125,7 +130,7 @@ class DualPaneHarness:
         liaison_cmd = [
             "agent", "start", liaison_name,
             "--kind", "agy",
-            "--pane", "1"
+            "--pane", root_pane_id
         ]
         start_code, start_out, start_err = await self.herdr_client.run_cli(liaison_cmd)
         if start_code != 0:
@@ -139,7 +144,24 @@ class DualPaneHarness:
         ]
         runner_code, runner_out, runner_err = await self.herdr_client.run_cli(runner_cmd)
         if runner_code != 0:
-            logger.warning(f"herdr pane create returned non-zero ({runner_code}): {runner_err or runner_out}")
+            logger.debug(f"herdr pane create returned non-zero ({runner_code}); falling back to 'pane split': {runner_err or runner_out}")
+            runner_cmd = [
+                "pane", "split", root_pane_id,
+                "--direction", "right",
+                "--no-focus"
+            ]
+            runner_code, runner_out, runner_err = await self.herdr_client.run_cli(runner_cmd)
+            if runner_code != 0:
+                logger.warning(f"herdr pane split returned non-zero ({runner_code}): {runner_err or runner_out}")
+            else:
+                try:
+                    data = json.loads(runner_out)
+                    pane_obj = (data.get("result", {}) or {}).get("pane") or data.get("pane") or {}
+                    split_pid = pane_obj.get("pane_id") or data.get("pane_id")
+                    if split_pid:
+                        await self.herdr_client.run_cli(["pane", "rename", split_pid, runner_pane_label])
+                except Exception:
+                    pass
 
         runner_pane_id = runner_pane_label
         terminal_id = None
@@ -175,7 +197,7 @@ class DualPaneHarness:
             "outbox_path": str(session_outbox),
         }
 
-        return liaison_name, opaque_hand_pane
+        return f"{session_id}-liaison", opaque_hand_pane
 
     async def allocate_hand_tab(
         self,
@@ -447,6 +469,8 @@ class DualPaneHarness:
         worker: str = "agy",
         cwd: Optional[str] = None,
         yield_timeout: float = 3.0,
+        precedent_status: Optional[str] = None,
+        precedent_source: Optional[str] = None,
         **kwargs: Any,
     ) -> Any:
         """
@@ -457,10 +481,47 @@ class DualPaneHarness:
         if invariants:
             effective_task = f"[Node Context & Invariants]\n{invariants}\n\n[Task]\n{task_description}"
 
+        subtask_id = kwargs.get("subtask_issue_id")
+        if subtask_id:
+            if hasattr(self, "router") and self.router and hasattr(self.router, "sessions"):
+                sess = self.router.sessions.get(session_id)
+                if sess:
+                    sess.linear_issue_id = subtask_id
+            try:
+                from golem.linear_bridge import LinearBridge
+                linear_bridge = LinearBridge()
+                asyncio.create_task(linear_bridge.update_issue_state(subtask_id, "in progress"))
+            except Exception as e:
+                logger.debug(f"Failed to update subtask {subtask_id} to in progress: {e}")
+
+        # Run Linear creation as a detached task
+        if os.getenv("LINEAR_API_KEY"):
+            async def _safe_linear_create():
+                try:
+                    from golem.linear_bridge import LinearBridge
+                    linear_bridge = LinearBridge()
+                    issue = await linear_bridge.create_task_issue(
+                        title=f"[Hand] {task_description[:60]}",
+                        description=f"Node: {target_node}\nCWD: {cwd}\nCommand: `{task_description}`"
+                    )
+                    if hasattr(self, "router") and self.router and hasattr(self.router, "sessions"):
+                        sess = self.router.sessions.get(session_id)
+                        if sess:
+                            sess.linear_issue_id = issue.get("id")
+                            sess.linear_issue_key = issue.get("identifier")
+                except Exception as e:
+                    logger.warning(f"Linear background issue creation skipped: {e}")
+
+            asyncio.create_task(_safe_linear_create())
+
         return await self.execute_command(
             session_id=session_id,
             command=effective_task,
             yield_timeout=yield_timeout,
+            precedent_status=precedent_status,
+            precedent_source=precedent_source,
+            target_node=target_node,
+            task_description=task_description,
             **kwargs,
         )
 
