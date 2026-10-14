@@ -334,10 +334,11 @@ class WebUIServer:
             "node": node,
             "command": command,
             "pid": pid,
-            "status": "RUNNING",
+            "status": kwargs.get("status", "RUNNING"),
             "buffer_tail": initial_log,
             "worker": worker or "agy",
             "started_at": kwargs.get("started_at", time.time()),
+            "last_activity_at": kwargs.get("last_activity_at", time.time()),
         }
         self._hand_meta[key] = {"pane_id": pane_id, "node": node, "identity": identity}
         if kwargs.get("mirror", True):
@@ -383,7 +384,13 @@ class WebUIServer:
         """Asynchronous variant of register_active_hand."""
         self.register_active_hand(pane_id, node, command, pid, worker, **kwargs)
 
-    def update_hand_buffer(self, pane_id: str, delta: str, node: Optional[str] = None) -> Any:
+    def update_hand_buffer(
+        self,
+        pane_id: str,
+        delta: str = "",
+        node: Optional[str] = None,
+        buffer_tail: Optional[str] = None,
+    ) -> Any:
         """Append output delta to an active hand's buffer tail."""
         key = self._resolve_hand_key(pane_id, node)
         if key is None:
@@ -391,15 +398,23 @@ class WebUIServer:
             self._broadcast_hands()
         hand = self._active_hands.get(key)
         if hand is not None:
-            tail = hand.get("buffer_tail", "") + delta
+            text_to_append = buffer_tail if buffer_tail is not None else delta
+            tail = hand.get("buffer_tail", "") + text_to_append
             if len(tail) > 4096:
                 tail = tail[-4096:]
             hand["buffer_tail"] = tail
+            hand["last_activity_at"] = time.time()
         return _SyncAndAwaitableNone()
 
-    async def update_hand_buffer_async(self, pane_id: str, delta: str, node: Optional[str] = None) -> None:
+    async def update_hand_buffer_async(
+        self,
+        pane_id: str,
+        delta: str = "",
+        node: Optional[str] = None,
+        buffer_tail: Optional[str] = None,
+    ) -> None:
         """Asynchronous variant of update_hand_buffer."""
-        self.update_hand_buffer(pane_id, delta, node)
+        self.update_hand_buffer(pane_id, delta, node, buffer_tail=buffer_tail)
 
     def settle_active_hand(
         self,
@@ -436,6 +451,23 @@ class WebUIServer:
     ) -> None:
         """Asynchronous variant of settle_active_hand."""
         self.settle_active_hand(pane_id, exit_code, status, node)
+
+    def record_mouth_event(
+        self,
+        briefing: str,
+        model: Optional[str] = None,
+        turns: Optional[int] = None,
+    ) -> None:
+        """Record a live Mouth event, log entry, and broadcast SSE telemetry to browsers."""
+        flat = " ".join(str(briefing).split())
+        payload: Dict[str, Any] = {"briefing": flat}
+        if model:
+            payload["model"] = model
+        if turns is not None:
+            payload["active_turns"] = turns
+        self.broadcast("mouth_briefing", payload)
+        if model or turns is not None:
+            self.broadcast("mouth_telemetry", {"model": model, "active_turns": turns})
 
     def clear_settled_hands(self, parent_key: Optional[str] = None) -> Any:
         """
@@ -1258,9 +1290,10 @@ class WebUIServer:
             try:
                 text = data.get("briefing") if isinstance(data, dict) else str(data)
                 if text:
-                    now_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-                    flat = " ".join(str(text).split())
-                    self._append_recent_log("mouth", f"{now_str} [INFO] Golem.Agent.Mouth: Executive briefing: \"{flat}\"")
+                    if flat.startswith("["):
+                        self._append_recent_log("mouth", f"{now_str} [INFO] Golem.Agent.Mouth: {flat}")
+                    else:
+                        self._append_recent_log("mouth", f"{now_str} [INFO] Golem.Agent.Mouth: Executive briefing: \"{flat}\"")
             except Exception as e:
                 logger.debug(f"Mouth log record error: {e}")
         chunk = format_sse_event(event, data)

@@ -587,7 +587,9 @@ class SessionHandle:
         yield TextDeltaEvent(text_delta=msg)
         yield FinishEvent(status="SUCCESS", response=msg)
 
-    async def send_user_message(self, prompt: str) -> AsyncGenerator[AgentEvent, None]:
+    async def send_user_message(
+        self, prompt: str, allow_out_of_band: bool = True
+    ) -> AsyncGenerator[AgentEvent, None]:
         """
         Execute a conversational turn by routing the prompt to the warm agent adapter.
         Guarantees serialized execution per thread via session lock, UNLESS prompt
@@ -613,7 +615,7 @@ class SessionHandle:
         token = CURRENT_SESSION.set(self)
         try:
             # Out-of-band bypass check: never block behind lock if executing or busy and message is out-of-band
-            if (self.is_executing or self.lock.locked()) and is_out_of_band_message(prompt, session=self):
+            if allow_out_of_band and (self.is_executing or self.lock.locked()) and is_out_of_band_message(prompt, session=self):
                 async for ev in self._stream_out_of_band_impl(prompt):
                     yield ev
                 return

@@ -530,12 +530,14 @@
             display: flex;
             flex-direction: column;
             gap: 0;
-            height: 84px;
-            min-height: 84px;
-            max-height: 84px;
+            height: 120px;
+            min-height: 110px;
+            max-height: 160px;
             box-sizing: border-box;
             overflow-y: auto !important;
             overflow-x: hidden;
+            overscroll-behavior: contain;
+            -webkit-overflow-scrolling: touch;
             user-select: text !important;
             -webkit-user-select: text !important;
             cursor: text;
@@ -743,9 +745,9 @@
         .hand-card {
             display: flex;
             flex-direction: column;
-            height: 104px;
-            min-height: 104px;
-            max-height: 104px;
+            height: 200px;
+            min-height: 180px;
+            max-height: 260px;
             user-select: text !important;
             -webkit-user-select: text !important;
         }
@@ -787,8 +789,7 @@
             min-height: 40px;
             height: 100%;
             margin: 2px 0;
-            overflow-y: auto !important;
-            overflow-x: hidden;
+            overflow: hidden;
             position: relative;
             cursor: text;
             white-space: pre-wrap;
@@ -801,6 +802,8 @@
             width: 100%;
             overflow-y: auto;
             overflow-x: hidden;
+            overscroll-behavior: contain;
+            -webkit-overflow-scrolling: touch;
             font-family: var(--font-crt);
             font-size: 11.5px;
             line-height: 1.45;
@@ -813,6 +816,35 @@
             user-select: text !important;
             -webkit-user-select: text !important;
             cursor: text;
+        }
+
+        .term-follow-pill {
+            position: absolute;
+            bottom: 6px;
+            right: 8px;
+            z-index: 10;
+            background: rgba(13, 17, 23, 0.92);
+            border: 1px solid var(--runic-cyan);
+            color: var(--runic-cyan);
+            font-family: var(--font-crt);
+            font-size: 10px;
+            padding: 2px 8px;
+            border-radius: 10px;
+            cursor: pointer;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.8), 0 0 6px rgba(0, 240, 255, 0.3);
+            display: none;
+            user-select: none;
+            -webkit-user-select: none;
+            transition: opacity 0.15s ease, transform 0.15s ease;
+        }
+        .term-follow-pill:hover {
+            background: rgba(0, 240, 255, 0.2);
+            transform: translateY(-1px);
+        }
+        .term-follow-pill.visible {
+            display: flex;
+            align-items: center;
+            gap: 4px;
         }
 
         /* Mobile Viewport & Tab Switching (< 768px or .mobile-mode) */
@@ -947,6 +979,15 @@
             justify-content: space-between;
             user-select: text !important;
             -webkit-user-select: text !important;
+        }
+
+        .hand-sol-badge {
+            font-family: var(--font-pixel);
+            font-size: 8px;
+            color: var(--runic-cyan);
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
         }
 
         /* Terminal Header Controls & Expand CTA */
@@ -1538,6 +1579,7 @@
 
             let eyeCount = 0;
             let mouthTurns = 0;
+            let isMouthActive = false;
             let manaTokens = 8420;
             let isPaused = false;
             let eventSource = null;
@@ -1649,6 +1691,8 @@
                 constructor(options = {}) {
                     this.options = options;
                     this.element = null;
+                    this.followBtn = null;
+                    this._userScrolledUp = false;
                     this.buffer = {
                         active: {
                             viewportY: 0,
@@ -1664,27 +1708,66 @@
                     this.element.className = 'inline-terminal-container';
                     host.innerHTML = '';
                     host.appendChild(this.element);
+
+                    // Floating Follow live pill
+                    this.followBtn = document.createElement('button');
+                    this.followBtn.className = 'term-follow-pill';
+                    this.followBtn.type = 'button';
+                    this.followBtn.textContent = '↓ Follow live';
+                    this.followBtn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        this.scrollToBottom();
+                        this._userScrolledUp = false;
+                    });
+                    host.appendChild(this.followBtn);
+
+                    this._userScrolledUp = false;
+                    this.element.addEventListener('scroll', () => {
+                        if (!this.element) return;
+                        this.buffer.active.viewportY = this.element.scrollTop;
+                        this.buffer.active.baseY = Math.max(0, this.element.scrollHeight - this.element.clientHeight);
+                        this._userScrolledUp = (this.element.scrollHeight - this.element.scrollTop - this.element.clientHeight) > 24;
+                        if (this.followBtn) {
+                            if (this._userScrolledUp) {
+                                this.followBtn.classList.add('visible');
+                            } else {
+                                this.followBtn.classList.remove('visible');
+                            }
+                        }
+                    });
                 }
 
                 loadAddon(addon) {}
 
                 write(data, callback) {
                     if (!this.element) return;
-                    const html = this._ansiToHtml(String(data));
+                    const wasAtBottom = !this._userScrolledUp;
+                    const strData = String(data);
+                    if (strData.includes('\x1b[2J') || strData.includes('\x1b[3J')) {
+                        this.element.innerHTML = '';
+                    }
+                    const html = this._ansiToHtml(strData);
                     this.element.insertAdjacentHTML('beforeend', html);
-                    while (this.element.childNodes.length > 200) {
+                    while (this.element.childNodes.length > 800) {
                         this.element.removeChild(this.element.firstChild);
                     }
-                    this.buffer.active.baseY = this.element.scrollHeight;
+                    this.buffer.active.baseY = Math.max(0, this.element.scrollHeight - this.element.clientHeight);
                     this.buffer.active.viewportY = this.element.scrollTop;
-                    this.scrollToBottom();
+                    if (wasAtBottom) {
+                        this.scrollToBottom();
+                    }
                     if (typeof callback === 'function') callback();
                 }
 
                 scrollToBottom() {
                     if (this.element) {
                         this.element.scrollTop = this.element.scrollHeight;
-                        this.buffer.active.viewportY = this.element.scrollTop;
+                        this._userScrolledUp = false;
+                        this.buffer.active.baseY = Math.max(0, this.element.scrollHeight - this.element.clientHeight);
+                        this.buffer.active.viewportY = this.buffer.active.baseY;
+                        if (this.followBtn) {
+                            this.followBtn.classList.remove('visible');
+                        }
                     }
                 }
 
@@ -1696,6 +1779,10 @@
                 }
 
                 dispose() {
+                    if (this.followBtn && this.followBtn.parentNode) {
+                        this.followBtn.parentNode.removeChild(this.followBtn);
+                    }
+                    this.followBtn = null;
                     if (this.element && this.element.parentNode) {
                         this.element.parentNode.removeChild(this.element);
                     }
@@ -1705,6 +1792,10 @@
                 _ansiToHtml(str) {
                     let s = escapeHtml(str);
                     s = s.replace(/\r\n/g, '<br>').replace(/\n/g, '<br>');
+                    // Strip non-color control sequences
+                    s = s.replace(/\x1b\[[0-9;]*[A-HJKSTfhilnsu]/g, '');
+                    s = s.replace(/\x1b\([AB012]/g, '');
+                    s = s.replace(/\x1b\[\?[0-9]+[hl]/g, '');
                     const colors = {
                         '30': '#64748b', '31': '#f87171', '32': '#4ade80', '33': '#fbbf24',
                         '34': '#60a5fa', '35': '#c084fc', '36': '#22d3ee', '37': '#f1f5f9',
@@ -1971,15 +2062,25 @@
                 return `<div class="terminal-log-line"><span class="log-ts">${escapeHtml(ts)}</span>${tagHtml}<span class="${levelClass}">${levelText}</span>${src ? `<span class="log-source">${escapeHtml(src)}</span>` : ''}<span class="log-msg">${escapeHtml(rest)}</span></div>`;
             }
 
+            function isScrolledNearBottom(el, threshold = 24) {
+                if (!el) return true;
+                return (el.scrollHeight - el.scrollTop - el.clientHeight) <= threshold;
+            }
+
             function appendAgentLog(container, text) {
                 if (!container || !text) return;
+                if (text.includes('[TURN START]')) isMouthActive = true;
+                if (text.includes('Executive briefing:') || text.includes('[SETTLED')) isMouthActive = false;
                 const lineHtml = formatLogLine(text, tagForContainer(container));
                 if (!lineHtml) return;
+                const stickToBottom = isScrolledNearBottom(container);
                 container.insertAdjacentHTML('beforeend', lineHtml);
-                while (container.children.length > 100) {
+                while (container.children.length > 300) {
                     container.removeChild(container.firstElementChild);
                 }
-                container.scrollTop = container.scrollHeight;
+                if (stickToBottom) {
+                    container.scrollTop = container.scrollHeight;
+                }
             }
 
             // Hand Agents Dynamic Lifecycle Management
@@ -2246,12 +2347,15 @@
 
                 // Frames are complete snapshots: drop trailing blank rows, repaint in one write, keep the user's scroll.
                 const body = frame.text.replace(/(?:\r?\n[ \t]*(?:\x1b\[[0-9;]*m)*[ \t]*)+$/, '').replace(/\r?\n$/, '');
-                const buf = term.buffer.active;
-                const atBottom = buf.viewportY >= buf.baseY;
-                const prevY = buf.viewportY;
+                const atBottom = !term._userScrolledUp;
+                const prevScrollTop = term.element ? term.element.scrollTop : 0;
                 term.write('\x1b[0m\x1b[?25l\x1b[3J\x1b[H\x1b[2J' + body + '\x1b[0m', () => {
-                    if (atBottom) term.scrollToBottom();
-                    else term.scrollToLine(prevY);
+                    if (atBottom) {
+                        term.scrollToBottom();
+                    } else if (term.element) {
+                        term.element.scrollTop = prevScrollTop;
+                        term._userScrolledUp = true;
+                    }
                 });
                 setPaneTag(item, `\u25CF LIVE PANE r${frame.rev}`, false);
             }
@@ -2268,12 +2372,17 @@
             function getOrCreateHandCard(h) {
                 if (!h) return null;
                 const paneId = h.pane_id || 'runner';
+                const nowSec = Date.now() / 1000;
+                const startedAt = h.started_at || (h.registered_at ? h.registered_at : nowSec);
+                const lastActivityAt = h.last_activity_at || nowSec;
+
                 if (activeHands.has(paneId)) {
                     const item = activeHands.get(paneId);
                     if (item.settleTimeout) {
                         clearTimeout(item.settleTimeout);
                         item.settleTimeout = null;
                     }
+                    if (h.last_activity_at) item.last_activity_at = h.last_activity_at;
                     Object.assign(item, h);
                     updateCardUi(item);
                     return item.el;
@@ -2320,6 +2429,7 @@
                         <div class="hand-card-footer">
                             <span class="worker-state" style="color: #94a3b8;">${escapeHtml(h.status || 'RUNNING')}</span>
                             <span class="pane-tag"></span>
+                            <span class="hand-sol-badge"></span>
                             <span class="status-pill-badge badge-cyan status-badge">${escapeHtml(h.status || 'RUNNING')}</span>
                         </div>
                     </div>
@@ -2345,6 +2455,8 @@
 
                 const item = {
                     ...h,
+                    started_at: startedAt,
+                    last_activity_at: lastActivityAt,
                     el: card,
                     settleTimeout: null
                 };
@@ -2424,8 +2536,18 @@
                         if (Array.isArray(data.nose.logs) && data.nose.logs.length > 0) {
                             const noseTerm = document.getElementById('nose-terminal-body');
                             if (noseTerm) {
-                                noseTerm.innerHTML = data.nose.logs.map(l => formatLogLine(l, 'NOSE')).join('');
-                                noseTerm.scrollTop = noseTerm.scrollHeight;
+                                const newHtml = data.nose.logs.map(l => formatLogLine(l, 'NOSE')).join('');
+                                if (noseTerm.dataset.fingerprint !== newHtml) {
+                                    const nearBottom = isScrolledNearBottom(noseTerm);
+                                    const prevScrollTop = noseTerm.scrollTop;
+                                    noseTerm.innerHTML = newHtml;
+                                    noseTerm.dataset.fingerprint = newHtml;
+                                    if (nearBottom) {
+                                        noseTerm.scrollTop = noseTerm.scrollHeight;
+                                    } else {
+                                        noseTerm.scrollTop = prevScrollTop;
+                                    }
+                                }
                             }
                         }
                         if (data.nose.verdict_summary) {
@@ -2442,8 +2564,18 @@
                         if (Array.isArray(data.eyes.logs) && data.eyes.logs.length > 0) {
                             const eyeTerm = document.getElementById('eye-terminal-body');
                             if (eyeTerm) {
-                                eyeTerm.innerHTML = data.eyes.logs.map(l => formatLogLine(l, 'EYE')).join('');
-                                eyeTerm.scrollTop = eyeTerm.scrollHeight;
+                                const newHtml = data.eyes.logs.map(l => formatLogLine(l, 'EYE')).join('');
+                                if (eyeTerm.dataset.fingerprint !== newHtml) {
+                                    const nearBottom = isScrolledNearBottom(eyeTerm);
+                                    const prevScrollTop = eyeTerm.scrollTop;
+                                    eyeTerm.innerHTML = newHtml;
+                                    eyeTerm.dataset.fingerprint = newHtml;
+                                    if (nearBottom) {
+                                        eyeTerm.scrollTop = eyeTerm.scrollHeight;
+                                    } else {
+                                        eyeTerm.scrollTop = prevScrollTop;
+                                    }
+                                }
                             }
                         }
                     }
@@ -2456,8 +2588,18 @@
                         if (Array.isArray(data.mouth.logs) && data.mouth.logs.length > 0) {
                             const mouthTerm = document.getElementById('mouth-terminal-body');
                             if (mouthTerm) {
-                                mouthTerm.innerHTML = data.mouth.logs.map(l => formatLogLine(l, 'MOUTH')).join('');
-                                mouthTerm.scrollTop = mouthTerm.scrollHeight;
+                                const newHtml = data.mouth.logs.map(l => formatLogLine(l, 'MOUTH')).join('');
+                                if (mouthTerm.dataset.fingerprint !== newHtml) {
+                                    const nearBottom = isScrolledNearBottom(mouthTerm);
+                                    const prevScrollTop = mouthTerm.scrollTop;
+                                    mouthTerm.innerHTML = newHtml;
+                                    mouthTerm.dataset.fingerprint = newHtml;
+                                    if (nearBottom) {
+                                        mouthTerm.scrollTop = mouthTerm.scrollHeight;
+                                    } else {
+                                        mouthTerm.scrollTop = prevScrollTop;
+                                    }
+                                }
                             }
                         }
                     }
@@ -2580,6 +2722,7 @@
 
                 eventSource.addEventListener('mouth_briefing', function(e) {
                     mouthTurns++;
+                    isMouthActive = false;
                     if (mouthTurnsBadge) mouthTurnsBadge.textContent = `${mouthTurns} turns`;
                     try {
                         const data = JSON.parse(e.data);
@@ -2598,6 +2741,7 @@
                         if (mouthModelDesc && data.model) mouthModelDesc.textContent = data.model;
                         if (data.active_turns !== undefined && mouthTurnsBadge) {
                             mouthTurns = data.active_turns;
+                            isMouthActive = Boolean(mouthTurns > 0);
                             mouthTurnsBadge.textContent = `${mouthTurns} turns`;
                         }
                     } catch (_) {}
@@ -2623,7 +2767,8 @@
                                 pane_id: paneId,
                                 command: data.command || 'Task',
                                 buffer_tail: data.delta || data.text || '',
-                                status: 'RUNNING'
+                                status: 'RUNNING',
+                                last_activity_at: Date.now() / 1000
                             });
                             item = activeHands.get(paneId);
                         } else {
@@ -2631,6 +2776,7 @@
                                 clearTimeout(item.settleTimeout);
                                 item.settleTimeout = null;
                             }
+                            item.last_activity_at = Date.now() / 1000;
                             const delta = data.delta || data.text || '';
                             item.buffer_tail = (item.buffer_tail || '') + delta;
                             if (item.buffer_tail.length > 32768) {
@@ -2648,7 +2794,10 @@
                         if (!data || !data.pane_id) return;
                         paneFrames.set(data.pane_id, data);
                         const item = activeHands.get(data.pane_id);
-                        if (item) applyPaneFrame(item, data);
+                        if (item) {
+                            item.last_activity_at = Date.now() / 1000;
+                            applyPaneFrame(item, data);
+                        }
                     } catch (_) {}
                 });
 
@@ -2740,6 +2889,53 @@
                     }
                 };
             }
+
+            // Sign-of-Life Ticker (1Hz interval updating live counters, silence, and pulsing)
+            function formatDuration(sec) {
+                const s = Math.max(0, Math.floor(sec));
+                const m = Math.floor(s / 60);
+                const remS = s % 60;
+                return `${String(m).padStart(2, '0')}:${String(remS).padStart(2, '0')}`;
+            }
+
+            function tickSignOfLife() {
+                const now = Date.now() / 1000;
+                for (const [paneId, item] of activeHands.entries()) {
+                    if (!item.el) continue;
+                    const solBadge = item.el.querySelector('.hand-sol-badge');
+                    if (!solBadge) continue;
+
+                    const started = item.started_at || now;
+                    const elapsed = Math.max(0, now - started);
+                    const elapsedStr = formatDuration(elapsed);
+
+                    const status = (item.status || 'RUNNING').toUpperCase();
+                    const isSettled = status === 'EXIT_0' || status === 'FAILED' || status === 'SUCCESS' || status === 'COMPLETED';
+
+                    if (isSettled) {
+                        const dotColor = status === 'FAILED' ? 'var(--runic-red)' : 'var(--runic-green)';
+                        solBadge.innerHTML = `<span style="color: ${dotColor};">●</span> ⏱ ${elapsedStr} · settled`;
+                    } else {
+                        const lastAct = item.last_activity_at || started;
+                        const silenceSec = Math.max(0, Math.floor(now - lastAct));
+                        const silenceStr = silenceSec <= 1 ? 'just now' : `${silenceSec}s ago`;
+                        const dotColor = silenceSec < 5 ? 'var(--runic-green)' : 'var(--runic-gold)';
+                        solBadge.innerHTML = `<span style="color: ${dotColor}; text-shadow: 0 0 4px ${dotColor};">●</span> ⏱ ${elapsedStr} · last output ${silenceStr}`;
+                    }
+                }
+
+                if (mouthTurnsBadge) {
+                    if (isMouthActive) {
+                        mouthTurnsBadge.style.boxShadow = (Math.floor(Date.now() / 600) % 2 === 0) ? '0 0 8px var(--runic-cyan)' : 'none';
+                        mouthTurnsBadge.style.borderColor = 'var(--runic-cyan)';
+                    } else {
+                        mouthTurnsBadge.style.boxShadow = '';
+                        mouthTurnsBadge.style.borderColor = '';
+                    }
+                }
+            }
+
+            setInterval(tickSignOfLife, 1000);
 
             // Controls & Interactive Wiring (Null-safe)
             if (btnSelect) {

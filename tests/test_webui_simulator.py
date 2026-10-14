@@ -296,8 +296,8 @@ class TestDashboardFunctionalAndMobileDesign(unittest.TestCase):
         self.assertIn('id="anchor-mouth"', self.content)
         self.assertIn('id="anchor-hands"', self.content)
         self.assertIn('alignFaceAnchors', self.content)
-        self.assertIn('height: 84px;', self.content)
-        self.assertIn('height: 104px;', self.content)
+        self.assertIn('height: 120px;', self.content)
+        self.assertIn('height: 200px;', self.content)
         # Verify header menu is removed
         self.assertNotIn('<header class="arcade-hud">', self.content)
 

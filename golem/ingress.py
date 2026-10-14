@@ -1064,6 +1064,7 @@ class IngressGateway:
         self._file_locks_guard = asyncio.Lock()
         self.nose_sentinel = nose_sentinel
         self.webui_server = webui_server
+        self.webui = webui_server
 
         # Shoulder Tap Event Bus Integration
         self.bus = sensory_bus or bus
@@ -1080,6 +1081,30 @@ class IngressGateway:
         # Ensure router shares the same event bus if not explicitly configured
         if self.router is not None and getattr(self.router, "bus", None) is None:
             self.router.bus = self.bus
+
+    def _get_linear_bridge(self) -> Any:
+        """Return or create and cache a shared LinearBridge instance."""
+        bridge = getattr(self, "linear_bridge", None)
+        if bridge is None:
+            try:
+                from golem.linear_bridge import LinearBridge
+                bridge = LinearBridge()
+                self.linear_bridge = bridge
+            except Exception as exc:
+                logger.debug(f"LinearBridge instantiation failed: {exc}")
+                return None
+        return bridge
+
+    def _broadcast_mouth_log(self, text: str, model: Optional[str] = None) -> None:
+        """Broadcast live multi-hop mouth telemetry log line to connected WebUI."""
+        webui = getattr(self, "webui", None) or getattr(self, "webui_server", None)
+        if webui is not None and not _is_mock_object(webui):
+            effective_model = model or getattr(self, "mouth_model", None) or get_mouth_model()
+            if hasattr(webui, "record_mouth_event"):
+                try:
+                    webui.record_mouth_event(briefing=text, model=effective_model)
+                except Exception as exc:
+                    logger.debug(f"WebUI record_mouth_event failed: {exc}")
 
     async def _broadcast_mouth_briefing(self, briefing: str, model: Optional[str] = None) -> None:
         """Broadcast executive mouth briefing to connected WebUI clients."""
@@ -2640,7 +2665,10 @@ class IngressGateway:
 
     def _stream_backstage_events(self, session: SessionHandle, task_desc: str) -> Any:
         """Stream events from backstage session."""
-        return session.send_user_message(task_desc)
+        try:
+            return session.send_user_message(task_desc, allow_out_of_band=False)
+        except TypeError:
+            return session.send_user_message(task_desc)
 
     def _attach_eyes_observer(
         self,
@@ -2707,7 +2735,7 @@ class IngressGateway:
         if issue_key:
             try:
                 from golem.linear_bridge import LinearBridge
-                bridge = getattr(self, "linear_bridge", None) or LinearBridge()
+                bridge = self._get_linear_bridge()
                 await bridge.update_issue_state(issue_key, "in progress")
             except Exception as exc:
                 logger.debug(f"Linear subtask in-progress update warning ({issue_key}): {exc}")
@@ -2825,7 +2853,7 @@ class IngressGateway:
             if issue_key:
                 try:
                     from golem.linear_bridge import LinearBridge
-                    bridge = getattr(self, "linear_bridge", None) or LinearBridge()
+                    bridge = self._get_linear_bridge()
                     t_status = getattr(accumulator, "turn_status", "SUCCESS")
                     exit_c = 0 if t_status == "SUCCESS" else 1
                     out_tail = getattr(accumulator, "output_tail", "") or accumulator.get_full_output()[:2000]
@@ -2968,7 +2996,7 @@ class IngressGateway:
         if subtask_id:
             try:
                 from golem.linear_bridge import LinearBridge
-                bridge = getattr(self, "linear_bridge", None) or LinearBridge()
+                bridge = self._get_linear_bridge()
                 asyncio.create_task(bridge.update_issue_state(subtask_id, "in progress"))
             except Exception as e:
                 logger.debug(f"Failed to update subtask {subtask_id} to in progress: {e}")
@@ -2995,7 +3023,7 @@ class IngressGateway:
         if not subtask_id:
             try:
                 from golem.linear_bridge import LinearBridge
-                bridge = getattr(self, "linear_bridge", None) or LinearBridge()
+                bridge = self._get_linear_bridge()
                 if bridge.api_key and not _linear_disabled_for_tests():
                     thread_ref = _THREAD_REF.get()
 
@@ -3063,6 +3091,13 @@ class IngressGateway:
         _rp_label = getattr(session, "runner_pane", None)
         runner_pane_id = _rp_id if isinstance(_rp_id, str) and _rp_id else None
         pane = pane_id or runner_pane_id or _rp_label or getattr(session, "session_id", None) or "runner"
+        subtask_issue_key = kwargs.get("subtask_issue_key") or kwargs.get("issue_key")
+        if pane == "runner":
+            if subtask_issue_key:
+                pane = f"agy-{str(subtask_issue_key).lower()}"
+            elif thread_ts:
+                clean_ts = str(thread_ts).replace(".", "")
+                pane = f"agy-{clean_ts[-6:]}"
         eyes_observer: Optional[Any] = None
         pid = getattr(getattr(session, "active_execution", None), "pid", None) or os.getpid()
         hand_registered = False
@@ -3098,6 +3133,23 @@ class IngressGateway:
             except Exception as exc:
                 logger.debug(f"WebUI hand_spawn broadcast warning: {exc}")
 
+            if not _is_mock_object(webui):
+                now_ts = time.strftime("%H:%M:%S", time.localtime(time.time()))
+                task_snippet = (task_desc or "").strip().replace("\n", " ")[:80]
+                banner_line = f"🚀 [{now_ts}] Spawned {effective_worker} on {effective_node} (PID {pid}): {task_snippet}\n"
+                try:
+                    res = webui.update_hand_buffer(pane_id=pane, delta=banner_line, node=effective_node)
+                    if inspect.isawaitable(res):
+                        await res
+                    res = webui.broadcast("hand_buffer", {
+                        "pane_id": pane,
+                        "delta": banner_line,
+                    })
+                    if inspect.isawaitable(res):
+                        await res
+                except Exception as exc:
+                    logger.debug(f"WebUI initial banner warning: {exc}")
+
         async def _worker_consumer() -> None:
             try:
                 async for item in stream_gen:
@@ -3112,6 +3164,36 @@ class IngressGateway:
         worker_task = asyncio.create_task(_worker_consumer())
         start_time = time.time()
         acknowledged_yield = False
+
+        # Heartbeat monitoring for quiet periods
+        last_activity_time = [time.time()]
+        heartbeat_task: Optional[asyncio.Task] = None
+
+        if webui is not None and not _is_mock_object(webui):
+            async def _heartbeat_worker():
+                try:
+                    while True:
+                        await asyncio.sleep(5.0)
+                        now = time.time()
+                        if (now - last_activity_time[0]) >= 5.0:
+                            elapsed_from_start = int(now - start_time)
+                            hb_text = f"\x1b[90m⏳ [HEARTBEAT +{elapsed_from_start}s] Worker active — waiting on model/tool stream...\x1b[0m\n"
+                            try:
+                                res = webui.update_hand_buffer(pane_id=pane, delta=hb_text, node=effective_node)
+                                if inspect.isawaitable(res):
+                                    await res
+                                res = webui.broadcast("hand_buffer", {
+                                    "pane_id": pane,
+                                    "delta": hb_text,
+                                })
+                                if inspect.isawaitable(res):
+                                    await res
+                            except Exception:
+                                pass
+                except asyncio.CancelledError:
+                    pass
+
+            heartbeat_task = asyncio.create_task(_heartbeat_worker())
 
         try:
             while True:
@@ -3213,6 +3295,7 @@ class IngressGateway:
                     break
 
                 accumulator.record_event(event_item)
+                last_activity_time[0] = time.time()
 
                 # Format rich execution events (thoughts, tools, outputs, deltas) for WebUI terminal
                 delta_text = _format_hand_event_for_webui(event_item)
@@ -3255,6 +3338,12 @@ class IngressGateway:
                     break
 
         finally:
+            if heartbeat_task is not None and not heartbeat_task.done():
+                heartbeat_task.cancel()
+                try:
+                    await heartbeat_task
+                except (asyncio.CancelledError, Exception):
+                    pass
             if not worker_task.done():
                 worker_task.cancel()
                 try:
@@ -3278,6 +3367,24 @@ class IngressGateway:
                 exit_code = 0 if turn_status == "SUCCESS" else 1
                 status_str = "EXIT_0" if exit_code == 0 else "FAILED"
                 try:
+                    if not _is_mock_object(webui):
+                        elapsed_duration = max(0.1, time.time() - start_time)
+                        symbol = "✔" if exit_code == 0 else "✖"
+                        color_code = "32" if exit_code == 0 else "31"
+                        settle_line = f"\n\x1b[{color_code}m{symbol} [SETTLED exit={exit_code} in {elapsed_duration:.1f}s]\x1b[0m\n"
+                        try:
+                            res = webui.update_hand_buffer(pane_id=pane, delta=settle_line, node=effective_node)
+                            if inspect.isawaitable(res):
+                                await res
+                            res = webui.broadcast("hand_buffer", {
+                                "pane_id": pane,
+                                "delta": settle_line,
+                            })
+                            if inspect.isawaitable(res):
+                                await res
+                        except Exception:
+                            pass
+
                     if hasattr(webui, "settle_active_hand"):
                         res = webui.settle_active_hand(
                             pane_id=pane,
@@ -3287,6 +3394,16 @@ class IngressGateway:
                         )
                         if inspect.isawaitable(res):
                             await res
+                        if not _is_mock_object(webui):
+                            async def _delayed_cleanup(p_id: str, w_ui: Any) -> None:
+                                try:
+                                    await asyncio.sleep(120.0)
+                                    c_res = w_ui.unregister_active_hand(pane_id=p_id)
+                                    if inspect.isawaitable(c_res):
+                                        await c_res
+                                except Exception:
+                                    pass
+                            asyncio.create_task(_delayed_cleanup(pane, webui))
                     else:
                         settle_payload = {
                             "pane_id": pane,
@@ -3328,7 +3445,7 @@ class IngressGateway:
             if sub_id:
                 try:
                     from golem.linear_bridge import LinearBridge
-                    linear_bridge = getattr(self, "linear_bridge", None) or LinearBridge()
+                    linear_bridge = self._get_linear_bridge()
                     t_status = getattr(accumulator, "turn_status", "SUCCESS")
                     exit_c = 0 if t_status == "SUCCESS" else 1
                     out_tail = getattr(accumulator, "output_tail", "") or ""
@@ -3395,7 +3512,7 @@ class IngressGateway:
 
         try:
             from golem.linear_bridge import LinearBridge
-            bridge = getattr(self, "linear_bridge", None) or LinearBridge()
+            bridge = self._get_linear_bridge()
             if not bridge.api_key or _linear_disabled_for_tests():
                 return ""
             notes = await asyncio.wait_for(bridge.get_thread_notes(thread_ref), timeout=4.0)
@@ -3411,7 +3528,7 @@ class IngressGateway:
             return
         try:
             from golem.linear_bridge import LinearBridge
-            bridge = getattr(self, "linear_bridge", None) or LinearBridge()
+            bridge = self._get_linear_bridge()
             if not bridge.api_key or _linear_disabled_for_tests():
                 return
         except Exception:
@@ -3756,7 +3873,7 @@ class IngressGateway:
             }
         elif tool_name == "plan_task_with_subtasks":
             from golem.linear_bridge import LinearBridge
-            bridge = getattr(self, "linear_bridge", None) or LinearBridge()
+            bridge = self._get_linear_bridge()
             parent_title = tool_args.get("parent_title") or ""
             parent_desc = tool_args.get("parent_description") or ""
             thread_ref = _THREAD_REF.get() or (f"{channel}:{thread_ts}" if channel and thread_ts else "")
@@ -3785,7 +3902,7 @@ class IngressGateway:
             }
         elif tool_name == "check_linear_task_status":
             from golem.linear_bridge import LinearBridge
-            bridge = getattr(self, "linear_bridge", None) or LinearBridge()
+            bridge = self._get_linear_bridge()
             trees = await bridge.get_project_task_tree(limit=10)
             formatted = []
             for parent in trees:
@@ -3802,7 +3919,7 @@ class IngressGateway:
             return {"status": "SUCCESS", "tasks": formatted}
         elif tool_name == "approve_linear_task":
             from golem.linear_bridge import LinearBridge
-            bridge = getattr(self, "linear_bridge", None) or LinearBridge()
+            bridge = self._get_linear_bridge()
             thread_ref = _THREAD_REF.get() or (f"{channel}:{thread_ts}" if channel and thread_ts else "")
             cached = (getattr(session, "linear_plan_cache", None) if session else None) or _THREAD_PLAN_CACHE.get(thread_ref)
             issue_key = tool_args.get("issue_key") or ""
@@ -3969,7 +4086,11 @@ class IngressGateway:
             },
         }
 
+        thread_ref = _THREAD_REF.get() or (f"{channel}:{thread_ts}" if channel and thread_ts else "direct")
+        self._broadcast_mouth_log(f"[TURN START] Thread {thread_ref} · waking {model}...", model=model)
+
         # Step 1: Initial call to Mouth LLM
+        self._broadcast_mouth_log(f"[HOP 1/{MAX_TOOL_CHAIN_HOPS}] Reasoning with {model}...", model=model)
         initial_resp = await self._call_gemini_api(payload=payload, model=model, api_key=api_key)
         if not initial_resp or not initial_resp.get("candidates"):
             # Fallback to direct adapter execution if Gemini API fails
@@ -4046,7 +4167,10 @@ class IngressGateway:
                         clean_briefing, file_targets = extract_and_strip_file_directives(reply_text)
                         target_reaction = "white_check_mark"
                         if last_fn_name == "read_project_file":
-                            target_reaction = "x" if last_tool_result.get("status") in ("ERROR", "NOT_FOUND") else "white_check_mark"
+                            if current_hop > 1 and last_tool_result.get("status") == "NOT_FOUND":
+                                target_reaction = "white_check_mark"
+                            else:
+                                target_reaction = "x" if last_tool_result.get("status") in ("ERROR", "NOT_FOUND") else "white_check_mark"
                         elif last_fn_name == "check_eyes" and last_tool_result.get("state") == "BLOCKER":
                             target_reaction = "warning"
                         elif last_fn_name == "check_nose" and last_tool_result.get("smells_off"):
@@ -4108,6 +4232,17 @@ class IngressGateway:
             full_output = ""
             error_msg = ""
 
+            tool_names = [
+                p["functionCall"].get("name", "tool")
+                for p in parts
+                if isinstance(p, dict) and "functionCall" in p and isinstance(p["functionCall"], dict)
+            ]
+            tools_summary = ", ".join(tool_names) if tool_names else fn_name
+            self._broadcast_mouth_log(
+                f"[TOOL CALL] Hop {current_hop}/{MAX_TOOL_CHAIN_HOPS} -> {tools_summary}",
+                model=model,
+            )
+
             try:
                 if fn_name == "read_project_file":
                     tool_result = await self._execute_tool_call(
@@ -4157,7 +4292,7 @@ class IngressGateway:
                     }
                 elif fn_name == "plan_task_with_subtasks":
                     from golem.linear_bridge import LinearBridge
-                    bridge = getattr(self, "linear_bridge", None) or LinearBridge()
+                    bridge = self._get_linear_bridge()
                     parent_title = fn_args.get("parent_title") or ""
                     parent_desc = fn_args.get("parent_description") or ""
                     thread_ref = _THREAD_REF.get() or (f"{channel}:{thread_ts}" if channel and thread_ts else "")
@@ -4188,7 +4323,7 @@ class IngressGateway:
                     }
                 elif fn_name == "check_linear_task_status":
                     from golem.linear_bridge import LinearBridge
-                    bridge = getattr(self, "linear_bridge", None) or LinearBridge()
+                    bridge = self._get_linear_bridge()
                     trees = await bridge.get_project_task_tree(limit=10)
                     formatted = []
                     for parent in trees:
@@ -4205,7 +4340,7 @@ class IngressGateway:
                     tool_result = {"status": "SUCCESS", "tasks": formatted}
                 elif fn_name == "approve_linear_task":
                     from golem.linear_bridge import LinearBridge
-                    bridge = getattr(self, "linear_bridge", None) or LinearBridge()
+                    bridge = self._get_linear_bridge()
                     thread_ref = _THREAD_REF.get() or (f"{channel}:{thread_ts}" if channel and thread_ts else "")
                     cached = (getattr(session, "linear_plan_cache", None) if session else None) or _THREAD_PLAN_CACHE.get(thread_ref)
                     issue_key = fn_args.get("issue_key") or ""
@@ -4417,6 +4552,10 @@ class IngressGateway:
             else:
                 consecutive_read_only = 0
             if is_chainable and current_hop < MAX_TOOL_CHAIN_HOPS:
+                self._broadcast_mouth_log(
+                    f"[TOOL DONE] {fn_name} completed -> chaining next hop...",
+                    model=model,
+                )
                 logger.info(
                     f"Chainable tool '{fn_name}' completed on hop {current_hop}/{MAX_TOOL_CHAIN_HOPS} "
                     f"(pending_subtasks={len(pending_subtasks)}). "
@@ -4435,6 +4574,10 @@ class IngressGateway:
                         "temperature": 0.2,
                     },
                 }
+                self._broadcast_mouth_log(
+                    f"[HOP {current_hop + 1}/{MAX_TOOL_CHAIN_HOPS}] Reasoning with {model}...",
+                    model=model,
+                )
                 next_resp = await self._call_gemini_api(payload=chain_payload, model=model, api_key=api_key)
                 if candidate_is_empty(next_resp):
                     logger.warning(
@@ -4553,7 +4696,10 @@ class IngressGateway:
             if tool_result.get("card") and "Memory Distillation Proposal" not in clean_briefing:
                 clean_briefing = tool_result.get("card")
         elif fn_name == "read_project_file":
-            target_reaction = "x" if tool_result.get("status") in ("ERROR", "NOT_FOUND") else "white_check_mark"
+            if current_hop > 1 and tool_result.get("status") == "NOT_FOUND":
+                target_reaction = "white_check_mark"
+            else:
+                target_reaction = "x" if tool_result.get("status") in ("ERROR", "NOT_FOUND") else "white_check_mark"
         elif fn_name == "check_eyes" and tool_result.get("state") == "BLOCKER":
             target_reaction = "warning"
         elif fn_name == "check_nose" and tool_result.get("smells_off"):

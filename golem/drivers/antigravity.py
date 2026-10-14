@@ -763,7 +763,7 @@ class AntigravityDriver(BaseAgentDriver):
                             has_background_task = True
                             self.has_active_background_tasks = True
                             is_bg = True
-                        elif (state_str == "RUNNING" or tool_info.get("status") == "RUNNING") and tool_name in ("run_command", "schedule"):
+                        elif (state_str == "RUNNING" or tool_info.get("status") == "RUNNING") and tool_name == "schedule":
                             self.active_background_tasks.add(f"running-{tool_call_id or time.time()}")
                             has_background_task = True
                             self.has_active_background_tasks = True
@@ -799,15 +799,26 @@ class AntigravityDriver(BaseAgentDriver):
                             tool_completed_time = time.time()
                             is_error = bool(tool_info.get("error") or tool_info.get("is_error"))
 
+                            # Discard any running- markers for this tool call unless output indicated background task
+                            if tool_call_id:
+                                to_remove = [tid for tid in list(self.active_background_tasks) if tid == f"running-{tool_call_id}" or tid.startswith(f"running-{tool_call_id}")]
+                                for tid in to_remove:
+                                    self.active_background_tasks.discard(tid)
+                            elif not m_bg:
+                                to_remove = [tid for tid in list(self.active_background_tasks) if tid.startswith("running-")]
+                                for tid in to_remove:
+                                    self.active_background_tasks.discard(tid)
+
                             if tool_name == "manage_task" and params.get("Action") == "kill":
                                 killed_id = str(params.get("TaskId") or "").strip()
                                 if killed_id:
                                     to_remove = [tid for tid in self.active_background_tasks if tid == killed_id or killed_id.endswith(tid) or tid.endswith(killed_id)]
                                     for tid in to_remove:
                                         self.active_background_tasks.discard(tid)
-                                    if not self.active_background_tasks:
-                                        has_background_task = False
-                                        self.has_active_background_tasks = False
+
+                            if not self.active_background_tasks:
+                                has_background_task = False
+                                self.has_active_background_tasks = False
 
                             yield ToolEndEvent(
                                 tool_name=tool_name,
