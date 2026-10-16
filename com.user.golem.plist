@@ -67,7 +67,13 @@
         <key>BLUEBUBBLES_WEBHOOK_HOST</key>
         <string>0.0.0.0</string>
         <key>BLUEBUBBLES_ALLOWED_HANDLES</key>
-        <string>k.horned@gmail.com</string>
+        <string>YOUR_ALLOWED_HANDLE</string>
+        <key>LINEAR_API_KEY</key>
+        <string>YOUR_LINEAR_API_KEY</string>
+        <key>LINEAR_PROJECT_SLUG</key>
+        <string>YOUR_LINEAR_PROJECT_SLUG</string>
+        <key>LINEAR_DEFAULT_TEAM_KEY</key>
+        <string>CHO</string>
     </dict>
 </dict>
 </plist>

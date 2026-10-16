@@ -31,6 +31,8 @@ LINEAGE = "Golem is the open-source evolution of First Mate, powered by Herdr's 
 # Locate project root .env
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _ENV_PATH = _PROJECT_ROOT / ".env"
+_EXAMPLE_ENV_PATH = _PROJECT_ROOT / ".env.example"
+
 
 # Load environment on import if dotenv is available and .env exists (skip in test mode to allow clean env patching)
 _is_test = (
@@ -88,6 +90,8 @@ def _get_file_env() -> Dict[str, str]:
     """
     Read key-value pairs directly from .env file on disk without modifying os.environ.
     Provides safe fallback when os.environ is cleared (e.g. in unit test fixtures).
+    If .env does not exist on disk (e.g. on a fresh clone or GitHub Actions runner),
+    falls back to reading .env.example while filtering placeholder secrets.
     Backed by an in-memory mtime-validated cache with a lightweight TTL to eliminate
     synchronous disk I/O and stat() syscalls during high-frequency REST polling.
     Zero hardcoded strings in Python code.
@@ -97,9 +101,6 @@ def _get_file_env() -> Dict[str, str]:
 
     # Fast-path: return cached dictionary within TTL window without any stat() syscalls
     if _FILE_ENV_CACHE is not None and (now - _FILE_ENV_LAST_CHECK) < _ENV_CACHE_TTL:
-        if _FILE_ENV_CACHE_MTIME is not None:
-            # Invoking _get_raw_file_env with cached mtime preserves cache_info hit tracking
-            return dict(_get_raw_file_env(_FILE_ENV_CACHE_MTIME, _ENV_PATH))
         return dict(_FILE_ENV_CACHE)
 
     _FILE_ENV_LAST_CHECK = now
@@ -108,17 +109,41 @@ def _get_file_env() -> Dict[str, str]:
         _FILE_ENV_CACHE_MTIME = None
         return {}
 
-    # Single-stat optimization: catch OSError directly to eliminate redundant _ENV_PATH.exists()
+    # Check _ENV_PATH first
     try:
         mtime = _ENV_PATH.stat().st_mtime
+        _FILE_ENV_CACHE_MTIME = mtime
+        _FILE_ENV_CACHE = dict(_get_raw_file_env(mtime, _ENV_PATH))
+        return dict(_FILE_ENV_CACHE)
+    except (OSError, ValueError):
+        pass
+
+    # Fall back to _EXAMPLE_ENV_PATH if _ENV_PATH does not exist
+    try:
+        mtime = _EXAMPLE_ENV_PATH.stat().st_mtime
+        raw = _get_raw_file_env(mtime, _EXAMPLE_ENV_PATH)
+        # Filter placeholder secrets like your_..., xoxb-..., xapp-..., sk-..., lin_api_..., ...
+        filtered: Dict[str, str] = {}
+        for k, v in raw.items():
+            val = str(v).strip()
+            if (
+                val.startswith("your_")
+                or val.startswith("xoxb-")
+                or val.startswith("xapp-")
+                or val.startswith("sk-")
+                or val.startswith("lin_api_")
+                or val == "..."
+            ):
+                continue
+            filtered[k] = val
+        _FILE_ENV_CACHE_MTIME = mtime
+        _FILE_ENV_CACHE = filtered
+        return dict(_FILE_ENV_CACHE)
     except (OSError, ValueError):
         _FILE_ENV_CACHE = {}
         _FILE_ENV_CACHE_MTIME = None
         return {}
 
-    _FILE_ENV_CACHE_MTIME = mtime
-    _FILE_ENV_CACHE = dict(_get_raw_file_env(mtime, _ENV_PATH))
-    return dict(_FILE_ENV_CACHE)
 
 
 def reload_config() -> None:
@@ -169,12 +194,14 @@ def get_active_engine() -> str:
     val = (
         (os.environ.get("GOLEM_DEFAULT_HAND_WORKER") or "").strip()
         or (os.environ.get("GOLEM_ENGINE") or "").strip()
+        or (os.environ.get("FIRST_MATE_ENGINE") or "").strip()
     )
     if not val:
         file_env = _get_file_env()
         val = (
             (file_env.get("GOLEM_DEFAULT_HAND_WORKER") or "").strip()
             or (file_env.get("GOLEM_ENGINE") or "").strip()
+            or (file_env.get("FIRST_MATE_ENGINE") or "").strip()
         )
     val = (val or "antigravity").lower().strip()
     if val == "agy":
@@ -193,8 +220,8 @@ def get_engine_model(engine: Optional[str] = None) -> str:
     """
     target = (engine or get_active_engine()).lower().strip()
     var_candidates: Dict[str, list[str]] = {
-        "antigravity": ["GOLEM_ANTIGRAVITY_MODEL", "ANTIGRAVITY_MODEL"],
-        "agy": ["GOLEM_ANTIGRAVITY_MODEL", "ANTIGRAVITY_MODEL"],
+        "antigravity": ["GOLEM_ANTIGRAVITY_MODEL", "ANTIGRAVITY_MODEL", "GOLEM_HANDS_MODEL", "HANDS_MODEL"],
+        "agy": ["GOLEM_ANTIGRAVITY_MODEL", "ANTIGRAVITY_MODEL", "GOLEM_HANDS_MODEL", "HANDS_MODEL"],
         "claude_code": ["GOLEM_CLAUDE_CODE_MODEL", "CLAUDE_CODE_MODEL"],
         "claude": ["GOLEM_CLAUDE_CODE_MODEL", "CLAUDE_CODE_MODEL"],
         "opencode": ["GOLEM_OPENCODE_MODEL", "OPENCODE_MODEL"],
@@ -221,13 +248,13 @@ def get_engine_fallback_models(engine: Optional[str] = None) -> list[str]:
     """
     Resolve ordered, comma-separated quota-fallback model list for specified engine.
     Maps:
-      - 'antigravity' / 'agy' -> GOLEM_ANTIGRAVITY_FALLBACK_MODELS / ANTIGRAVITY_FALLBACK_MODELS
+      - 'antigravity' / 'agy' -> GOLEM_ANTIGRAVITY_FALLBACK_MODELS / ANTIGRAVITY_FALLBACK_MODELS / HANDS_FALLBACK_MODELS
     Returns [] when unset (fallback disabled). Zero hardcoded model names in code.
     """
     target = (engine or get_active_engine()).lower().strip()
     var_candidates: Dict[str, list[str]] = {
-        "antigravity": ["GOLEM_ANTIGRAVITY_FALLBACK_MODELS", "ANTIGRAVITY_FALLBACK_MODELS"],
-        "agy": ["GOLEM_ANTIGRAVITY_FALLBACK_MODELS", "ANTIGRAVITY_FALLBACK_MODELS"],
+        "antigravity": ["GOLEM_ANTIGRAVITY_FALLBACK_MODELS", "ANTIGRAVITY_FALLBACK_MODELS", "GOLEM_HANDS_FALLBACK_MODELS", "HANDS_FALLBACK_MODELS"],
+        "agy": ["GOLEM_ANTIGRAVITY_FALLBACK_MODELS", "ANTIGRAVITY_FALLBACK_MODELS", "GOLEM_HANDS_FALLBACK_MODELS", "HANDS_FALLBACK_MODELS"],
     }
     candidates = var_candidates.get(target)
     if not candidates:
@@ -406,6 +433,142 @@ def get_webui_port() -> int:
     return 8765
 
 
+def get_user_name() -> str:
+    """
+    Resolve user / operator name.
+    Checks USER_NAME or GOLEM_USER_NAME in os.environ then _get_file_env().
+    Defaults to 'Carl'.
+    """
+    for var in ("USER_NAME", "GOLEM_USER_NAME"):
+        val = (os.environ.get(var) or "").strip()
+        if val:
+            return val
+    file_env = _get_file_env()
+    for var in ("USER_NAME", "GOLEM_USER_NAME"):
+        val = (file_env.get(var) or "").strip()
+        if val:
+            return val
+    return "Carl"
+
+
+def get_user_home() -> str:
+    """
+    Resolve host user home directory.
+    Checks USER_HOME or GOLEM_USER_HOME from os.environ then _get_file_env().
+    If unset: returns '/Users/hermes' if os.path.exists('/Users/hermes') else str(Path.home()).
+    """
+    for var in ("USER_HOME", "GOLEM_USER_HOME"):
+        val = (os.environ.get(var) or "").strip()
+        if val:
+            return val
+    file_env = _get_file_env()
+    for var in ("USER_HOME", "GOLEM_USER_HOME"):
+        val = (file_env.get(var) or "").strip()
+        if val:
+            return val
+    if os.path.exists("/Users/hermes"):
+        return "/Users/hermes"
+    return str(Path.home())
+
+
+def get_default_slack_channel() -> str:
+    """
+    Resolve default Slack channel.
+    Checks DEFAULT_SLACK_CHANNEL or GOLEM_DEFAULT_SLACK_CHANNEL in os.environ then _get_file_env().
+    Defaults to 'D0C2J1HKNN7'.
+    """
+    for var in ("DEFAULT_SLACK_CHANNEL", "GOLEM_DEFAULT_SLACK_CHANNEL"):
+        val = (os.environ.get(var) or "").strip()
+        if val:
+            return val
+    file_env = _get_file_env()
+    for var in ("DEFAULT_SLACK_CHANNEL", "GOLEM_DEFAULT_SLACK_CHANNEL"):
+        val = (file_env.get(var) or "").strip()
+        if val:
+            return val
+    return "D0C2J1HKNN7"
+
+
+def get_fleet_machines() -> list[str]:
+    """
+    Resolve list of fleet machine names.
+    If MACHINE_0 is set in os.environ (and non-empty), collects MACHINE_0, MACHINE_1, ...
+    sequentially and stops at the first empty/unset MACHINE_N.
+    Falls back to _get_file_env() if MACHINE_0 is not in os.environ.
+    Defaults to ['hermes', 'oci-machine', 'desktop-pc', 'personal-laptop'].
+    """
+    if (os.environ.get("MACHINE_0") or "").strip():
+        machines: list[str] = []
+        i = 0
+        while True:
+            val = (os.environ.get(f"MACHINE_{i}") or "").strip()
+            if not val:
+                break
+            machines.append(val)
+            i += 1
+        if machines:
+            return machines
+
+    file_env = _get_file_env()
+    if (file_env.get("MACHINE_0") or "").strip():
+        machines = []
+        i = 0
+        while True:
+            val = (file_env.get(f"MACHINE_{i}") or "").strip()
+            if not val:
+                break
+            machines.append(val)
+            i += 1
+        if machines:
+            return machines
+
+    return ["hermes", "oci-machine", "desktop-pc", "personal-laptop"]
+
+
+def get_llm_api_key() -> str:
+    """
+    Resolve unified LLM API key.
+    Checks LLM_API_KEY, GEMINI_API_KEY, GOOGLE_API_KEY, MOUTH_API_KEY, OPENAI_API_KEY
+    from os.environ then _get_file_env().
+    """
+    candidates = ["LLM_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "MOUTH_API_KEY", "OPENAI_API_KEY"]
+    for var in candidates:
+        val = (os.environ.get(var) or "").strip()
+        if val and not val.startswith("your_"):
+            return val
+    file_env = _get_file_env()
+    for var in candidates:
+        val = (file_env.get(var) or "").strip()
+        if val and not val.startswith("your_"):
+            return val
+    return ""
+
+
+def get_llm_base_url(organ: Optional[str] = None) -> str:
+    """
+    Resolve base URL for OpenAI-compatible LLM endpoints.
+    If organ is provided ('mouth', 'eyes', 'nose'), checks {ORGAN.upper()}_BASE_URL first,
+    then LLM_BASE_URL, GOLEM_LLM_BASE_URL, MOUTH_BASE_URL.
+    Returns '' if unset.
+    """
+    candidates: list[str] = []
+    if organ:
+        organ_clean = organ.strip().upper()
+        candidates.append(f"{organ_clean}_BASE_URL")
+        candidates.append(f"GOLEM_{organ_clean}_BASE_URL")
+    candidates.extend(["LLM_BASE_URL", "GOLEM_LLM_BASE_URL", "MOUTH_BASE_URL"])
+    for var in candidates:
+        val = (os.environ.get(var) or "").strip()
+        if val:
+            return val
+    file_env = _get_file_env()
+    for var in candidates:
+        val = (file_env.get(var) or "").strip()
+        if val:
+            return val
+    return ""
+
+
 def get_config_dict() -> Dict[str, str]:
     """Return dictionary snapshot of all sensory, engine, and webui settings."""
     return {
@@ -422,6 +585,11 @@ def get_config_dict() -> Dict[str, str]:
         "outbox_dir": str(get_outbox_dir()),
         "webui_host": get_webui_host(),
         "webui_port": str(get_webui_port()),
+        "user_name": get_user_name(),
+        "user_home": get_user_home(),
+        "default_slack_channel": get_default_slack_channel(),
+        "fleet_machines": ",".join(get_fleet_machines()),
     }
+
 
 

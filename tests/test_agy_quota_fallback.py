@@ -6,7 +6,7 @@ import asyncio
 import unittest
 from unittest import mock
 
-from golem.agent.drivers.antigravity import AntigravityDriver, is_quota_error
+from golem.agent.drivers.antigravity import AntigravityDriver, is_quota_error, clear_exhausted_models
 from golem.agent.protocol import FinishEvent, StatusUpdateEvent, TextDeltaEvent
 from golem.config import get_engine_fallback_models
 
@@ -45,6 +45,12 @@ class FallbackConfigTests(unittest.TestCase):
 
 
 class SendPromptFallbackTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        clear_exhausted_models()
+
+    def tearDown(self):
+        clear_exhausted_models()
+
     async def _collect(self, drv, prompt="go"):
         return [e async for e in drv.send_prompt(prompt)]
 

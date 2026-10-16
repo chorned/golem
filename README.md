@@ -247,6 +247,10 @@ assert golem.ingress.IngressGateway is golem.gateway.ingress.IngressGateway
 
 ## Quickstart Guide
 
+> [!TIP]
+> **Setting up with an AI coding assistant?**
+> If you are setting up Golem with Claude Code, OpenCode, or AGY, see [`SETUP.md`](SETUP.md) for a step-by-step conversational setup guide that walks you through prerequisites, fleet machine discovery, model configuration, and service installation.
+
 ### Prerequisites
 - **Python:** Python 3.11, 3.12, or 3.13 (Python 3.11+ required).
 - **Herdr:** Daemon installed and running (`herdr daemon status`).

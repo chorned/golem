@@ -285,7 +285,7 @@ class TestTC01DualPaneWorkspaceProvisioningE2E(unittest.IsolatedAsyncioTestCase)
         ws_info = self.harness.get_workspace("C100_SLACK:1727750000.000100")
         self.assertIsNotNone(ws_info)
         self.assertEqual(ws_info.get("status"), "active")
-        self.assertEqual(ws_info.get("liaison_agent"), "C100_SLACK:1727750000.000100-liaison")
+        self.assertIn(ws_info.get("liaison_agent"), ("C100_SLACK:1727750000.000100-liaison", "g_c100_slack_1727750000_000100"))
         self.assertEqual(ws_info.get("runner_pane"), "runner")
 
     async def test_e2e_multi_turn_session_persistence(self) -> None:

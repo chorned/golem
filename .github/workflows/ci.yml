@@ -23,6 +23,11 @@ jobs:
   test:
     name: Test (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GOLEM_TEST_MODE: "1"
+      FIRSTMATE_TEST_MODE: "1"
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
     strategy:
       fail-fast: false
       matrix:

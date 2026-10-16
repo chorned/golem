@@ -62,6 +62,12 @@ class QuotaRegistryTests(unittest.TestCase):
 
 
 class DriverSpawnSelectionTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        clear_exhausted_models()
+
+    def tearDown(self):
+        clear_exhausted_models()
+
     def test_new_driver_skips_exhausted_default(self):
         mark_model_exhausted("gemini-default", QUOTA_MSG)
         drv = AntigravityDriver(cwd="/tmp", model="gemini-default", fallback_models=["sonnet", "other"])

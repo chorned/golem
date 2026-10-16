@@ -20,7 +20,7 @@ import logging
 import asyncio
 from typing import Dict, Any, Optional, List
 
-from golem.config import get_mouth_model as _config_get_mouth_model
+from golem.config import get_mouth_model as _config_get_mouth_model, get_llm_base_url
 
 logger = logging.getLogger("Golem.Agent.Mouth")
 
@@ -38,8 +38,8 @@ def get_mouth_model() -> str:
 
 
 def get_gemini_api_key() -> str:
-    """Discover Gemini / Google API key from environment, project .env, or user ~/.env."""
-    key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+    """Discover LLM / Gemini / Google API key from environment, project .env, or user ~/.env."""
+    key = os.environ.get("LLM_API_KEY") or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
     if key and key.strip() and not key.startswith("your_"):
         return key.strip()
 
@@ -53,10 +53,11 @@ def get_gemini_api_key() -> str:
                 with open(path, "r", encoding="utf-8") as f:
                     for line in f:
                         line = line.strip()
-                        if line.startswith("GEMINI_API_KEY=") or line.startswith("GOOGLE_API_KEY="):
-                            val = line.split("=", 1)[1].strip().strip('"').strip("'")
-                            if val and not val.startswith("your_"):
-                                return val
+                        for prefix in ("LLM_API_KEY=", "GEMINI_API_KEY=", "GOOGLE_API_KEY="):
+                            if line.startswith(prefix):
+                                val = line.split("=", 1)[1].strip().strip('"').strip("'")
+                                if val and not val.startswith("your_"):
+                                    return val
             except Exception:
                 pass
     return ""
@@ -802,13 +803,15 @@ async def call_gemini_api(
         if "generationConfig" in kwargs:
             payload["generationConfig"] = kwargs["generationConfig"]
 
+    base_url = get_llm_base_url("mouth")
     backend = (os.environ.get("MOUTH_BACKEND") or os.environ.get("GOLEM_MOUTH_BACKEND") or "gemini").lower().strip()
-    if backend in ("openai", "openai-compatible", "openrouter", "groq", "ollama", "deepseek"):
+    if base_url or backend in ("openai", "openai-compatible", "openrouter", "groq", "ollama", "deepseek"):
         from golem.ingress import call_openai_compatible_api
         return await call_openai_compatible_api(
             payload=payload,
             model=model,
             api_key=api_key,
+            base_url=base_url or None,
             timeout_seconds=timeout_seconds,
         )
 
@@ -1061,3 +1064,378 @@ async def triage_memory_input(
     # Fallback to logbook
     wiki.logbook_append(entry=clean_text, title="Operational Learning (/learn)")
     return "logbook", None
+
+
+async def _extract_media_url_metadata(url: str, timeout: float = 6.0) -> Optional[Dict[str, Any]]:
+    """Attempt extracting media metadata using yt-dlp."""
+    import shutil
+    yt_dlp_bin = shutil.which("yt-dlp") or os.path.expanduser("~/.local/bin/yt-dlp")
+    if not os.path.isfile(yt_dlp_bin) or not os.access(yt_dlp_bin, os.X_OK):
+        return None
+
+    cmd = [
+        yt_dlp_bin,
+        "--dump-json",
+        "--skip-download",
+        "--no-warnings",
+        "--no-playlist",
+        "--socket-timeout", "4",
+        url,
+    ]
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        if proc.returncode == 0 and stdout:
+            data = json.loads(stdout.decode("utf-8", errors="ignore").strip())
+            if isinstance(data, dict):
+                return {
+                    "title": data.get("title") or "",
+                    "description": data.get("description") or "",
+                    "author": data.get("uploader") or data.get("channel") or data.get("creator") or "",
+                    "duration": data.get("duration_string") or "",
+                    "tags": data.get("tags") or [],
+                }
+    except Exception as exc:
+        logger.debug(f"yt-dlp failed for {url}: {exc}")
+
+    # For Instagram, if basic dump failed and Chrome cookies might help on macOS
+    if "instagram.com" in url.lower() and os.environ.get("GOLEM_TEST_MODE") != "1":
+        try:
+            cmd_cookies = [
+                yt_dlp_bin,
+                "--cookies-from-browser", "chrome",
+                "--dump-json",
+                "--skip-download",
+                "--no-warnings",
+                "--no-playlist",
+                "--socket-timeout", "4",
+                url,
+            ]
+            proc = await asyncio.create_subprocess_exec(
+                *cmd_cookies,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+            if proc.returncode == 0 and stdout:
+                data = json.loads(stdout.decode("utf-8", errors="ignore").strip())
+                if isinstance(data, dict):
+                    return {
+                        "title": data.get("title") or "",
+                        "description": data.get("description") or "",
+                        "author": data.get("uploader") or data.get("channel") or data.get("creator") or "",
+                        "duration": data.get("duration_string") or "",
+                        "tags": data.get("tags") or [],
+                    }
+        except Exception as exc:
+            logger.debug(f"yt-dlp with cookies failed for {url}: {exc}")
+
+    return None
+
+
+async def _extract_html_metadata(url: str, timeout: float = 4.0) -> Dict[str, str]:
+    """Fetch OpenGraph and HTML meta tags via async HTTP."""
+    import aiohttp
+    import re
+    import html as html_lib
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    }
+    title = ""
+    description = ""
+    site_name = ""
+
+    try:
+        client_timeout = aiohttp.ClientTimeout(total=timeout)
+        async with aiohttp.ClientSession(headers=headers, timeout=client_timeout) as session:
+            async with session.get(url, allow_redirects=True) as resp:
+                if resp.status == 200:
+                    raw_chunk = await resp.content.read(65536)
+                    html_src = raw_chunk.decode("utf-8", errors="ignore")
+
+                    m_og_t = re.search(
+                        r"""<meta\s+[^>]*property=["']og:title["'][^>]*content=["']([^"']+)["']""",
+                        html_src,
+                        re.IGNORECASE,
+                    )
+                    if not m_og_t:
+                        m_og_t = re.search(
+                            r"""<meta\s+[^>]*content=["']([^"']+)["'][^>]*property=["']og:title["']""",
+                            html_src,
+                            re.IGNORECASE,
+                        )
+                    if m_og_t:
+                        title = m_og_t.group(1)
+                    else:
+                        m_t = re.search(r"<title[^>]*>([^<]+)</title>", html_src, re.IGNORECASE)
+                        if m_t:
+                            title = m_t.group(1)
+
+                    m_og_d = re.search(
+                        r"""<meta\s+[^>]*property=["']og:description["'][^>]*content=["']([^"']+)["']""",
+                        html_src,
+                        re.IGNORECASE,
+                    )
+                    if not m_og_d:
+                        m_og_d = re.search(
+                            r"""<meta\s+[^>]*content=["']([^"']+)["'][^>]*property=["']og:description["']""",
+                            html_src,
+                            re.IGNORECASE,
+                        )
+                    if m_og_d:
+                        description = m_og_d.group(1)
+                    else:
+                        m_d = re.search(
+                            r"""<meta\s+[^>]*name=["']description["'][^>]*content=["']([^"']+)["']""",
+                            html_src,
+                            re.IGNORECASE,
+                        )
+                        if m_d:
+                            description = m_d.group(1)
+
+                    m_site = re.search(
+                        r"""<meta\s+[^>]*property=["']og:site_name["'][^>]*content=["']([^"']+)["']""",
+                        html_src,
+                        re.IGNORECASE,
+                    )
+                    if m_site:
+                        site_name = m_site.group(1)
+    except Exception as exc:
+        logger.debug(f"HTML meta fetch failed for {url}: {exc}")
+
+    return {
+        "title": html_lib.unescape(title).strip() if title else "",
+        "description": html_lib.unescape(description).strip() if description else "",
+        "site_name": html_lib.unescape(site_name).strip() if site_name else "",
+    }
+
+
+async def inspect_single_url(url: str, timeout: float = 6.0) -> Dict[str, Any]:
+    """
+    Inspect a single URL to extract title, author, description, and platform.
+    Prioritizes yt-dlp for rich media (Instagram, YouTube, Reddit, TikTok) and falls back
+    to HTML OpenGraph parsing. Guaranteed non-blocking and safe.
+    """
+    clean_url = str(url).strip()
+    if not clean_url or not clean_url.startswith(("http://", "https://")):
+        return {"url": clean_url, "error": "Invalid URL scheme"}
+
+    lower = clean_url.lower()
+    platform = "Web"
+    if "instagram.com" in lower:
+        platform = "Instagram"
+    elif "youtube.com" in lower or "youtu.be" in lower:
+        platform = "YouTube"
+    elif "reddit.com" in lower:
+        platform = "Reddit"
+    elif "twitter.com" in lower or "x.com" in lower:
+        platform = "Twitter/X"
+    elif "facebook.com" in lower or "fb.watch" in lower:
+        platform = "Facebook"
+    elif "tiktok.com" in lower:
+        platform = "TikTok"
+
+    # Attempt yt-dlp first for media platforms
+    try:
+        media_data = await _extract_media_url_metadata(clean_url, timeout=timeout)
+        if media_data and (media_data.get("title") or media_data.get("description")):
+            return {
+                "url": clean_url,
+                "platform": platform,
+                "title": media_data.get("title", ""),
+                "description": media_data.get("description", ""),
+                "author": media_data.get("author", ""),
+                "duration": media_data.get("duration", ""),
+                "tags": media_data.get("tags", []),
+            }
+    except Exception as me:
+        logger.debug(f"Media extraction error for {clean_url}: {me}")
+
+    # Fallback to HTML OpenGraph / title fetch
+    try:
+        html_data = await _extract_html_metadata(clean_url, timeout=timeout * 0.75)
+        if html_data.get("title") or html_data.get("description"):
+            return {
+                "url": clean_url,
+                "platform": html_data.get("site_name") or platform,
+                "title": html_data.get("title", ""),
+                "description": html_data.get("description", ""),
+                "author": "",
+            }
+    except Exception as he:
+        logger.debug(f"HTML extraction error for {clean_url}: {he}")
+
+    return {
+        "url": clean_url,
+        "platform": platform,
+        "title": "",
+        "description": "",
+        "author": "",
+    }
+
+
+async def inspect_and_summarize_urls(urls: List[str], timeout: float = 6.0) -> List[Dict[str, Any]]:
+    """Concurrently inspect multiple URLs with bounded concurrency and timeout."""
+    if not urls:
+        return []
+    valid_urls = [
+        u for u in urls
+        if isinstance(u, str)
+        and u.startswith(("http://", "https://"))
+        and not any(x in u.lower() for x in ("unsubscribe", "optout", "opt-out", "mail.google.com"))
+    ][:4]
+    if not valid_urls:
+        return []
+
+    tasks = [inspect_single_url(u, timeout=timeout) for u in valid_urls]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    summaries = []
+    for idx, r in enumerate(results):
+        if isinstance(r, dict):
+            summaries.append(r)
+        else:
+            summaries.append({"url": valid_urls[idx], "error": str(r)})
+    return summaries
+
+
+def derive_actionable_followup(corpus: str) -> str:
+    """Infer an actionable next step question based on email and link content."""
+    lower = corpus.lower()
+    if any(k in lower for k in ("ticket", "tickets", "concert", "tour", "show", "event", "venue", "on sale", "festival", "lineup", "performance", "presale")):
+        return "Want me to create a calendar event for tomorrow to buy tickets?"
+    elif any(k in lower for k in ("calendar", "schedule", "meet", "meeting", "call", "appointment", "deadline", "due date", "flight", "reservation")):
+        return "Want me to schedule a calendar reminder for this?"
+    elif any(k in lower for k in ("article", "newsletter", "post", "blog", "paper", "essay", "read", "thread")):
+        return "Want me to summarize the key takeaways or add this to your reading list?"
+    elif any(k in lower for k in ("reel", "video", "clip", "watch", "youtube", "tiktok", "instagram")):
+        return "Want me to look into more details or set a reminder for you on this?"
+    else:
+        return "Want me to create a calendar event or follow up on this for you?"
+
+
+async def synthesize_email_briefing(
+    sender: str,
+    subject: str,
+    body: str = "",
+    snippet: str = "",
+    urls: Optional[List[str]] = None,
+    inspected_urls: Optional[List[Dict[str, Any]]] = None,
+) -> Tuple[str, str]:
+    """
+    Synthesize a concise Chief of Staff message for Carl in Slack.
+    Pattern:
+      1. Analyze contents (what the shared item is about).
+      2. Share with Carl directly in Slack.
+      3. Suggest an actionable follow-up (e.g. 'Want me to create a calendar event for tomorrow to buy tickets?').
+    Returns (briefing_text, suggested_action).
+    """
+    active_urls = urls or []
+    active_inspected = inspected_urls or []
+
+    # Build corpus to determine suggested action
+    inspected_text = " ".join(
+        f"{i.get('title', '')} {i.get('description', '')}" for i in active_inspected
+    )
+    corpus = f"{subject} {snippet} {body} {inspected_text}"
+    suggested_action = derive_actionable_followup(corpus)
+
+    clean_sender = sender.split("<")[0].strip().strip('"').strip("'") or sender.strip()
+    if not clean_sender:
+        clean_sender = "Carl"
+
+    # Deterministic fallback builder
+    def _build_fallback() -> str:
+        analysis_parts = []
+        for item in active_inspected:
+            p_title = item.get("title")
+            p_desc = item.get("description")
+            p_auth = item.get("author")
+            p_plat = item.get("platform", "Link")
+
+            header = f"*{p_title}*" if p_title else f"*{subject}*"
+            if p_auth:
+                header += f" (by {p_auth} on {p_plat})"
+            desc_str = f"\n> {p_desc[:400].strip()}" if p_desc else ""
+            analysis_parts.append(f"{header}{desc_str}")
+
+        if not analysis_parts:
+            if snippet:
+                analysis_parts.append(f"> {snippet[:400].strip()}")
+            elif body:
+                analysis_parts.append(f"> {body[:400].strip()}")
+            else:
+                analysis_parts.append(f"> Shared item: {subject}")
+
+        analysis_block = "\n\n".join(analysis_parts)
+        url_block = "\n".join([f"🔗 <{u}>" for u in active_urls]) if active_urls else ""
+        url_section = f"\n{url_block}" if url_block else ""
+
+        return (
+            f"📬 *Shared via Email from {clean_sender}:* *{subject}*\n\n"
+            f"{analysis_block}"
+            f"{url_section}\n\n"
+            f"_{suggested_action}_"
+        )
+
+    is_test_env = os.environ.get("FIRSTMATE_TEST_MODE") == "1" or os.environ.get("GOLEM_TEST_MODE") == "1"
+    key = get_gemini_api_key()
+
+    if is_test_env or not key:
+        return _build_fallback(), suggested_action
+
+    # Attempt dynamic LLM synthesis via Gemini Flash
+    try:
+        sys_prompt = (
+            "You are AGY, Carl's Chief of Staff and operational liaison in Slack.\n"
+            "Carl has received a shared email or link (e.g. Instagram Reel, Reddit post, event link).\n"
+            "Deliver an executive Chief of Staff briefing directly to Carl in Slack following this exact pattern:\n"
+            "1. State what was shared and analyze what the shared item/video/post is about.\n"
+            "2. Include the direct URL if present (using Slack mrkdwn: <URL>).\n"
+            "3. Conclude with a clear, actionable follow-up question (e.g. asking if Carl wants you to create a calendar event, set a reminder, or look into tickets/details).\n"
+            "Formatting: Slack mrkdwn (*bold*, `code`, <URL|Label>). Crisp, executive, no fluff, no raw markdown headers (#)."
+        )
+        user_prompt = (
+            f"Incoming Email Metadata:\n"
+            f"• From: {sender}\n"
+            f"• Subject: {subject}\n"
+            f"• Snippet: {snippet}\n"
+            f"• Body: {body[:1500]}\n"
+            f"• Extracted URLs: {active_urls}\n"
+            f"• Inspected Media/URL Details:\n{json.dumps(active_inspected, indent=2)}\n"
+            f"• Inferred Suggested Action: {suggested_action}\n"
+        )
+        payload = {
+            "systemInstruction": {"parts": [{"text": sys_prompt}]},
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [{"text": user_prompt}],
+                }
+            ],
+            "generationConfig": {"temperature": 0.2},
+        }
+        resp = await call_gemini_api(payload=payload, timeout_seconds=15.0)
+        if resp and isinstance(resp, dict):
+            candidates = resp.get("candidates") or []
+            if candidates and isinstance(candidates, list):
+                content = candidates[0].get("content") or {}
+                parts = content.get("parts") or []
+                text_chunks = [p.get("text", "") for p in parts if isinstance(p, dict)]
+                llm_text = "".join(text_chunks).strip()
+                if llm_text:
+                    return llm_text, suggested_action
+    except Exception as le:
+        logger.debug(f"LLM email briefing synthesis failed: {le}")
+
+    return _build_fallback(), suggested_action
+

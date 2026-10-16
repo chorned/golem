@@ -42,32 +42,13 @@ DEFAULT_WIKI_DIR = Path(os.environ.get("GOLEM_WIKI_DIR") or os.path.expanduser("
 DEFAULT_CAPABILITIES_TEMPLATE = """# Fleet Capabilities & Affordances
 
 Institutional inventory of tools, CLIs, libraries, and package affordances available across fleet nodes.
-
-## hermes (localhost)
-- **Engine**: Antigravity CLI (`agy`) - Primary Hand worker
-- **Native Multimodal**: Built-in image generation (`generate_image`)
-- **Computer Use**: `macos-computer-use-kit` staged for AX UI automation & autonomous token refresh
-- **Homelab Ops**: Docker & storage administration (`hermes -z`)
-
-## desktop-pc (Windows)
-- **Compute**: High-VRAM NVIDIA GPU / CUDA execution
-- **Workloads**: PyTorch model training & local heavy benchmarks
-
-## personal-laptop (macOS)
-- **Role**: Carl's active workstation (strict ad-hoc execution only)
-
-## oci-machine (Oracle Cloud)
-- **Role**: Cloud VPS, WireGuard VPN, edge ingress, public services
+Teach Golem new capabilities and skills using `/learn` or conversational memory updates.
 """
 
 DEFAULT_TOPOLOGY_TEMPLATE = """# Fleet Topology & Host Mapping
 
 | Machine | Role | Host / Tailscale IP | Execution Mode |
 | :--- | :--- | :--- | :--- |
-| `hermes` | Chief of Staff & Dev Anchor | `localhost` (`/Users/hermes`) | Local `agy` CLI |
-| `desktop-pc` | Compute Grid (Windows) | `100.80.59.45` | Remote SSH / cmd runner |
-| `personal-laptop` | Active Workstation (Ad-hoc) | `100.96.38.5` | Remote SSH (3s timeout) |
-| `oci-machine` | Cloud Ops (VPS Linux) | `100.113.173.33` | Remote SSH (guardrailed) |
 """
 
 

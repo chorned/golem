@@ -36,6 +36,7 @@ AlertType = Union[
         "eye_telemetry",
         "nose_alert",
         "mouth_briefing",
+        "email_received",
     ],
     str,
 ]
@@ -99,6 +100,11 @@ class ShoulderTapAlert:
     def is_nose_alert(self) -> bool:
         """True if this alert signals a nose alert or health anomaly."""
         return self.alert_type in ("nose_alert", "health_anomaly")
+
+    @property
+    def is_email_received(self) -> bool:
+        """True if this alert signals an email received event."""
+        return self.alert_type == "email_received"
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert alert to serializable dictionary."""

@@ -117,6 +117,8 @@ class SessionRouter:
         channel: str = "",
         thread_ts: str = "",
         last_artifact: Optional[Dict[str, Any]] = None,
+        email_context: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
     ) -> None:
         """Record session mapping to disk registry for persistent thread continuity."""
         rec: Dict[str, Any] = {
@@ -132,6 +134,14 @@ class SessionRouter:
             rec["last_artifact"] = self.sessions[session_key].last_artifact
         elif session_key in self._registry and "last_artifact" in self._registry[session_key]:
             rec["last_artifact"] = self._registry[session_key]["last_artifact"]
+
+        if email_context:
+            rec["email_context"] = email_context
+        elif session_key in self.sessions and getattr(self.sessions[session_key], "email_context", None):
+            rec["email_context"] = self.sessions[session_key].email_context
+        elif session_key in self._registry and "email_context" in self._registry[session_key]:
+            rec["email_context"] = self._registry[session_key]["email_context"]
+
         self._registry[session_key] = rec
         self._save_registry()
 
@@ -293,6 +303,9 @@ class SessionRouter:
             if saved_last_artifact and isinstance(saved_last_artifact, dict):
                 session.last_artifact = saved_last_artifact
                 session.artifacts.append(saved_last_artifact)
+            saved_email_ctx = recorded.get("email_context")
+            if saved_email_ctx and isinstance(saved_email_ctx, dict):
+                session.email_context = saved_email_ctx
             session.state = SessionState.IDLE
             self.sessions[key] = session
             logger.info(f"Initialized new warm session '{key}' in cwd '{cwd}'")

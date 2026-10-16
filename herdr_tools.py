@@ -15,7 +15,7 @@ import asyncio
 import logging
 from typing import Dict, Any, Optional, List
 
-from golem.config import get_default_hand_worker
+from golem.config import get_default_hand_worker, get_user_home
 from golem.delegation import WorkerDelegator
 
 logger = logging.getLogger("Golem.HerdrTools")
@@ -236,9 +236,13 @@ async def herdr_spawn(
     raw_worker = worker.strip() if (worker is not None and isinstance(worker, str) and worker.strip()) else get_default_hand_worker()
     effective_worker = WorkerDelegator.validate_worker(raw_worker)
     effective_prompt = prompt or instructions
+    user_home = get_user_home()
     herdr_bin = os.environ.get("HERDR_BIN") or HERDR_BIN_DEFAULT
-    effective_cwd = os.path.realpath(os.path.abspath(os.path.expanduser(cwd)))
-    os.makedirs(effective_cwd, exist_ok=True)
+    effective_cwd = os.path.realpath(os.path.abspath(os.path.expanduser(cwd))) if cwd and cwd != "/Users/hermes" else user_home
+    try:
+        os.makedirs(effective_cwd, exist_ok=True)
+    except OSError:
+        pass
 
     branch_name: Optional[str] = None
     base_branch = "main"
@@ -490,9 +494,10 @@ async def run_command(
     Routes command execution through RunnerExecutor targeting Pane 2 (the runner pane)
     with a strict <= 3.0s yield timeout ceiling so the liaison is never blocked by host subprocesses.
     """
-    effective_cwd = os.path.realpath(os.path.abspath(os.path.expanduser(cwd))) if cwd else "/Users/hermes"
+    user_home = get_user_home()
+    effective_cwd = os.path.realpath(os.path.abspath(os.path.expanduser(cwd))) if cwd and cwd != "/Users/hermes" else user_home
     if not os.path.isdir(effective_cwd):
-        effective_cwd = "/Users/hermes"
+        effective_cwd = user_home
 
     sanitized_cmd = cmd
     if re.search(r"\b(?:ffmpeg|ffprobe)\b", sanitized_cmd):
@@ -501,7 +506,7 @@ async def run_command(
         if "-hide_banner" not in sanitized_cmd:
             sanitized_cmd = re.sub(r"\b(ffmpeg|ffprobe)\b", r"\1 -hide_banner", sanitized_cmd, count=1)
 
-    full_cmd = f"cd {effective_cwd} && {sanitized_cmd}" if effective_cwd != "/Users/hermes" else sanitized_cmd
+    full_cmd = f"cd {effective_cwd} && {sanitized_cmd}" if effective_cwd != user_home else sanitized_cmd
 
     from golem.execution.runner import RunnerExecutor
     executor = RunnerExecutor()
@@ -717,7 +722,7 @@ async def herdr_handoff(
     effective_worker = WorkerDelegator.validate_worker(raw_worker)
 
     prompt = task or instructions or ""
-    target_cwd = cwd or "/Users/hermes"
+    target_cwd = cwd or get_user_home()
     return await herdr_spawn(
         node=node,
         cwd=target_cwd,

@@ -330,6 +330,7 @@ class TestRepositorySecretScanning(unittest.TestCase):
         "aws_access_key": re.compile(r"AKIA[0-9A-Z]{16}"),
         "private_key": re.compile(r"-----BEGIN (?:[A-Z0-9_-]+ )?PRIVATE KEY(?: BLOCK)?-----"),
         "openai_key": re.compile(r"sk-[A-Za-z0-9_-]{32,}"),
+        "linear_api_key": re.compile(r"lin_api_[0-9A-Za-z]{30,}"),
     }
 
     def test_synthetic_secret_scanner_detection(self):
@@ -347,6 +348,7 @@ class TestRepositorySecretScanning(unittest.TestCase):
             ("".join(["-----BEGIN ", "OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAABlwAAAAdzc2gtcn\n-----END OPENSSH PRIVATE KEY-----"]), "private_key"),
             ("".join(["-----BEGIN ", "PGP PRIVATE KEY BLOCK-----\nVersion: GnuPG v2\n-----END PGP PRIVATE KEY BLOCK-----"]), "private_key"),
             ("".join(["sk-", "live_1234567890abcdefghijklmnopqrstuvwxyz123456"]), "openai_key"),
+            ("".join(["lin_api_", "1234567890abcdefghijklmnopqrstuvwxyz1234"]), "linear_api_key"),
         ]
         for sample, expected_type in samples:
             pat = self.PATTERNS[expected_type]

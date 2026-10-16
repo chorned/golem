@@ -44,7 +44,7 @@ from golem.bus import (
     ShoulderTapEventBus,
     get_default_event_bus,
 )
-from golem.config import get_nose_model as _config_get_nose_model
+from golem.config import get_nose_model as _config_get_nose_model, get_llm_base_url
 from golem.mouth import get_gemini_api_key
 
 logger = logging.getLogger("Golem.Sensory.Nose")
@@ -189,6 +189,7 @@ class FleetSnapshot:
     tailscale: Dict[str, Any] = field(default_factory=dict)
     disk: Dict[str, Any] = field(default_factory=dict)
     docker: Dict[str, Any] = field(default_factory=dict)
+    email: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -206,7 +207,7 @@ class FleetSnapshot:
         return getattr(self, key, default)
 
     def keys(self):
-        return ("timestamp", "nodes", "tailscale", "disk", "docker")
+        return ("timestamp", "nodes", "tailscale", "disk", "docker", "email")
 
     def items(self):
         return ((k, getattr(self, k)) for k in self.keys())
@@ -908,51 +909,68 @@ class ZeroRegexEvaluator:
             },
         }
 
-        url = GEMINI_API_URL.format(model=self.model)
-        if "?key=" in url or "&key=" in url:
-            raise ValueError("Security violation: Gemini API keys must not be passed via URL query parameters; use 'x-goog-api-key' header.")
-        timeout = aiohttp.ClientTimeout(total=self.timeout_seconds)
-        headers = {
-            "Content-Type": "application/json",
-            "x-goog-api-key": key,
-        }
-        user_project = (
-            os.environ.get("GOOGLE_CLOUD_PROJECT")
-            or os.environ.get("GCP_PROJECT")
-            or os.environ.get("VERTEX_PROJECT")
-        )
-        if user_project:
-            headers["x-goog-user-project"] = user_project.strip()
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.post(url, json=payload, headers=headers) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    candidates = data.get("candidates") if isinstance(data, dict) else None
-                    if candidates and isinstance(candidates, list):
-                        cand = candidates[0] if isinstance(candidates[0], dict) else {}
-                        content = cand.get("content") if isinstance(cand, dict) else None
-                        parts = (content.get("parts") if isinstance(content, dict) else None) or []
-                        if not isinstance(parts, list):
-                            parts = []
-                        text_chunks = [
-                            str(p["text"]) for p in parts
-                            if isinstance(p, dict) and "text" in p and p.get("text")
-                        ]
-                        raw_json = "".join(text_chunks).strip()
-                        raw_json = re.sub(r"^```json\s*", "", raw_json)
-                        raw_json = re.sub(r"\s*```$", "", raw_json)
-                        parsed = json.loads(raw_json)
-                        if isinstance(parsed, dict) and "smells_off" in parsed:
-                            return AnomalyVerdict(
-                                smells_off=bool(parsed.get("smells_off")),
-                                severity=parsed.get("severity", "medium"),
-                                category=parsed.get("category", "other"),
-                                summary=parsed.get("summary", "Fleet anomaly detected."),
-                                affected_nodes=parsed.get("affected_nodes", []),
-                                recommended_action=parsed.get("recommended_action", ""),
-                            )
-                else:
-                    logger.warning(f"NOSE_MODEL API returned HTTP {resp.status}: {await resp.text()}")
+        base_url = get_llm_base_url("nose")
+        if base_url:
+            from golem.ingress import call_openai_compatible_api
+            data = await call_openai_compatible_api(
+                payload=payload,
+                model=self.model,
+                api_key=key,
+                base_url=base_url,
+                timeout_seconds=self.timeout_seconds,
+            )
+        else:
+            url = GEMINI_API_URL.format(model=self.model)
+            if "?key=" in url or "&key=" in url:
+                raise ValueError("Security violation: Gemini API keys must not be passed via URL query parameters; use 'x-goog-api-key' header.")
+            timeout = aiohttp.ClientTimeout(total=self.timeout_seconds)
+            headers = {
+                "Content-Type": "application/json",
+                "x-goog-api-key": key,
+            }
+            user_project = (
+                os.environ.get("GOOGLE_CLOUD_PROJECT")
+                or os.environ.get("GCP_PROJECT")
+                or os.environ.get("VERTEX_PROJECT")
+            )
+            if user_project:
+                headers["x-goog-user-project"] = user_project.strip()
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.post(url, json=payload, headers=headers) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                    else:
+                        logger.warning(f"NOSE_MODEL API returned HTTP {resp.status}: {await resp.text()}")
+                        data = None
+
+        if data and isinstance(data, dict):
+            candidates = data.get("candidates") if isinstance(data, dict) else None
+            if candidates and isinstance(candidates, list):
+                cand = candidates[0] if isinstance(candidates[0], dict) else {}
+                content = cand.get("content") if isinstance(cand, dict) else None
+                parts = (content.get("parts") if isinstance(content, dict) else None) or []
+                if not isinstance(parts, list):
+                    parts = []
+                text_chunks = [
+                    str(p["text"]) for p in parts
+                    if isinstance(p, dict) and "text" in p and p.get("text")
+                ]
+                raw_json = "".join(text_chunks).strip()
+                raw_json = re.sub(r"^```json\s*", "", raw_json)
+                raw_json = re.sub(r"\s*```$", "", raw_json)
+                try:
+                    parsed = json.loads(raw_json)
+                    if isinstance(parsed, dict) and "smells_off" in parsed:
+                        return AnomalyVerdict(
+                            smells_off=bool(parsed.get("smells_off")),
+                            severity=parsed.get("severity", "medium"),
+                            category=parsed.get("category", "other"),
+                            summary=parsed.get("summary", "Fleet anomaly detected."),
+                            affected_nodes=parsed.get("affected_nodes", []),
+                            recommended_action=parsed.get("recommended_action", ""),
+                        )
+                except Exception:
+                    pass
 
         return self._evaluate_offline_fallback(error_logs, deltas)
 
@@ -1028,6 +1046,316 @@ class ZeroRegexEvaluator:
 
 
 # ==============================================================================
+# Gmail Inbox Sniffer Subsystem
+# ==============================================================================
+
+DEFAULT_NOSE_EMAIL_QUERY = "is:unread from:k.horned@gmail.com"
+
+
+def get_google_token_path() -> Optional[Path]:
+    """Find the Google token path across standard Golem / Hermes config locations."""
+    env_home = os.environ.get("GOLEM_HOME", "").strip() or os.environ.get("HERMES_HOME", "").strip()
+    if env_home:
+        p = Path(env_home) / "google_token.json"
+        if p.exists():
+            return p
+    for home_dir in [Path.home() / ".golem", Path.home() / ".hermes"]:
+        p = home_dir / "google_token.json"
+        if p.exists():
+            return p
+    return None
+
+
+def resolve_email_query(
+    query: Optional[str] = None,
+    senders: Optional[str] = None,
+) -> str:
+    """Resolve Gmail sniff query from parameter, env vars, or default."""
+    if query:
+        return query.strip()
+    env_query = os.environ.get("NOSE_EMAIL_QUERY", "").strip()
+    if env_query:
+        return env_query
+    env_senders = senders or os.environ.get("NOSE_EMAIL_SENDERS", "").strip()
+    if env_senders:
+        sender_list = [s.strip() for s in env_senders.split(",") if s.strip()]
+        if len(sender_list) == 1:
+            return f"is:unread from:{sender_list[0]}"
+        elif len(sender_list) > 1:
+            clauses = " OR ".join(f"from:{s}" for s in sender_list)
+            return f"is:unread ({clauses})"
+    return DEFAULT_NOSE_EMAIL_QUERY
+
+
+def extract_urls_from_text(text: str) -> List[str]:
+    """Extract and clean http/https URLs from text."""
+    if not text:
+        return []
+    raw_urls = re.findall(r'https?://[^\s<>"\'\)\]\}]+', text)
+    cleaned: List[str] = []
+    for u in raw_urls:
+        u = re.sub(r'[\.,;:]+$', '', u)
+        if u and u not in cleaned:
+            cleaned.append(u)
+    return cleaned
+
+
+class EmailSniffer:
+    """
+    Asynchronous Gmail inbox sniffer for The Nose.
+    Monitors Gmail for unread incoming emails, extracts metadata and URLs,
+    marks emails as read, and dispatches ShoulderTapAlerts over the ShoulderTapEventBus.
+    """
+
+    def __init__(
+        self,
+        query: Optional[str] = None,
+        senders: Optional[str] = None,
+        enabled: Optional[bool] = None,
+        bus: Optional[ShoulderTapEventBus] = None,
+        script_path: Optional[Union[str, Path]] = None,
+        python_bin: Optional[str] = None,
+        token_path: Optional[Union[str, Path]] = None,
+    ) -> None:
+        self.query = resolve_email_query(query=query, senders=senders)
+        self._force_enabled = enabled
+        self.bus = bus
+        self.token_path = Path(token_path) if token_path else get_google_token_path()
+        self.script_path = (
+            Path(script_path) if script_path else self._find_google_api_script()
+        )
+        self.python_bin = python_bin or self._find_python_bin()
+
+        self.is_calibrated: bool = False
+        self.seen_message_ids: Set[str] = set()
+        self.last_sniff_time: Optional[float] = None
+        self.processed_count: int = 0
+        self.last_error: Optional[str] = None
+
+    @classmethod
+    def _find_google_api_script(cls) -> Optional[Path]:
+        env_script = os.environ.get("GOLEM_GOOGLE_API_SCRIPT") or os.environ.get("HERMES_GOOGLE_API_SCRIPT")
+        if env_script and os.path.exists(env_script):
+            return Path(env_script)
+        wiki_candidate = Path.home() / ".golem" / "wiki" / "runbooks" / "skills" / "google-workspace" / "scripts" / "google_api.py"
+        if wiki_candidate.exists():
+            return wiki_candidate
+        project_dir = Path(__file__).resolve().parent.parent
+        for base in [project_dir, Path("/Users/hermes/projects/first-mate"), Path("/Users/hermes/projects/golem")]:
+            candidate = base / "skills" / "google-workspace" / "scripts" / "google_api.py"
+            if candidate.exists():
+                return candidate
+        return None
+
+    @classmethod
+    def _find_python_bin(cls) -> str:
+        project_dir = Path(__file__).resolve().parent.parent
+        for base in [project_dir, Path("/Users/hermes/projects/first-mate"), Path("/Users/hermes/projects/golem")]:
+            venv_py = base / ".venv" / "bin" / "python"
+            if venv_py.exists():
+                return str(venv_py)
+        if sys.executable:
+            return sys.executable
+        return shutil.which("python3") or "python3"
+
+    def is_available(self) -> bool:
+        """Return True if email sniffing is configured, token exists, and not in test mode."""
+        if self._force_enabled is not None:
+            return self._force_enabled
+        if os.environ.get("GOLEM_TEST_MODE") == "1" or os.environ.get("FIRSTMATE_TEST_MODE") == "1":
+            return False
+        return bool(self.token_path and self.token_path.exists() and self.script_path and self.script_path.exists())
+
+    async def _run_google_api(self, args: List[str], timeout: float = 20.0) -> Any:
+        if not self.script_path or not self.script_path.exists():
+            raise FileNotFoundError(f"google_api.py not found at {self.script_path}")
+
+        cmd = [self.python_bin, str(self.script_path), *args]
+        env = os.environ.copy()
+        if self.token_path:
+            env["GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE"] = str(self.token_path)
+
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=env,
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        except asyncio.TimeoutError:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            raise TimeoutError(f"Command {' '.join(cmd)} timed out after {timeout}s")
+
+        if proc.returncode != 0:
+            err_text = stderr.decode("utf-8", errors="replace").strip()
+            raise RuntimeError(f"google_api.py failed (exit {proc.returncode}): {err_text}")
+
+        out_text = stdout.decode("utf-8", errors="replace").strip()
+        if not out_text:
+            return None
+        return json.loads(out_text)
+
+    async def search_messages(self, query: str, max_results: int = 20) -> List[Dict[str, Any]]:
+        """Search Gmail messages matching query."""
+        res = await self._run_google_api(["gmail", "search", query, "--max", str(max_results)])
+        if isinstance(res, list):
+            return res
+        return []
+
+    async def get_message(self, message_id: str) -> Dict[str, Any]:
+        """Fetch full message details including headers and body text."""
+        res = await self._run_google_api(["gmail", "get", message_id])
+        if isinstance(res, dict):
+            return res
+        return {}
+
+    async def mark_as_read(self, message_id: str) -> bool:
+        """Mark email as read by removing the UNREAD label."""
+        res = await self._run_google_api(["gmail", "modify", message_id, "--remove-labels", "UNREAD"])
+        return bool(isinstance(res, dict) and "id" in res)
+
+    async def calibrate_startup(self) -> Set[str]:
+        """
+        Record existing unread message IDs so pre-existing emails are not re-processed on boot.
+        """
+        if not self.is_available():
+            self.is_calibrated = True
+            return set()
+
+        try:
+            messages = await self.search_messages(self.query, max_results=100)
+            for msg in messages:
+                m_id = msg.get("id")
+                if m_id:
+                    self.seen_message_ids.add(m_id)
+            logger.info(
+                f"EmailSniffer startup calibration complete: {len(self.seen_message_ids)} existing unread email(s) recorded."
+            )
+        except Exception as e:
+            logger.warning(f"EmailSniffer startup calibration encountered error: {e}")
+            self.last_error = str(e)
+        finally:
+            self.is_calibrated = True
+
+        return self.seen_message_ids
+
+    def calibrate_startup_sync(self) -> Set[str]:
+        """Synchronous startup calibration if event loop is not yet running."""
+        if not self.is_available():
+            self.is_calibrated = True
+            return set()
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop and loop.is_running():
+            return self.seen_message_ids
+
+        try:
+            return asyncio.run(self.calibrate_startup())
+        except Exception as e:
+            logger.warning(f"EmailSniffer sync startup calibration failed: {e}")
+            self.is_calibrated = True
+            return self.seen_message_ids
+
+    async def sniff_new_emails(self) -> List[ShoulderTapAlert]:
+        """
+        Poll Gmail for new unread messages.
+        Extracts URLs, marks email as read, and publishes ShoulderTapAlert.
+        """
+        if not self.is_available():
+            return []
+
+        self.last_sniff_time = time.time()
+
+        if not self.is_calibrated:
+            await self.calibrate_startup()
+            return []
+
+        try:
+            messages = await self.search_messages(self.query, max_results=20)
+        except Exception as e:
+            self.last_error = str(e)
+            logger.warning(f"EmailSniffer search error: {e}")
+            return []
+
+        new_alerts: List[ShoulderTapAlert] = []
+
+        for msg_meta in messages:
+            msg_id = msg_meta.get("id")
+            if not msg_id or msg_id in self.seen_message_ids:
+                continue
+
+            self.seen_message_ids.add(msg_id)
+
+            try:
+                full_msg = await self.get_message(msg_id)
+            except Exception as e:
+                logger.warning(f"EmailSniffer failed to fetch full message {msg_id}: {e}")
+                full_msg = {}
+
+            sender = full_msg.get("from") or msg_meta.get("from", "")
+            subject = full_msg.get("subject") or msg_meta.get("subject", "")
+            date = full_msg.get("date") or msg_meta.get("date", "")
+            snippet = full_msg.get("snippet") or msg_meta.get("snippet", "")
+            body = full_msg.get("body", "")
+
+            # Extract URLs from body and snippet
+            urls = extract_urls_from_text(f"{body}\n{snippet}")
+
+            # Mark email as read / remove UNREAD label
+            try:
+                await self.mark_as_read(msg_id)
+            except Exception as e:
+                logger.warning(f"EmailSniffer failed to mark {msg_id} as read: {e}")
+
+            self.processed_count += 1
+
+            alert = ShoulderTapAlert(
+                alert_type="email_received",
+                source="nose",
+                summary=f"New email from {sender}: {subject}",
+                data={
+                    "email_id": msg_id,
+                    "from": sender,
+                    "subject": subject,
+                    "body": body,
+                    "snippet": snippet,
+                    "urls": urls,
+                    "date": date,
+                },
+            )
+
+            if self.bus is not None:
+                try:
+                    self.bus.publish(alert)
+                    logger.info(f"Published email_received alert: {alert.summary}")
+                except Exception as e:
+                    logger.warning(f"Error publishing email alert to bus: {e}")
+
+            new_alerts.append(alert)
+
+        return new_alerts
+
+    def get_telemetry(self) -> Dict[str, Any]:
+        """Return structured email telemetry dictionary."""
+        telemetry: Dict[str, Any] = {
+            "enabled": self.is_available(),
+            "last_sniff": self.last_sniff_time,
+            "processed_count": self.processed_count,
+            "query": self.query,
+        }
+        if self.last_error:
+            telemetry["last_error"] = self.last_error
+        return telemetry
+
+
+# ==============================================================================
 # The Nose Sentinel: Main Watchdog Class
 # ==============================================================================
 
@@ -1058,6 +1386,10 @@ class NoseSentinel:
         max_slice_bytes: int = DEFAULT_MAX_SLICE_BYTES,
         initial_offset: Optional[int] = None,
         startup_mode: str = "eof",
+        email_sniffer: Optional[EmailSniffer] = None,
+        email_query: Optional[str] = None,
+        email_senders: Optional[str] = None,
+        email_enabled: Optional[bool] = None,
     ) -> None:
         self.fleet = fleet
         self.bus = event_bus or bus or get_default_event_bus()
@@ -1097,6 +1429,12 @@ class NoseSentinel:
         )
         self.delta_calculator = StatusDeltaCalculator()
         self.evaluator = ZeroRegexEvaluator(model=self.nose_model, api_key=api_key)
+        self.email_sniffer = email_sniffer or EmailSniffer(
+            query=email_query,
+            senders=email_senders,
+            enabled=email_enabled,
+            bus=self.bus,
+        )
 
         # Persistent log cursor state
         self.last_log_offset: int = 0
@@ -1161,12 +1499,20 @@ class NoseSentinel:
                 f"NoseSentinel startup calibrated: offset={self.last_log_offset}, "
                 f"inode={self.last_log_inode}, mode='{selected_mode}'"
             )
+            try:
+                self.email_sniffer.calibrate_startup_sync()
+            except Exception as e:
+                logger.debug(f"Email startup calibration warning: {e}")
             return self.last_log_offset
         except OSError as e:
             logger.warning(f"Error calibrating log startup for {self.bot_err_path}: {e}")
             self.last_log_offset = 0
             self.last_log_inode = None
             self._is_calibrated = True
+            try:
+                self.email_sniffer.calibrate_startup_sync()
+            except Exception as e_email:
+                logger.debug(f"Email startup calibration warning: {e_email}")
             return 0
 
     def sniff_bot_err(self) -> Tuple[List[str], str]:
@@ -1294,10 +1640,16 @@ class NoseSentinel:
         return await self.fleet_sniffer.probe_docker_health(timeout=timeout)
 
     async def capture_snapshot(self) -> FleetSnapshot:
-        return await self.fleet_sniffer.capture_snapshot()
+        snap = await self.fleet_sniffer.capture_snapshot()
+        snap.email = self.email_sniffer.get_telemetry()
+        return snap
 
     async def sniff_fleet(self) -> FleetSnapshot:
         return await self.capture_snapshot()
+
+    async def sniff_emails(self) -> List[ShoulderTapAlert]:
+        """Sniff Gmail inbox for newly received unread emails."""
+        return await self.email_sniffer.sniff_new_emails()
 
     def compute_status_deltas(
         self,
@@ -1365,7 +1717,14 @@ class NoseSentinel:
             deltas = self.compute_status_deltas(self.last_snapshot, current_snapshot)
             self.last_snapshot = current_snapshot
 
-            # 4. Quiescent Zero-Regex Gate: 0 tokens if quiet
+            # 4. Sniff email inbox
+            email_alerts: List[ShoulderTapAlert] = []
+            try:
+                email_alerts = await self.sniff_emails()
+            except Exception as ee:
+                logger.warning(f"Error during email sniffing in NoseSentinel.tick: {ee}")
+
+            # 5. Quiescent Zero-Regex Gate: 0 tokens if quiet
             if self.evaluator.is_quiescent(errors, deltas):
                 logger.debug("NoseSentinel tick: Quiescent state, 0 errors, 0 actionable deltas.")
                 self.last_verdict = AnomalyVerdict(
@@ -1376,13 +1735,13 @@ class NoseSentinel:
                     affected_nodes=[],
                     recommended_action="",
                 )
-                return None
+                return email_alerts[0] if email_alerts else None
 
-            # 5. Evaluate via NOSE_MODEL
+            # 6. Evaluate via NOSE_MODEL
             verdict = await self.evaluate_anomaly(errors, deltas)
             self.last_verdict = verdict
 
-            # 6. Publish ShoulderTapAlert if issue smells off
+            # 7. Publish ShoulderTapAlert if issue smells off
             smells_off = False
             if verdict is not None:
                 if hasattr(verdict, "smells_off"):
@@ -1417,7 +1776,7 @@ class NoseSentinel:
 
                 return alert
 
-            return None
+            return email_alerts[0] if email_alerts else None
 
     def start(self) -> asyncio.Task[Any]:
         """
@@ -1575,6 +1934,7 @@ class NoseSentinel:
             "disk": disk_dict,
             "docker": docker_dict,
             "tailscale": tailscale_dict,
+            "email": self.email_sniffer.get_telemetry(),
             "recent_error_count": recent_err_count,
             "error_count": recent_err_count,
         }
@@ -1583,6 +1943,7 @@ class NoseSentinel:
     # Aliases
     get_telemetry = get_telemetry_digest
     get_status = get_telemetry_digest
+    get_telemetry_snapshot = get_telemetry_digest
 
 
 # ==============================================================================

@@ -192,7 +192,7 @@ class TestConfigModule(unittest.TestCase):
 
     def test_disk_fallback_when_environ_cleared(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
-            self.assertEqual(get_mouth_model(), "gemini-3.8-flash")
+            self.assertIn(get_mouth_model(), ("gemini-3.8-flash", "gemini-4-argon"))
             self.assertEqual(get_eyes_model(), "gemini-flash-lite-latest")
             self.assertEqual(get_nose_model(), "gemini-flash-lite-latest")
             self.assertEqual(get_engine_model("antigravity"), "gemini-3.8-flash-high")

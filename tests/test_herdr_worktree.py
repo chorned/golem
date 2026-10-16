@@ -55,7 +55,9 @@ class TestHerdrWorktree(unittest.IsolatedAsyncioTestCase):
             }
         }
 
-        with patch.object(self.client, "run_cli", new_callable=AsyncMock, return_value=(0, json.dumps(mock_output), "")) as mock_run:
+        with patch.object(self.client, "run_cli", new_callable=AsyncMock, return_value=(0, json.dumps(mock_output), "")) as mock_run, \
+             patch("os.makedirs"), \
+             patch("os.path.isdir", return_value=True):
             info = await self.client.create_worktree(
                 branch_name="task-feature",
                 repo_path="/Users/hermes/projects/AGY"
@@ -197,7 +199,9 @@ class TestHerdrWorktree(unittest.IsolatedAsyncioTestCase):
             }
         }
 
-        with patch.object(self.client, "run_cli", new_callable=AsyncMock, return_value=(0, json.dumps(mock_output), "")) as mock_run:
+        with patch.object(self.client, "run_cli", new_callable=AsyncMock, return_value=(0, json.dumps(mock_output), "")) as mock_run, \
+             patch("os.makedirs"), \
+             patch("os.path.isdir", return_value=True):
             info = await self.client.create_worktree(
                 branch_name=branch_with_slash,
                 repo_path="/Users/hermes/projects/AGY"

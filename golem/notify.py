@@ -41,14 +41,21 @@ if not _is_test:
         if os.path.isfile(env_path):
             load_dotenv(dotenv_path=env_path)
 
+from golem.config import get_default_slack_channel
+
 # Default Recipients & Channels
 DEFAULT_SLACK_USER_ID = "UAM3FCV5L"
-DEFAULT_SLACK_CHANNEL = "D0C2J1HKNN7"  # Carl's 1:1 DM channel with Golem (@agy)
+DEFAULT_SLACK_CHANNEL = get_default_slack_channel()  # Carl's 1:1 DM channel with Golem (@agy)
 DEFAULT_IMESSAGE_CHAT_GUID = "iMessage;-;k.horned@gmail.com"
 DEFAULT_REGISTRY_PATH = os.path.expanduser("~/.gemini/golem/sessions_registry.json")
 
 
-def _record_slack_session_registry(channel: str, thread_ts: str, registry_path: Optional[str] = None) -> None:
+def _record_slack_session_registry(
+    channel: str,
+    thread_ts: str,
+    registry_path: Optional[str] = None,
+    email_context: Optional[Dict[str, Any]] = None,
+) -> None:
     """Register an outbound on-demand root message in Golem's session registry for thread continuity."""
     path = registry_path or os.environ.get("GOLEM_SESSIONS_REGISTRY_PATH") or os.environ.get("FIRSTMATE_SESSIONS_REGISTRY_PATH") or DEFAULT_REGISTRY_PATH
     try:
@@ -61,7 +68,7 @@ def _record_slack_session_registry(channel: str, thread_ts: str, registry_path: 
                 except Exception:
                     registry = {}
         key = f"{channel}:{thread_ts}"
-        registry[key] = {
+        rec_data: Dict[str, Any] = {
             "conversation_id": None,
             "target_cwd": os.getcwd(),
             "channel": channel,
@@ -69,6 +76,9 @@ def _record_slack_session_registry(channel: str, thread_ts: str, registry_path: 
             "last_active": time.time(),
             "is_on_demand": True,
         }
+        if email_context:
+            rec_data["email_context"] = email_context
+        registry[key] = rec_data
         tmp_path = f"{path}.tmp.{os.getpid()}"
         with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(registry, f, indent=2)
@@ -83,6 +93,7 @@ async def send_slack_message(
     channel: Optional[str] = None,
     thread_ts: Optional[str] = None,
     token: Optional[str] = None,
+    email_context: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Send an on-demand message to Carl in Slack.
@@ -92,6 +103,7 @@ async def send_slack_message(
         channel: Target Slack channel ID (defaults to Carl's DM: D0C2J1HKNN7).
         thread_ts: Optional parent message timestamp to reply in an existing thread.
         token: Optional Slack bot token (defaults to SLACK_BOT_TOKEN env).
+        email_context: Optional email metadata and analysis to attach for thread continuity.
         
     Returns:
         Dict containing ok, channel, ts, and raw response.
@@ -104,7 +116,7 @@ async def send_slack_message(
         logger.error("Missing SLACK_BOT_TOKEN for on-demand Slack messaging")
         return {"ok": False, "error": "Missing SLACK_BOT_TOKEN"}
 
-    target_channel = channel or os.environ.get("GOLEM_DEFAULT_CHANNEL") or DEFAULT_SLACK_CHANNEL
+    target_channel = channel or os.environ.get("GOLEM_DEFAULT_CHANNEL") or os.environ.get("DEFAULT_SLACK_CHANNEL") or get_default_slack_channel()
 
     try:
         from slack_sdk.web.async_client import AsyncWebClient
@@ -124,7 +136,7 @@ async def send_slack_message(
             # so Carl can reply directly to the thread and Golem immediately recognizes the context.
             effective_root_ts = thread_ts or msg_ts
             if effective_root_ts:
-                _record_slack_session_registry(target_channel, effective_root_ts)
+                _record_slack_session_registry(target_channel, effective_root_ts, email_context=email_context)
 
             return {
                 "ok": True,

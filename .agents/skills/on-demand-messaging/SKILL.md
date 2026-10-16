@@ -1,1 +1,0 @@
-/Users/hermes/.golem/wiki/runbooks/skills/on-demand-messaging.md

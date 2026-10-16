@@ -1062,6 +1062,7 @@ class IngressGateway:
         self.max_file_size_bytes = max_file_size_bytes
         self._file_locks: Dict[str, asyncio.Lock] = {}
         self._file_locks_guard = asyncio.Lock()
+        self._seen_email_ids: Set[str] = set()
         self.nose_sentinel = nose_sentinel
         self.webui_server = webui_server
         self.webui = webui_server
@@ -1077,6 +1078,7 @@ class IngressGateway:
 
         if self.bus is not None and hasattr(self.bus, "subscribe"):
             self.bus.subscribe(self._handle_health_anomaly_alert, alert_types=["health_anomaly"])
+            self.bus.subscribe(self._handle_email_received_alert, alert_types=["email_received"])
 
         # Ensure router shares the same event bus if not explicitly configured
         if self.router is not None and getattr(self.router, "bus", None) is None:
@@ -1166,6 +1168,9 @@ class IngressGateway:
         elif alert.alert_type == "health_anomaly":
             await self._handle_health_anomaly_alert(alert, client=client)
 
+        elif alert.alert_type == "email_received":
+            await self._handle_email_received_alert(alert, client=client)
+
     async def _handle_health_anomaly_alert(self, alert: Any, client: Optional[Any] = None) -> None:
         """Receive health anomaly alerts from The Nose Sentinel and deliver advisory to Carl."""
         summary = getattr(alert, "summary", "") or "Fleet Sentinel detected a health anomaly."
@@ -1174,6 +1179,150 @@ class IngressGateway:
         advisory_msg = f"👃 *Sentinel Advisory (Fleet Health):*\n{summary}"
         if client and channel:
             await self._post_response(client, channel, thread_ts, advisory_msg, is_imessage=False)
+
+    async def _handle_email_received_alert(self, alert: Any, client: Optional[Any] = None) -> None:
+        """
+        One-shot reactive Mouth handler for incoming email alerts.
+        Extracts email metadata and URLs, inspects URL contents (social media / web),
+        synthesizes an executive Chief of Staff briefing proposing an actionable follow-up,
+        posts to Carl's Slack DM, and warms the thread's SessionHandle.
+        """
+        if not alert:
+            return
+
+        try:
+            data = getattr(alert, "data", {}) or {}
+            email_id = str(data.get("email_id") or getattr(alert, "session_id", "") or "")
+            if email_id:
+                if email_id in self._seen_email_ids:
+                    logger.debug(f"Email {email_id} already processed by IngressGateway; skipping duplicate.")
+                    return
+                self._seen_email_ids.add(email_id)
+                if len(self._seen_email_ids) > 1000:
+                    self._seen_email_ids.pop()
+
+            sender = str(data.get("from") or "Carl").strip()
+            subject = str(data.get("subject") or "Incoming Email").strip()
+            body = str(data.get("body") or "").strip()
+            snippet = str(data.get("snippet") or "").strip()
+            raw_urls = data.get("urls") or []
+            if isinstance(raw_urls, str):
+                raw_urls = [raw_urls]
+            urls = [str(u).strip() for u in raw_urls if str(u).strip()]
+            date_str = str(data.get("date") or "").strip()
+
+            # Inspect and summarize extracted URLs (e.g. Instagram, Reddit, event links)
+            inspected_urls = []
+            if urls:
+                try:
+                    from golem.mouth import inspect_and_summarize_urls
+                    inspected_urls = await inspect_and_summarize_urls(urls[:3])
+                except Exception as ie:
+                    logger.warning(f"Error inspecting URLs for email {email_id}: {ie}")
+
+            # Synthesize Chief of Staff briefing + actionable follow-up proposal
+            try:
+                from golem.mouth import synthesize_email_briefing
+                briefing_text, suggested_action = await synthesize_email_briefing(
+                    sender=sender,
+                    subject=subject,
+                    body=body,
+                    snippet=snippet,
+                    urls=urls,
+                    inspected_urls=inspected_urls,
+                )
+            except Exception as se:
+                logger.warning(f"Error synthesizing email briefing: {se}")
+                briefing_text = f"📬 *Shared via Email from {sender}:* *{subject}*\n\n> {snippet or body[:200]}"
+                suggested_action = "Want me to create a calendar event or follow up on this for you?"
+
+            # Resolve target Slack channel (defaults to Carl's DM: D0C2J1HKNN7)
+            from golem.notify import DEFAULT_SLACK_CHANNEL, send_slack_message, _record_slack_session_registry
+
+            target_channel = (
+                getattr(alert, "channel", None)
+                or data.get("channel")
+                or os.environ.get("FIRSTMATE_DEFAULT_CHANNEL")
+                or os.environ.get("GOLEM_DEFAULT_CHANNEL")
+                or DEFAULT_SLACK_CHANNEL
+            )
+
+            email_ctx = {
+                "email_id": email_id,
+                "from": sender,
+                "subject": subject,
+                "body": body,
+                "snippet": snippet,
+                "urls": urls,
+                "date": date_str,
+                "briefing": briefing_text,
+                "suggested_action": suggested_action,
+                "inspected_urls": inspected_urls,
+            }
+
+            # Send message to Carl
+            msg_ts = None
+            if client and hasattr(client, "chat_postMessage"):
+                try:
+                    resp = client.chat_postMessage(channel=target_channel, text=briefing_text)
+                    if inspect.isawaitable(resp):
+                        resp = await resp
+                    msg_ts = resp.get("ts") if isinstance(resp, dict) else getattr(resp, "ts", None)
+                    if not msg_ts:
+                        msg_ts = f"{time.time():.6f}"
+                    _record_slack_session_registry(target_channel, msg_ts, email_context=email_ctx)
+                except Exception as ce:
+                    logger.warning(f"chat_postMessage via client failed: {ce}")
+
+            if not msg_ts:
+                try:
+                    notify_res = await send_slack_message(
+                        text=briefing_text,
+                        channel=target_channel,
+                        email_context=email_ctx,
+                    )
+                    if notify_res.get("ok"):
+                        msg_ts = notify_res.get("ts")
+                except Exception as ne:
+                    logger.warning(f"send_slack_message failed: {ne}")
+
+            if not msg_ts:
+                logger.error(f"Failed to post email briefing for email {email_id} to {target_channel}")
+                return
+
+            # Pre-warm SessionHandle in router so when Carl replies 'Yes' or follow-up in Slack,
+            # the session is warm and knows the original email, analysis, and suggested action.
+            if self.router is not None and msg_ts:
+                try:
+                    target_cwd = (
+                        getattr(self.router, "default_target_cwd", None)
+                        or getattr(self.router, "default_workspace", None)
+                        or os.getcwd()
+                    )
+                    session, _ = await self.router.get_or_create(
+                        channel=target_channel,
+                        thread_ts=msg_ts,
+                        target_cwd=target_cwd,
+                    )
+                    session.email_context = email_ctx
+                    session.last_response = briefing_text
+                    session.last_prompt = f"Incoming email received from {sender}: {subject}"
+                    session.touch()
+
+                    if hasattr(self.router, "record_session"):
+                        self.router.record_session(
+                            session_key=f"{target_channel}:{msg_ts}",
+                            conversation_id=getattr(session.adapter, "conversation_id", None) or f"{target_channel}:{msg_ts}",
+                            target_cwd=session.target_cwd,
+                            channel=target_channel,
+                            thread_ts=msg_ts,
+                            email_context=email_ctx,
+                        )
+                    logger.info(f"Warmed thread session '{target_channel}:{msg_ts}' with email context for '{subject}'")
+                except Exception as we:
+                    logger.warning(f"Failed to warm session for email {email_id}: {we}")
+        except Exception as exc:
+            logger.error(f"Unhandled error in _handle_email_received_alert: {exc}", exc_info=True)
 
     def _cache_staged_file(self, file_id: str, local_path: str) -> None:
         """Store staged file in bounded LRU cache."""
@@ -2187,7 +2336,7 @@ class IngressGateway:
 
             # Rehydrate thread history if message is in an active thread
             thread_context = ""
-            is_in_thread = is_imessage or bool(thread_ts and thread_ts != ts)
+            is_in_thread = bool(thread_ts and thread_ts != ts)
             if is_in_thread:
                 thread_context = await self._fetch_thread_context(
                     client, channel, thread_ts, exclude_ts=ts, is_imessage=is_imessage
@@ -2211,6 +2360,35 @@ class IngressGateway:
                         prompt_to_send = f"[Active Session Artifact: {art_name} at {art_p}]\n\n{prompt_to_send}"
                 except Exception as e:
                     logger.debug(f"Error hydrating artifact context: {e}")
+
+            # Hydrate session email context if session was primed from an incoming email alert
+            email_ctx = getattr(session, "email_context", None)
+            if email_ctx and isinstance(email_ctx, dict):
+                try:
+                    briefing_snippet = email_ctx.get("briefing", "")
+                    suggested_act = email_ctx.get("suggested_action", "")
+                    em_from = email_ctx.get("from", "Carl")
+                    em_sub = email_ctx.get("subject", "")
+                    em_urls = email_ctx.get("urls", [])
+                    urls_str = f" | URLs: {', '.join(em_urls)}" if em_urls else ""
+
+                    if not thread_context or (briefing_snippet and briefing_snippet[:50] not in thread_context):
+                        email_prompt_header = (
+                            f"[Context - Proactive Email Briefing Previously Sent to Carl:\n"
+                            f"From: {em_from} | Subject: {em_sub}{urls_str}\n"
+                            f"Briefing: {briefing_snippet}\n"
+                            f"Suggested Action: {suggested_act}\n"
+                            f"Note: Carl is replying in this thread to the above briefing.]"
+                        )
+                        prompt_to_send = f"{email_prompt_header}\n\n{prompt_to_send}" if prompt_to_send else email_prompt_header
+                    else:
+                        email_note = (
+                            f"[Context - Note: Carl is replying in thread to the briefing about '{em_sub}' ({em_from}). "
+                            f"Suggested Action was: '{suggested_act}']"
+                        )
+                        prompt_to_send = f"{email_note}\n\n{prompt_to_send}" if prompt_to_send else email_note
+                except Exception as e_err:
+                    logger.debug(f"Error hydrating email context into prompt: {e_err}")
 
             # Memory Proposal Interactive Confirmation
             if getattr(session, "pending_memory_proposal", None):

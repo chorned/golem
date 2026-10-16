@@ -145,6 +145,9 @@ class SessionHandle:
         # 4-Tier Institutional Memory Proposal (Stage 2 & 3)
         self.pending_memory_proposal: Optional[Any] = None
 
+        # Email context tracking (Proactive email briefings)
+        self.email_context: Optional[Dict[str, Any]] = None
+
     @property
     def driver(self) -> Any:
         """Alias for adapter representing the underlying BaseAgentDriver instance."""

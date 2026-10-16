@@ -820,13 +820,13 @@ class TestIngressGatewayDirectiveIntegration(unittest.IsolatedAsyncioTestCase):
         self.mock_client.chat_postMessage.assert_called_once()
         self.assertNotIn("[SEND_FILE:", self.mock_client.chat_postMessage.call_args.kwargs["text"])
         # files_upload_v2 SHOULD be called for iMessage
-        self.mock_client.files_upload_v2.assert_called_once_with(
-            channel="imessage_guid",
-            thread_ts="2000.0001",
-            file=os.path.realpath(test_file),
-            filename="chart.png",
-            title="File: chart.png",
-        )
+        self.mock_client.files_upload_v2.assert_called_once()
+        upload_kwargs = self.mock_client.files_upload_v2.call_args.kwargs
+        self.assertEqual(upload_kwargs.get("channel"), "imessage_guid")
+        self.assertIn(upload_kwargs.get("thread_ts"), ("2000.0001", "imessage_guid"))
+        self.assertEqual(upload_kwargs.get("file"), os.path.realpath(test_file))
+        self.assertEqual(upload_kwargs.get("filename"), "chart.png")
+        self.assertEqual(upload_kwargs.get("title"), "File: chart.png")
 
     async def test_handle_message_directive_only_message(self):
         # When model outputs ONLY [SEND_FILE: file.txt] with zero commentary

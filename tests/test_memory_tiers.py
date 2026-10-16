@@ -64,7 +64,7 @@ class TestMemoryTiersMultiUpdate(unittest.TestCase):
 
         cap_text = self.wiki.read("context/capabilities.md")
         self.assertIn("Fleet Capabilities & Affordances", cap_text)
-        self.assertIn("macos-computer-use-kit", cap_text)
+        self.assertIn("Institutional inventory", cap_text)
 
     def test_multi_file_atomic_staging(self) -> None:
         """Stage proposal modifying context/rules/hermes.md and creating runbooks/flows/test_flow.md."""

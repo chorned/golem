@@ -62,3 +62,9 @@ Thumbs.db
 # Agent metadata workspaces
 .agents/teamwork/
 .agents/wiki
+
+# Personal learned skills, rules, and episodic memory (users train their own Golem in ~/.golem/wiki/)
+skills/
+.agents/skills/
+.agents/rules/
+memory/

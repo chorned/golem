@@ -29,7 +29,7 @@ from typing import Dict, Any, Optional
 from golem.normalizer import strip_ansi
 from golem.bus import ShoulderTapAlert, ShoulderTapEventBus, get_default_event_bus
 from golem.mouth import get_gemini_api_key
-from golem.config import get_eyes_model as _config_get_eyes_model
+from golem.config import get_eyes_model as _config_get_eyes_model, get_llm_base_url
 
 logger = logging.getLogger("Golem.Sensory.Eyes")
 
@@ -365,48 +365,62 @@ class EyesTaskObserver:
                 }
             }
 
-            url = GEMINI_API_URL.format(model=self.model)
-            if "?key=" in url or "&key=" in url:
-                raise ValueError("Security violation: Gemini API keys must not be passed via URL query parameters; use 'x-goog-api-key' header.")
-            timeout = aiohttp.ClientTimeout(total=self.timeout_seconds)
-            headers = {
-                "Content-Type": "application/json",
-                "x-goog-api-key": key,
-            }
-            user_project = (
-                os.environ.get("GOOGLE_CLOUD_PROJECT")
-                or os.environ.get("GCP_PROJECT")
-                or os.environ.get("VERTEX_PROJECT")
-            )
-            if user_project:
-                headers["x-goog-user-project"] = user_project.strip()
-            async with aiohttp.ClientSession(timeout=timeout) as client_session:
-                async with client_session.post(url, json=payload, headers=headers) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        candidates = data.get("candidates") if isinstance(data, dict) else None
-                        if candidates and isinstance(candidates, list):
-                            cand = candidates[0] if isinstance(candidates[0], dict) else {}
-                            content = cand.get("content") if isinstance(cand, dict) else None
-                            parts = (content.get("parts") if isinstance(content, dict) else None) or []
-                            if not isinstance(parts, list):
-                                parts = []
-                            text_chunks = [
-                                str(p["text"]) for p in parts
-                                if isinstance(p, dict) and "text" in p and p.get("text")
-                            ]
-                            raw_json = "".join(text_chunks).strip()
-                            raw_json = re.sub(r"^```json\s*", "", raw_json)
-                            raw_json = re.sub(r"\s*```$", "", raw_json)
-                            if raw_json:
-                                try:
-                                    parsed = json.loads(raw_json)
-                                    if isinstance(parsed, dict) and "state" in parsed:
-                                        return parsed
-                                except Exception:
-                                    pass
-                    else:
-                        logger.warning(f"EYES_MODEL ({self.model}) returned HTTP {resp.status}: {await resp.text()}")
+            base_url = get_llm_base_url("eyes")
+            if base_url:
+                from golem.ingress import call_openai_compatible_api
+                data = await call_openai_compatible_api(
+                    payload=payload,
+                    model=self.model,
+                    api_key=key,
+                    base_url=base_url,
+                    timeout_seconds=self.timeout_seconds,
+                )
+            else:
+                url = GEMINI_API_URL.format(model=self.model)
+                if "?key=" in url or "&key=" in url:
+                    raise ValueError("Security violation: Gemini API keys must not be passed via URL query parameters; use 'x-goog-api-key' header.")
+                timeout = aiohttp.ClientTimeout(total=self.timeout_seconds)
+                headers = {
+                    "Content-Type": "application/json",
+                    "x-goog-api-key": key,
+                }
+                user_project = (
+                    os.environ.get("GOOGLE_CLOUD_PROJECT")
+                    or os.environ.get("GCP_PROJECT")
+                    or os.environ.get("VERTEX_PROJECT")
+                )
+                if user_project:
+                    headers["x-goog-user-project"] = user_project.strip()
+                async with aiohttp.ClientSession(timeout=timeout) as client_session:
+                    async with client_session.post(url, json=payload, headers=headers) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                        else:
+                            logger.warning(f"EYES_MODEL ({self.model}) returned HTTP {resp.status}: {await resp.text()}")
+                            data = None
+
+            if data and isinstance(data, dict):
+                candidates = data.get("candidates") if isinstance(data, dict) else None
+                if candidates and isinstance(candidates, list):
+                    cand = candidates[0] if isinstance(candidates[0], dict) else {}
+                    content = cand.get("content") if isinstance(cand, dict) else None
+                    parts = (content.get("parts") if isinstance(content, dict) else None) or []
+                    if not isinstance(parts, list):
+                        parts = []
+                    text_chunks = [
+                        str(p["text"]) for p in parts
+                        if isinstance(p, dict) and "text" in p and p.get("text")
+                    ]
+                    raw_json = "".join(text_chunks).strip()
+                    raw_json = re.sub(r"^```json\s*", "", raw_json)
+                    raw_json = re.sub(r"\s*```$", "", raw_json)
+                    if raw_json:
+                        try:
+                            parsed = json.loads(raw_json)
+                            if isinstance(parsed, dict) and "state" in parsed:
+                                return parsed
+                        except Exception:
+                            pass
         except Exception as e:
             logger.warning(f"EYES_MODEL classification failed; falling back to offline analysis: {e}")
 

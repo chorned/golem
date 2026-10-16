@@ -143,19 +143,33 @@ PROJECT_ROOT = HOST_DIR
 DEFAULT_TARGET_REPO = os.environ.get("DEFAULT_TARGET_REPO", "/Users/hermes/projects/AGY").strip()
 DAEMON_LABEL = (os.environ.get("GOLEM_DAEMON_LABEL") or "").strip() or (os.environ.get("DAEMON_LABEL") or "").strip() or "com.user.golem"
 
-env_file = os.path.join(HOST_DIR, ".env")
-if os.path.isfile(env_file):
-    load_dotenv(dotenv_path=env_file)
-else:
-    load_dotenv()
+is_test_mode = (
+    os.environ.get("GOLEM_TEST_MODE") == "1"
+    or os.environ.get("FIRSTMATE_TEST_MODE") == "1"
+    or "unittest" in sys.modules
+    or "pytest" in sys.modules
+    or any("unittest" in m for m in sys.modules)
+    or any("pytest" in m for m in sys.modules)
+)
+
+if not is_test_mode:
+    env_file = os.path.join(HOST_DIR, ".env")
+    if os.path.isfile(env_file):
+        load_dotenv(dotenv_path=env_file)
+    else:
+        load_dotenv()
 
 SLACK_APP_TOKEN = os.environ.get("SLACK_APP_TOKEN", "").strip()
 SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN", "").strip()
 SLACK_SIGNING_SECRET = os.environ.get("SLACK_SIGNING_SECRET", "").strip()
 
 if not SLACK_APP_TOKEN or not SLACK_BOT_TOKEN:
-    logger.critical("Missing SLACK_APP_TOKEN or SLACK_BOT_TOKEN. Check .env configuration.")
-    sys.exit(1)
+    if is_test_mode:
+        SLACK_APP_TOKEN = SLACK_APP_TOKEN or "xapp-1-test-token"
+        SLACK_BOT_TOKEN = SLACK_BOT_TOKEN or "xoxb-test-token"
+    else:
+        logger.critical("Missing SLACK_APP_TOKEN or SLACK_BOT_TOKEN. Check .env configuration.")
+        sys.exit(1)
 
 # ------------------------------------------------------------------------------
 # Herdr Runtime & Fleet Clients
