@@ -28,6 +28,8 @@ jobs:
       GOLEM_TEST_MODE: "1"
       FIRSTMATE_TEST_MODE: "1"
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+      LLM_API_KEY: "test-ci-key"
+      GEMINI_API_KEY: "test-ci-key"
     strategy:
       fail-fast: false
       matrix:
