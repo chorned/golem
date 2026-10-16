@@ -583,11 +583,7 @@ async def generate_mouth_response(
         except Exception:
             pass
 
-    # 2. Dynamic Mouth LLM call via Gemini Flash
-    key = api_key or get_gemini_api_key()
-    if not key:
-        return "⚠️ *Mouth Generation Error:* GEMINI_API_KEY is not configured. Cannot generate dynamic response."
-
+    # 2. Test environment fallback
     try:
         import aiohttp
 
@@ -604,6 +600,16 @@ async def generate_mouth_response(
             pid_str = f"PID {pid}" if pid else ""
             tail_str = f"\n> {tail.strip()}" if tail else ""
             return f"⚓ *Liaison Update:* Runner In Progress. Still on it! Background execution for `{command}` ({pid_str}) is running smoothly.{tail_str}"
+    except Exception:
+        pass
+
+    # 3. Dynamic Mouth LLM call via Gemini Flash
+    key = api_key or get_gemini_api_key()
+    if not key:
+        return "⚠️ *Mouth Generation Error:* GEMINI_API_KEY is not configured. Cannot generate dynamic response."
+
+    try:
+        import aiohttp
 
         pid = status_info.get("pid") or getattr(getattr(session, "active_execution", None), "pid", None) or "active"
         command = status_info.get("command") or getattr(getattr(session, "active_execution", None), "command", "") or ""
