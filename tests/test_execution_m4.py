@@ -164,6 +164,10 @@ class TestRunnerExecutor(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.executor = RunnerExecutor(herdr_bin="/usr/local/bin/herdr")
 
+    async def asyncTearDown(self):
+        if hasattr(self, "executor") and self.executor is not None:
+            await self.executor.async_close()
+
     async def test_fast_command_completion_within_yield_timeout(self):
         """Fast commands (< yield_timeout) return status='completed' with returncode and output."""
         with patch("asyncio.create_subprocess_exec") as mock_exec:

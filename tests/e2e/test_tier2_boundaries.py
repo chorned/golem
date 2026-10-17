@@ -637,6 +637,10 @@ class TestTier2ExecutionHarnessAndRunnerBoundaries(unittest.IsolatedAsyncioTestC
         self.executor = RunnerExecutor(herdr_bin="/usr/local/bin/herdr")
         self.observer = RunnerBufferObserver()
 
+    async def asyncTearDown(self):
+        if hasattr(self, "executor") and self.executor is not None:
+            await self.executor.async_close()
+
     async def test_runner_command_completed_right_at_yield_timeout_boundary(self):
         """Runner: Command completing right at yield_timeout boundary returns status='completed'."""
         with patch("asyncio.create_subprocess_exec") as mock_exec:

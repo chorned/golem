@@ -13,6 +13,7 @@ import os
 import re
 import json
 import shutil
+import inspect
 import asyncio
 import logging
 from typing import Dict, Any, Optional
@@ -57,6 +58,23 @@ class RunnerBufferObserver:
         self.herdr_bin = herdr_bin or shutil.which("herdr") or HERDR_BIN_DEFAULT
         self.herdr_client = herdr_client or (HerdrClient(herdr_bin=self.herdr_bin) if HerdrClient is not None else None)
 
+    @staticmethod
+    async def _safe_communicate(proc: Any, timeout: float) -> tuple[bytes, bytes]:
+        """Safely communicate with a subprocess, terminating and reaping it on cancellation or timeout."""
+        try:
+            return await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        except (asyncio.CancelledError, asyncio.TimeoutError):
+            try:
+                res = proc.kill()
+                if inspect.isawaitable(res):
+                    await res
+                w = proc.wait()
+                if inspect.isawaitable(w):
+                    await w
+            except Exception:
+                pass
+            raise
+
     async def read_buffer(
         self,
         pane: str = "runner",
@@ -67,36 +85,46 @@ class RunnerBufferObserver:
         Read the latest settled terminal buffer from the runner pane.
         First tries 'herdr agent read', falls back to 'herdr pane read'.
         """
-        # 1. Try herdr agent read
-        cmd_args = [self.herdr_bin, "agent", "read", pane, "--lines", str(lines)]
         try:
-            proc = await asyncio.create_subprocess_exec(
-                *cmd_args,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            stdout_bytes, _ = await asyncio.wait_for(proc.communicate(), timeout=5.0)
-            out = stdout_bytes.decode("utf-8", errors="replace").strip()
-            code = proc.returncode if proc.returncode is not None else 0
+            # 1. Try herdr agent read
+            cmd_args = [self.herdr_bin, "agent", "read", pane, "--lines", str(lines)]
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd_args,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                stdout_bytes, _ = await self._safe_communicate(proc, timeout=5.0)
+                out = stdout_bytes.decode("utf-8", errors="replace").strip()
+                code = proc.returncode if proc.returncode is not None else 0
 
-            if code == 0 and out and "error" not in out:
-                return out
+                if code == 0 and out and "error" not in out:
+                    return out
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                out = ""
 
             # 2. Fallback to herdr pane read
             pane_cmd = [self.herdr_bin, "pane", "read", pane, "--lines", str(lines)]
             if source:
                 pane_cmd.extend(["--source", source])
-            p_proc = await asyncio.create_subprocess_exec(
-                *pane_cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            p_stdout, _ = await asyncio.wait_for(p_proc.communicate(), timeout=5.0)
-            p_out = p_stdout.decode("utf-8", errors="replace").strip()
-            p_code = p_proc.returncode if p_proc.returncode is not None else 0
+            try:
+                p_proc = await asyncio.create_subprocess_exec(
+                    *pane_cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                p_stdout, _ = await self._safe_communicate(p_proc, timeout=5.0)
+                p_out = p_stdout.decode("utf-8", errors="replace").strip()
+                p_code = p_proc.returncode if p_proc.returncode is not None else 0
 
-            if p_code == 0 and p_out and "error" not in p_out:
-                return p_out
+                if p_code == 0 and p_out and "error" not in p_out:
+                    return p_out
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                p_out = ""
 
             # 3. Fallback: Resolve pane ID if pane was identified by label
             try:
@@ -105,7 +133,7 @@ class RunnerBufferObserver:
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE
                 )
-                l_out, _ = await asyncio.wait_for(list_proc.communicate(), timeout=3.0)
+                l_out, _ = await self._safe_communicate(list_proc, timeout=3.0)
                 if list_proc.returncode == 0 and l_out:
                     data = json.loads(l_out.decode("utf-8", errors="replace"))
                     panes_list = (data.get("result", {}) or {}).get("panes") or data.get("panes", [])
@@ -118,13 +146,17 @@ class RunnerBufferObserver:
                                     stdout=asyncio.subprocess.PIPE,
                                     stderr=asyncio.subprocess.PIPE
                                 )
-                                r_out, _ = await asyncio.wait_for(r_proc.communicate(), timeout=5.0)
+                                r_out, _ = await self._safe_communicate(r_proc, timeout=5.0)
                                 if r_proc.returncode == 0 and r_out:
                                     return r_out.decode("utf-8", errors="replace").strip()
+            except asyncio.CancelledError:
+                raise
             except Exception:
                 pass
 
             return p_out or out or f"No terminal output recorded for pane {pane}."
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             logger.error(f"Error in read_buffer for pane {pane}: {e}")
             return f"Error reading pane {pane}: {e}"

@@ -512,25 +512,28 @@ class TestDualPaneIsolationAndYieldSemantics(unittest.IsolatedAsyncioTestCase):
     async def test_runner_executor_3s_yield_preservation(self):
         """Commands taking > 3.0s yield non-blocking ExecutionHandle(status='running')."""
         executor = RunnerExecutor(herdr_bin="/usr/local/bin/herdr")
-        with patch("asyncio.create_subprocess_exec") as mock_exec:
-            mock_proc = AsyncMock()
-            mock_proc.pid = 98765
-            mock_proc.kill = MagicMock()
+        try:
+            with patch("asyncio.create_subprocess_exec") as mock_exec:
+                mock_proc = AsyncMock()
+                mock_proc.pid = 98765
+                mock_proc.kill = MagicMock()
 
-            async def slow_cmd():
-                await asyncio.sleep(3.5)
-                return b"Done\n", b""
+                async def slow_cmd():
+                    await asyncio.sleep(3.5)
+                    return b"Done\n", b""
 
-            mock_proc.communicate.side_effect = slow_cmd
-            mock_exec.return_value = mock_proc
+                mock_proc.communicate.side_effect = slow_cmd
+                mock_exec.return_value = mock_proc
 
-            start_t = time.time()
-            handle = await executor.run_command(pane="runner", command="sleep 10", yield_timeout=3.0)
-            elapsed = time.time() - start_t
+                start_t = time.time()
+                handle = await executor.run_command(pane="runner", command="sleep 10", yield_timeout=3.0)
+                elapsed = time.time() - start_t
 
-            self.assertEqual(handle.status, "running")
-            self.assertEqual(handle.pid, 98765)
-            self.assertLessEqual(elapsed, 3.2, "Yield must occur within ~3.0s ceiling")
+                self.assertEqual(handle.status, "running")
+                self.assertEqual(handle.pid, 98765)
+                self.assertLessEqual(elapsed, 3.2, "Yield must occur within ~3.0s ceiling")
+        finally:
+            await executor.async_close()
 
     async def test_agy_hand_execution_yield_nonblocking(self):
         """_execute_agy_hand yields non-blocking status='running' when command runs long."""

@@ -415,6 +415,10 @@ class TestTC02RunnerYieldCeilingE2E(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.executor = RunnerExecutor(herdr_bin="/usr/local/bin/herdr")
 
+    async def asyncTearDown(self) -> None:
+        if hasattr(self, "executor") and self.executor is not None:
+            await self.executor.async_close()
+
     async def test_e2e_long_running_command_yields_running_handle_under_ceiling(self) -> None:
         """
         TC-02.1: Command exceeding 3.0s yields ExecutionHandle(status='running', pid=...)

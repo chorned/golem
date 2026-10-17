@@ -480,24 +480,26 @@ class TestCombination2IngressDualPaneBufferObserver(unittest.IsolatedAsyncioTest
 
         # Now test RunnerExecutor yield timeout behavior
         executor = RunnerExecutor(herdr_client=mock_herdr)
+        try:
+            # Mock asyncio.create_subprocess_exec to simulate command exceeding yield timeout
+            mock_proc = AsyncMock()
+            # wait_for timing out during communicate
+            mock_proc.communicate.side_effect = asyncio.TimeoutError()
+            mock_proc.pid = 98765
 
-        # Mock asyncio.create_subprocess_exec to simulate command exceeding yield timeout
-        mock_proc = AsyncMock()
-        # wait_for timing out during communicate
-        mock_proc.communicate.side_effect = asyncio.TimeoutError()
-        mock_proc.pid = 98765
+            with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+                handle = await executor.run_command(
+                    pane="runner",
+                    command="rclone config reconnect remote:",
+                    yield_timeout=0.05
+                )
 
-        with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
-            handle = await executor.run_command(
-                pane="runner",
-                command="rclone config reconnect remote:",
-                yield_timeout=0.05
-            )
-
-        self.assertEqual(handle.status, "running")
-        self.assertEqual(handle.pane, "runner")
-        self.assertEqual(handle.pid, 98765)
-        self.assertIn("Liaison loop remains active", handle.message)
+            self.assertEqual(handle.status, "running")
+            self.assertEqual(handle.pane, "runner")
+            self.assertEqual(handle.pid, 98765)
+            self.assertIn("Liaison loop remains active", handle.message)
+        finally:
+            await executor.async_close()
 
     async def test_fast_command_completion_within_yield_timeout(self):
         """
@@ -505,22 +507,25 @@ class TestCombination2IngressDualPaneBufferObserver(unittest.IsolatedAsyncioTest
         return status='completed' handle with stdout populated.
         """
         executor = RunnerExecutor()
-        mock_proc = AsyncMock()
-        mock_proc.communicate.return_value = (b"All 159 tests passed.\n", b"")
-        mock_proc.returncode = 0
-        mock_proc.pid = 11223
+        try:
+            mock_proc = AsyncMock()
+            mock_proc.communicate.return_value = (b"All 159 tests passed.\n", b"")
+            mock_proc.returncode = 0
+            mock_proc.pid = 11223
 
-        with patch("asyncio.create_subprocess_exec", return_value=mock_proc), \
-             patch.object(executor, "_get_pane_foreground_pid", return_value=None):
-            handle = await executor.run_command(
-                pane="runner",
-                command="pytest tests",
-                yield_timeout=3.0
-            )
+            with patch("asyncio.create_subprocess_exec", return_value=mock_proc), \
+                 patch.object(executor, "_get_pane_foreground_pid", return_value=None):
+                handle = await executor.run_command(
+                    pane="runner",
+                    command="pytest tests",
+                    yield_timeout=3.0
+                )
 
-        self.assertEqual(handle.status, "completed")
-        self.assertEqual(handle.returncode, 0)
-        self.assertIn("All 159 tests passed.", handle.stdout)
+            self.assertEqual(handle.status, "completed")
+            self.assertEqual(handle.returncode, 0)
+            self.assertIn("All 159 tests passed.", handle.stdout)
+        finally:
+            await executor.async_close()
 
     async def test_buffer_observer_detects_oauth_url_and_surfaces_blocker(self):
         """

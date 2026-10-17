@@ -12,6 +12,7 @@ import re
 import json
 import time
 import shutil
+import inspect
 import asyncio
 import logging
 from dataclasses import dataclass, field
@@ -387,6 +388,43 @@ class RunnerExecutor:
             except Exception:
                 pass
             self._bus_unsubscribe = None
+
+        if hasattr(self, "_active_observers"):
+            for obs in list(self._active_observers.values()):
+                try:
+                    if hasattr(obs, "stop_monitoring_sync"):
+                        obs.stop_monitoring_sync()
+                    elif hasattr(obs, "stop_sync"):
+                        obs.stop_sync()
+                except Exception:
+                    pass
+            self._active_observers.clear()
+
+    async def async_close(self) -> None:
+        """Asynchronously stop all active observers and clean up resources."""
+        if hasattr(self, "_bus_unsubscribe") and callable(self._bus_unsubscribe):
+            try:
+                self._bus_unsubscribe()
+            except Exception:
+                pass
+            self._bus_unsubscribe = None
+
+        if hasattr(self, "_active_observers"):
+            for obs in list(self._active_observers.values()):
+                try:
+                    if hasattr(obs, "stop_monitoring"):
+                        await obs.stop_monitoring()
+                    elif hasattr(obs, "stop"):
+                        await obs.stop()
+                except Exception:
+                    pass
+            self._active_observers.clear()
+
+    def __del__(self) -> None:
+        try:
+            self.close()
+        except Exception:
+            pass
 
     async def verify_terminal_id(
         self,
@@ -986,8 +1024,12 @@ class RunnerExecutor:
                 out_b, _ = await asyncio.wait_for(proc.communicate(), timeout=effective_timeout)
             except asyncio.TimeoutError:
                 try:
-                    proc.kill()
-                    await proc.wait()
+                    res = proc.kill()
+                    if inspect.isawaitable(res):
+                        await res
+                    w = proc.wait()
+                    if inspect.isawaitable(w):
+                        await w
                 except Exception:
                     pass
                 if last_pid is not None:
