@@ -296,11 +296,29 @@ class TestBlueBubblesWebhookServer(AioHTTPTestCase):
             "type": "new-message",
             "data": {
                 "text": "Order salmon from HEB",
-                "handle": {"address": "+19176010025"},
-                "chats": [{"guid": "iMessage;-;+19176010025"}]
+                "handle": {"address": "+15550199999"},
+                "chats": [{"guid": "iMessage;-;+15550199999"}]
             }
         }
-        resp = await self.client.post("/bluebubbles-webhook?password=test_secret_password", json=payload)
+        import tempfile
+        with tempfile.NamedTemporaryFile("w", suffix=".env", delete=False) as tf:
+            tf.write("BLUEBUBBLES_ALLOWED_HANDLES=k.horned@gmail.com,+15550199999\n")
+            temp_env_path = tf.name
+        try:
+            orig_reload = self.transport._reload_allowed_handles_from_env
+            def mock_reload():
+                with open(temp_env_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        if line.startswith("BLUEBUBBLES_ALLOWED_HANDLES="):
+                            for h in line.split("=", 1)[1].strip().split(","):
+                                if h.strip():
+                                    self.transport.allowed_handles.add(h.strip().lower())
+            self.transport._reload_allowed_handles_from_env = mock_reload
+            resp = await self.client.post("/bluebubbles-webhook?password=test_secret_password", json=payload)
+        finally:
+            self.transport._reload_allowed_handles_from_env = orig_reload
+            if os.path.exists(temp_env_path):
+                os.unlink(temp_env_path)
         self.assertEqual(resp.status, 200)
         res_json = await resp.json()
         self.assertEqual(res_json.get("status"), "ok")
@@ -308,8 +326,8 @@ class TestBlueBubblesWebhookServer(AioHTTPTestCase):
         await asyncio.sleep(0.05)
         self.assertEqual(len(self.dispatched_messages), 1)
         dispatched = self.dispatched_messages[0]
-        self.assertEqual(dispatched["sender"], "+19176010025")
-        self.assertEqual(dispatched["chat_guid"], "iMessage;-;+19176010025")
+        self.assertEqual(dispatched["sender"], "+15550199999")
+        self.assertEqual(dispatched["chat_guid"], "iMessage;-;+15550199999")
         self.assertEqual(dispatched["text"], "Order salmon from HEB")
 
     @unittest_run_loop
