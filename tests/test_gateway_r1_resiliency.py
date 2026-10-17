@@ -122,7 +122,14 @@ class TestGatewayR1Resiliency(unittest.IsolatedAsyncioTestCase):
         os.environ["GEMINI_API_KEY"] = "fake-test-key-for-unit-testing"
 
     async def asyncTearDown(self) -> None:
-        await self.router.stop_reaper()
+        if hasattr(self, "router"):
+            for s in list(self.router.sessions.values()):
+                try:
+                    await s.close()
+                except Exception:
+                    pass
+            self.router.sessions.clear()
+            await self.router.stop_reaper()
         os.environ.pop("GEMINI_API_KEY", None)
 
     # --------------------------------------------------------------------------

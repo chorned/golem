@@ -40,17 +40,22 @@ def _resolve_default_agy_bin() -> str:
     env_bin = os.environ.get("GOLEM_AGY_BIN")
     if env_bin and os.path.exists(env_bin):
         return env_bin
+    repo_mock = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        "tests",
+        "mock_agy_proc.py",
+    )
+    if (
+        os.environ.get("GOLEM_TEST_MODE") == "1"
+        or os.environ.get("FIRSTMATE_TEST_MODE") == "1"
+    ) and os.path.exists(repo_mock):
+        return repo_mock
     which_bin = shutil.which("agy")
     if which_bin:
         return which_bin
     hermes_bin = "/Users/hermes/.local/bin/agy"
     if os.path.exists(hermes_bin) and sys.platform == "darwin":
         return hermes_bin
-    repo_mock = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-        "tests",
-        "mock_agy_proc.py",
-    )
     if os.path.exists(repo_mock):
         return repo_mock
     return hermes_bin

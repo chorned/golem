@@ -384,25 +384,28 @@ async def test_backstage_dispatch_binds_subtask_and_settles():
 @pytest.mark.asyncio
 async def test_runner_settle_command_triggers_subtask_settlement():
     executor = RunnerExecutor()
-    th = TaskHandle(
-        status="completed",
-        pane="runner",
-        opaque_coordinate="w1:p2",
-        command="python3 generate_ep1.py",
-        linear_issue_id="c-101",
-        stdout="Episode 1 successfully generated.",
-    )
+    try:
+        th = TaskHandle(
+            status="completed",
+            pane="runner",
+            opaque_coordinate="w1:p2",
+            command="python3 generate_ep1.py",
+            linear_issue_id="c-101",
+            stdout="Episode 1 successfully generated.",
+        )
 
-    with patch("golem.linear_bridge.LinearBridge.settle_subtask_and_evaluate_parent", new_callable=AsyncMock) as mock_settle:
-        mock_settle.return_value = {"parent_settled": True, "parent_key": "CHO-100"}
+        with patch("golem.linear_bridge.LinearBridge.settle_subtask_and_evaluate_parent", new_callable=AsyncMock) as mock_settle:
+            mock_settle.return_value = {"parent_settled": True, "parent_key": "CHO-100"}
 
-        await executor.settle_command(pane="runner", returncode=0, task_handle=th)
-        # Give asyncio background task a brief tick to run
-        await asyncio.sleep(0.05)
+            await executor.settle_command(pane="runner", returncode=0, task_handle=th)
+            # Give asyncio background task a brief tick to run
+            await asyncio.sleep(0.05)
 
-        mock_settle.assert_called_once()
-        call_args = mock_settle.call_args[1]
-        assert call_args["subtask_id"] == "c-101"
+            mock_settle.assert_called_once()
+            call_args = mock_settle.call_args[1]
+            assert call_args["subtask_id"] == "c-101"
+    finally:
+        await executor.async_close()
         assert "Episode 1 successfully generated." in call_args["settlement_receipt"]
         assert "**Exit Code:** `0`" in call_args["settlement_receipt"]
 

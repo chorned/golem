@@ -715,6 +715,29 @@ class BlueBubblesTransport:
         self._last_private_api_check: float = 0.0
         self._seen_guids: Dict[str, float] = {}
 
+    def _reload_allowed_handles_from_env(self) -> None:
+        """Dynamically check .env on disk for newly added allowed handles."""
+        env_candidates = [
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"),
+            "/Users/hermes/projects/golem/.env",
+            "/Users/hermes/projects/first-mate/.env",
+            os.path.expanduser("~/.hermes/.env"),
+        ]
+        for ep in env_candidates:
+            if os.path.isfile(ep):
+                try:
+                    with open(ep, "r", encoding="utf-8") as f:
+                        for line in f:
+                            line = line.strip()
+                            if line.startswith("BLUEBUBBLES_ALLOWED_HANDLES="):
+                                val = line.split("=", 1)[1].strip().strip("\"'")
+                                for h in val.split(","):
+                                    if h.strip():
+                                        self.allowed_handles.add(h.strip().lower())
+                                return
+                except Exception:
+                    pass
+
     def _api_url(self, path: str) -> str:
         sep = "&" if "?" in path else "?"
         return f"{self.server_url}{path}{sep}password={quote(self.password, safe='')}"
@@ -736,6 +759,11 @@ class BlueBubblesTransport:
             and session_loop is not None
             and session_loop is not loop
         )
+        if getattr(self, "_closing", False):
+            if self._session is not None and not getattr(self._session, "closed", False):
+                return self._session
+            raise RuntimeError("BlueBubblesTransport is closing")
+
         if (
             self._session is None
             or self._session.closed
@@ -1285,9 +1313,12 @@ class BlueBubblesTransport:
 
         # 6. Whitelist verification
         if self.allowed_handles:
-            if not sender or sender.lower() not in self.allowed_handles:
-                logger.warning(f"Unauthorized BlueBubbles sender '{sender}' rejected (allowed: {self.allowed_handles})")
-                return web.json_response({"status": "ignored", "reason": "unauthorized_sender"}, status=403)
+            sender_norm = sender.lower() if sender else ""
+            if not sender_norm or sender_norm not in self.allowed_handles:
+                self._reload_allowed_handles_from_env()
+                if not sender_norm or sender_norm not in self.allowed_handles:
+                    logger.warning(f"Unauthorized BlueBubbles sender '{sender}' rejected (allowed: {self.allowed_handles})")
+                    return web.json_response({"status": "ignored", "reason": "unauthorized_sender"}, status=403)
 
 
         # 7. Extract message text
@@ -1368,12 +1399,23 @@ class BlueBubblesTransport:
 
     async def stop(self) -> None:
         """Deregister webhook, shut down webhook server, and close HTTP session."""
-        try:
-            await self.unregister_webhook()
-        except Exception as e:
-            logger.debug(f"Error unregistering webhook: {e}")
+        self._closing = True
+        for task in list(self._background_tasks):
+            if not task.done():
+                task.cancel()
+        if self._background_tasks:
+            try:
+                await asyncio.gather(*self._background_tasks, return_exceptions=True)
+            except Exception:
+                pass
+        self._background_tasks.clear()
 
         if self._app_runner:
+            try:
+                await self.unregister_webhook()
+            except Exception as e:
+                logger.debug(f"Error unregistering webhook: {e}")
+
             await self._app_runner.cleanup()
             self._app_runner = None
 

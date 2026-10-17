@@ -114,11 +114,36 @@ class MockSlackClient:
         return {"ok": True}
 
 
+class MockHeadlessAdapter:
+    """Mock adapter recording received turns and yielding events."""
+
+    def __init__(self, cwd: str = "/tmp") -> None:
+        self.cwd = cwd
+        self.turns_received: List[str] = []
+        self.started = True
+        self.stopped = False
+
+    async def start(self) -> None:
+        self.started = True
+
+    async def stop(self) -> None:
+        self.stopped = True
+
+    async def send_turn(self, prompt: str) -> AsyncGenerator[AgentEvent, None]:
+        self.turns_received.append(prompt)
+        yield StatusUpdateEvent(status="working")
+        yield TextDeltaEvent(text_delta=f"*Response to:* {prompt}")
+        yield FinishEvent(response=f"*Response to:* {prompt}", status="SUCCESS")
+
+
 class TestGatewayR2SSEWiring(unittest.IsolatedAsyncioTestCase):
     """Targeted tests for Milestone 2 backstage SSE stream wiring in IngressGateway."""
 
     async def asyncSetUp(self) -> None:
-        self.router = SessionRouter(registry_path="/tmp/test_golem_r2_registry.json")
+        self.router = SessionRouter(
+            registry_path="/tmp/test_golem_r2_registry.json",
+            adapter_factory=lambda cwd: MockHeadlessAdapter(cwd=cwd),
+        )
         self.client = MockSlackClient()
         self.webui = MockWebUIServer()
         self.gateway = IngressGateway(router=self.router, webui_server=self.webui)
@@ -128,6 +153,12 @@ class TestGatewayR2SSEWiring(unittest.IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self) -> None:
         if hasattr(self, "router"):
+            for s in list(self.router.sessions.values()):
+                try:
+                    await s.close()
+                except Exception:
+                    pass
+            self.router.sessions.clear()
             await self.router.teardown(channel="C_TEST", thread_ts="T_100")
             await self.router.stop_reaper()
 

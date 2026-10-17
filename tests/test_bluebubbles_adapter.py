@@ -216,11 +216,20 @@ class TestBlueBubblesWebhookServer(AioHTTPTestCase):
             allowed_handles="k.horned@gmail.com,carl@example.com",
             message_handler=mock_handler
         )
+        self.transport.set_chat_read = AsyncMock(return_value=None)
+        self.transport.send_reaction = AsyncMock(return_value=None)
+        self.transport.set_typing_indicator = AsyncMock(return_value=None)
 
         app_instance = web.Application()
         app_instance.router.add_get("/health", lambda _: web.Response(text="ok"))
         app_instance.router.add_post(self.transport.webhook_path, self.transport._handle_webhook)
         return app_instance
+
+    def tearDown(self):
+        if hasattr(self, "transport") and self.transport is not None:
+            if hasattr(self, "loop") and self.loop and not self.loop.is_closed():
+                self.loop.run_until_complete(self.transport.stop())
+        super().tearDown()
 
     @unittest_run_loop
     async def test_health_check(self):
@@ -280,6 +289,28 @@ class TestBlueBubblesWebhookServer(AioHTTPTestCase):
         self.assertEqual(dispatched["sender"], "k.horned@gmail.com")
         self.assertEqual(dispatched["chat_guid"], "iMessage;-;k.horned@gmail.com")
         self.assertEqual(dispatched["text"], "Hello AGY from authorized handle")
+
+    @unittest_run_loop
+    async def test_webhook_whitelist_allowed_phone_number(self):
+        payload = {
+            "type": "new-message",
+            "data": {
+                "text": "Order salmon from HEB",
+                "handle": {"address": "+19176010025"},
+                "chats": [{"guid": "iMessage;-;+19176010025"}]
+            }
+        }
+        resp = await self.client.post("/bluebubbles-webhook?password=test_secret_password", json=payload)
+        self.assertEqual(resp.status, 200)
+        res_json = await resp.json()
+        self.assertEqual(res_json.get("status"), "ok")
+
+        await asyncio.sleep(0.05)
+        self.assertEqual(len(self.dispatched_messages), 1)
+        dispatched = self.dispatched_messages[0]
+        self.assertEqual(dispatched["sender"], "+19176010025")
+        self.assertEqual(dispatched["chat_guid"], "iMessage;-;+19176010025")
+        self.assertEqual(dispatched["text"], "Order salmon from HEB")
 
     @unittest_run_loop
     async def test_webhook_ignore_from_me(self):

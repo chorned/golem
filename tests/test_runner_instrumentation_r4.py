@@ -102,11 +102,8 @@ class BaseRunnerInstrumentationTest(unittest.IsolatedAsyncioTestCase):
         self.runner_logger.removeHandler(self.log_handler)
         self.log_handler.clear()
         # Clean up any lingering active observers
-        if hasattr(self.executor, "_active_observers"):
-            for pane, obs in list(self.executor._active_observers.items()):
-                if hasattr(obs, "stop_monitoring"):
-                    await obs.stop_monitoring()
-            self.executor._active_observers.clear()
+        if hasattr(self, "executor") and self.executor is not None:
+            await self.executor.async_close()
         self.bus.clear()
 
 

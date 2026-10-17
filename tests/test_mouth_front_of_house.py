@@ -549,11 +549,19 @@ class TestShoulderTapBlockerWakesMouth(unittest.IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self) -> None:
         self.bus = ShoulderTapEventBus()
-        self.router = SessionRouter(default_target_cwd=PROJECT_DIR)
+        self.router = SessionRouter(default_target_cwd=PROJECT_DIR, adapter_factory=make_mock_adapter)
         self.gateway = IngressGateway(router=self.router, bot_user_id="U_FIRSTMATE", sensory_bus=self.bus)
         self.client = MockSlackClient()
 
     async def asyncTearDown(self) -> None:
+        if hasattr(self, "router"):
+            for s in list(self.router.sessions.values()):
+                try:
+                    await s.close()
+                except Exception:
+                    pass
+            self.router.sessions.clear()
+            await self.router.stop_reaper()
         self.bus.clear()
 
     async def test_eyes_blocker_alert_surfaces_action_card_out_of_band(self) -> None:

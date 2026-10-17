@@ -10,6 +10,7 @@ import sys
 import os
 import json
 import time
+import select
 
 def main():
     mode = os.environ.get("MOCK_AGY_MODE", "normal")
@@ -30,8 +31,14 @@ def main():
     if mode == "init_only_exit":
         sys.exit(0)
 
-    # Turn loop
+    # Turn loop with safety idle timeout so orphaned test processes never hang CI
     while True:
+        try:
+            ready, _, _ = select.select([sys.stdin], [], [], 15.0)
+            if not ready:
+                break
+        except Exception:
+            pass
         line = sys.stdin.readline()
         if not line:
             break
@@ -44,7 +51,7 @@ def main():
         prompt = req.get("message", {}).get("content", "")
 
         if mode == "crash_after_first_delta":
-            # Output one delta then sleep forever until killed
+            # Output one delta then sleep briefly until killed by test
             delta = {
                 "event": "step_update",
                 "step_update": {
@@ -56,8 +63,9 @@ def main():
             }
             sys.stdout.write(json.dumps(delta) + "\n")
             sys.stdout.flush()
-            while True:
+            for _ in range(15):
                 time.sleep(1.0)
+            sys.exit(1)
 
         elif mode == "exit_nonzero_mid_turn":
             delta = {

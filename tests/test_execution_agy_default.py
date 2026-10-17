@@ -573,28 +573,36 @@ class TestPTYConcurrencyAndDeadlockStress(unittest.IsolatedAsyncioTestCase):
     async def test_concurrent_multi_pane_worker_runs_zero_deadlock(self):
         """Simulates simultaneous concurrent worker runs across multiple panes without deadlock."""
         num_workers = 10
-        tasks = []
+
+        async def fake_exec(*args, **kwargs):
+            # Extract worker_id from command string if present
+            cmd_str = " ".join(str(a) for a in args)
+            wid = 0
+            for i in range(num_workers):
+                if f"worker-{i}" in cmd_str:
+                    wid = i
+                    break
+            mock_proc = AsyncMock()
+            mock_proc.returncode = 0
+            mock_proc.pid = 1000 + wid
+            mock_proc.communicate.return_value = (f"Worker {wid} completed\n".encode(), b"")
+            return mock_proc
 
         async def simulate_worker_turn(worker_id: int):
-            # Each worker runs a task through RunnerExecutor mock
             executor = RunnerExecutor(herdr_bin="/usr/local/bin/herdr")
-            with patch("asyncio.create_subprocess_exec") as mock_exec:
-                mock_proc = AsyncMock()
-                mock_proc.returncode = 0
-                mock_proc.pid = 1000 + worker_id
-                mock_proc.communicate.return_value = (f"Worker {worker_id} completed\n".encode(), b"")
-                mock_exec.return_value = mock_proc
-
-                handle = await executor.run_command(
+            try:
+                return await executor.run_command(
                     pane=f"runner-{worker_id}",
                     command=f"echo worker-{worker_id}",
                     yield_timeout=3.0
                 )
-                return handle
+            finally:
+                await executor.async_close()
 
-        # Launch all 10 concurrent worker subshells simultaneously
+        # Launch all 10 concurrent worker subshells simultaneously under a single outer patch
         start_t = time.time()
-        results = await asyncio.gather(*[simulate_worker_turn(i) for i in range(num_workers)])
+        with patch("asyncio.create_subprocess_exec", side_effect=fake_exec):
+            results = await asyncio.gather(*[simulate_worker_turn(i) for i in range(num_workers)])
         elapsed = time.time() - start_t
 
         self.assertEqual(len(results), num_workers)
@@ -606,23 +614,26 @@ class TestPTYConcurrencyAndDeadlockStress(unittest.IsolatedAsyncioTestCase):
     async def test_exit_code_fidelity_untruncated(self):
         """Ensures non-zero exit codes (1, 2, 127) propagate accurately without truncation."""
         executor = RunnerExecutor(herdr_bin="/usr/local/bin/herdr")
-        for test_code in [1, 2, 127, 255]:
-            with patch("asyncio.create_subprocess_exec") as mock_exec:
-                mock_proc = AsyncMock()
-                mock_proc.returncode = test_code
-                mock_proc.pid = 4444
-                mock_proc.communicate.return_value = (b"", f"Process failed with {test_code}\n".encode())
-                mock_exec.return_value = mock_proc
+        try:
+            for test_code in [1, 2, 127, 255]:
+                with patch("asyncio.create_subprocess_exec") as mock_exec:
+                    mock_proc = AsyncMock()
+                    mock_proc.returncode = test_code
+                    mock_proc.pid = 4444
+                    mock_proc.communicate.return_value = (b"", f"Process failed with {test_code}\n".encode())
+                    mock_exec.return_value = mock_proc
 
-                handle = await executor.run_command(
-                    pane="runner",
-                    command="faulty_command",
-                    yield_timeout=3.0
-                )
+                    handle = await executor.run_command(
+                        pane="runner",
+                        command="faulty_command",
+                        yield_timeout=3.0
+                    )
 
-                self.assertEqual(handle.status, "error")
-                self.assertEqual(handle.returncode, test_code)
-                self.assertIn(f"Process failed with {test_code}", handle.stderr)
+                    self.assertEqual(handle.status, "error")
+                    self.assertEqual(handle.returncode, test_code)
+                    self.assertIn(f"Process failed with {test_code}", handle.stderr)
+        finally:
+            await executor.async_close()
 
     async def test_clean_buffer_drain_upon_completion(self):
         """Verifies buffer sanitization cleanly strips ANSI, escapes, and whitespace."""

@@ -194,6 +194,14 @@ class TestSensoryToolExecution(unittest.IsolatedAsyncioTestCase):
         )
 
     async def asyncTearDown(self) -> None:
+        if hasattr(self, "router") and self.router is not None:
+            for s in list(self.router.sessions.values()):
+                try:
+                    await s.close()
+                except Exception:
+                    pass
+            self.router.sessions.clear()
+            await self.router.stop_reaper()
         if hasattr(self.sentinel, "stop"):
             await self.sentinel.stop()
         self.bus.clear()
@@ -540,6 +548,14 @@ class TestSensoryToolSynthesis(unittest.IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self) -> None:
         os.environ.pop("FIRSTMATE_FORCE_MOUTH", None)
+        if hasattr(self, "router") and self.router is not None:
+            for s in list(self.router.sessions.values()):
+                try:
+                    await s.close()
+                except Exception:
+                    pass
+            self.router.sessions.clear()
+            await self.router.stop_reaper()
         if hasattr(self.sentinel, "stop"):
             await self.sentinel.stop()
         self.bus.clear()
@@ -1123,6 +1139,14 @@ class TestMidStreamSensoryGrounding(unittest.IsolatedAsyncioTestCase):
         self.client = MockSlackClient()
 
     async def asyncTearDown(self) -> None:
+        if hasattr(self, "router") and self.router is not None:
+            for s in list(self.router.sessions.values()):
+                try:
+                    await s.close()
+                except Exception:
+                    pass
+            self.router.sessions.clear()
+            await self.router.stop_reaper()
         if hasattr(self.sentinel, "stop"):
             await self.sentinel.stop()
         self.bus.clear()
@@ -1355,6 +1379,14 @@ class TestSensoryAdversarialPhrasing(unittest.IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self) -> None:
         os.environ.pop("FIRSTMATE_FORCE_MOUTH", None)
+        if hasattr(self, "router") and self.router is not None:
+            for s in list(self.router.sessions.values()):
+                try:
+                    await s.close()
+                except Exception:
+                    pass
+            self.router.sessions.clear()
+            await self.router.stop_reaper()
         if hasattr(self.sentinel, "stop"):
             await self.sentinel.stop()
         self.bus.clear()

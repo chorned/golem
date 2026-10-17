@@ -316,6 +316,8 @@ class TestSessionRouterDualPane(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(is_new)
             self.assertEqual(len(created_adapters), 1)
             self.assertEqual(created_adapters[0].extra_args, ["--conversation", "saved-conv-456"])
+            await session.close()
+            await router.stop_reaper()
 
 
 if __name__ == "__main__":

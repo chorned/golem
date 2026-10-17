@@ -678,27 +678,29 @@ class TestConversationalConcurrency(unittest.IsolatedAsyncioTestCase):
         """
         from golem.execution.runner import RunnerExecutor
         executor = RunnerExecutor()
+        try:
+            with patch("asyncio.create_subprocess_exec") as mock_exec:
+                p = AsyncMock()
+                p.returncode = 0
+                # Simulate a slow query that times out
+                async def slow_communicate():
+                    await asyncio.sleep(0.5)
+                    return (b"", b"")
+                p.communicate.side_effect = slow_communicate
+                p.kill = MagicMock()
+                p.wait = AsyncMock()
+                mock_exec.return_value = p
 
-        with patch("asyncio.create_subprocess_exec") as mock_exec:
-            p = AsyncMock()
-            p.returncode = 0
-            # Simulate a slow query that times out
-            async def slow_communicate():
-                await asyncio.sleep(0.5)
-                return (b"", b"")
-            p.communicate.side_effect = slow_communicate
-            p.kill = MagicMock()
-            p.wait = AsyncMock()
-            mock_exec.return_value = p
+                # Query with 0.05s timeout and last_pid=8888
+                pid = await executor._get_pane_foreground_pid("runner", timeout=0.05, last_pid=8888)
+                # Must retain 8888!
+                self.assertEqual(pid, 8888)
 
-            # Query with 0.05s timeout and last_pid=8888
-            pid = await executor._get_pane_foreground_pid("runner", timeout=0.05, last_pid=8888)
-            # Must retain 8888!
-            self.assertEqual(pid, 8888)
-
-            # Query without last_pid must return -1 sentinel, NOT None
-            pid_no_last = await executor._get_pane_foreground_pid("runner", timeout=0.05, last_pid=None)
-            self.assertEqual(pid_no_last, -1)
+                # Query without last_pid must return -1 sentinel, NOT None
+                pid_no_last = await executor._get_pane_foreground_pid("runner", timeout=0.05, last_pid=None)
+                self.assertEqual(pid_no_last, -1)
+        finally:
+            await executor.async_close()
 
     async def test_cancellation_with_queued_turn_cancels_executing_turn_not_queued(self) -> None:
         """

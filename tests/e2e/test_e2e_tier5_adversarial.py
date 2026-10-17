@@ -600,26 +600,28 @@ class TestTier5WorkerSwitchingAndTeardownLoad(unittest.IsolatedAsyncioTestCase):
         from golem.execution.runner import RunnerExecutor, ExecutionHandle
 
         executor = RunnerExecutor()
+        try:
+            # 1. Empty command returns error handle
+            empty_handle = await executor.run_command(pane="runner", command="")
+            self.assertEqual(empty_handle.status, "error")
+            self.assertIn("required", empty_handle.message.lower())
 
-        # 1. Empty command returns error handle
-        empty_handle = await executor.run_command(pane="runner", command="")
-        self.assertEqual(empty_handle.status, "error")
-        self.assertIn("required", empty_handle.message.lower())
-
-        # 2. ExecutionHandle dict compatibility
-        handle = ExecutionHandle(
-            status="running",
-            pane="runner",
-            command="sleep 10",
-            pid=12345,
-            message="Running in Pane 2",
-        )
-        self.assertEqual(handle["status"], "running")
-        self.assertEqual(handle.get("pid"), 12345)
-        self.assertTrue("command" in handle)
-        d = handle.to_dict()
-        self.assertEqual(d["status"], "running")
-        self.assertEqual(d["pid"], 12345)
+            # 2. ExecutionHandle dict compatibility
+            handle = ExecutionHandle(
+                status="running",
+                pane="runner",
+                command="sleep 10",
+                pid=12345,
+                message="Running in Pane 2",
+            )
+            self.assertEqual(handle["status"], "running")
+            self.assertEqual(handle.get("pid"), 12345)
+            self.assertTrue("command" in handle)
+            d = handle.to_dict()
+            self.assertEqual(d["status"], "running")
+            self.assertEqual(d["pid"], 12345)
+        finally:
+            await executor.async_close()
 
 
 # ===========================================================================

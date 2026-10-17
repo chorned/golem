@@ -413,6 +413,12 @@ class TestSessionRouterDriverResolution(unittest.IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self) -> None:
         if self.router:
+            for s in list(self.router.sessions.values()):
+                try:
+                    await s.close()
+                except Exception:
+                    pass
+            self.router.sessions.clear()
             await self.router.stop_reaper()
 
     async def test_router_default_engine_antigravity(self) -> None:
@@ -424,29 +430,32 @@ class TestSessionRouterDriverResolution(unittest.IsolatedAsyncioTestCase):
         with patch.dict(os.environ, {"GOLEM_ENGINE": "claude_code", "CLAUDE_CODE_MODEL": "claude-3-7-sonnet-latest"}):
             self.router = SessionRouter(default_target_cwd="/tmp")
             self.assertEqual(self.router.engine, "claude_code")
-            session, is_new = await self.router.get_or_create("C_CLAUDE", "T_CLAUDE")
-            self.assertTrue(is_new)
-            self.assertIsInstance(session.driver, ClaudeCodeDriver)
-            self.assertEqual(session.driver.engine_name, "claude_code")
-            await self.router.teardown("C_CLAUDE", "T_CLAUDE")
+            with patch("golem.drivers.claude_code.ClaudeCodeDriver.start", new_callable=AsyncMock):
+                session, is_new = await self.router.get_or_create("C_CLAUDE", "T_CLAUDE")
+                self.assertTrue(is_new)
+                self.assertIsInstance(session.driver, ClaudeCodeDriver)
+                self.assertEqual(session.driver.engine_name, "claude_code")
+                await self.router.teardown("C_CLAUDE", "T_CLAUDE")
 
     async def test_router_dynamic_engine_resolution_opencode(self) -> None:
         with patch.dict(os.environ, {"GOLEM_ENGINE": "opencode", "OPENCODE_MODEL": "deepseek/deepseek-chat"}):
             self.router = SessionRouter(default_target_cwd="/tmp")
             self.assertEqual(self.router.engine, "opencode")
-            session, is_new = await self.router.get_or_create("C_OPEN", "T_OPEN")
-            self.assertTrue(is_new)
-            self.assertIsInstance(session.driver, OpenCodeDriver)
-            self.assertEqual(session.driver.engine_name, "opencode")
-            await self.router.teardown("C_OPEN", "T_OPEN")
+            with patch("golem.drivers.opencode.OpenCodeDriver.start", new_callable=AsyncMock):
+                session, is_new = await self.router.get_or_create("C_OPEN", "T_OPEN")
+                self.assertTrue(is_new)
+                self.assertIsInstance(session.driver, OpenCodeDriver)
+                self.assertEqual(session.driver.engine_name, "opencode")
+                await self.router.teardown("C_OPEN", "T_OPEN")
 
     async def test_router_explicit_engine_overrides_environment(self) -> None:
         with patch.dict(os.environ, {"GOLEM_ENGINE": "antigravity"}):
             self.router = SessionRouter(default_target_cwd="/tmp", engine="opencode")
             self.assertEqual(self.router.engine, "opencode")
-            session, _ = await self.router.get_or_create("C_OVR", "T_OVR")
-            self.assertIsInstance(session.driver, OpenCodeDriver)
-            await self.router.teardown("C_OVR", "T_OVR")
+            with patch("golem.drivers.opencode.OpenCodeDriver.start", new_callable=AsyncMock):
+                session, _ = await self.router.get_or_create("C_OVR", "T_OVR")
+                self.assertIsInstance(session.driver, OpenCodeDriver)
+                await self.router.teardown("C_OVR", "T_OVR")
 
     async def test_router_driver_factory_precedence(self) -> None:
         custom_driver = DummyConcreteDriver(cwd="/tmp")

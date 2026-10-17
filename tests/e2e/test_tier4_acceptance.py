@@ -165,7 +165,14 @@ class TestTier4TC01ConversationalInquiry(unittest.IsolatedAsyncioTestCase):
         self.gateway = IngressGateway(router=self.router, bot_user_id="U_AGY_BOT")
 
     async def asyncTearDown(self) -> None:
-        await self.router.stop_reaper()
+        if hasattr(self, "router"):
+            for s in list(self.router.sessions.values()):
+                try:
+                    await s.close()
+                except Exception:
+                    pass
+            self.router.sessions.clear()
+            await self.router.stop_reaper()
 
     async def test_conversational_greeting_direct_response(self) -> None:
         """TC-01: Conversational greeting receives direct 1-turn response without worker spawns or canned noise."""
@@ -298,6 +305,8 @@ class TestTier4TC01ConversationalInquiry(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(any(r["name"] == "gear" for r in self.client.reactions_added))
             self.assertTrue(any(r["name"] == "white_check_mark" for r in self.client.reactions_added))
         finally:
+            for s in list(router.sessions.values()):
+                await s.close()
             await router.stop_reaper()
 
     def test_strip_bot_mentions_cleanliness(self) -> None:
@@ -484,6 +493,8 @@ class TestTier4TC02MultiTurnContinuity(unittest.IsolatedAsyncioTestCase):
             self.assertIn("Which one runs at 3 AM?", t2_msg)
 
         finally:
+            for s in list(router.sessions.values()):
+                await s.close()
             await router.stop_reaper()
 
     async def test_distinct_threads_have_isolated_sessions_and_pids(self) -> None:
@@ -517,6 +528,8 @@ class TestTier4TC02MultiTurnContinuity(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(s1.current_turn, 1)
             self.assertEqual(s2.current_turn, 1)
         finally:
+            for s in list(router.sessions.values()):
+                await s.close()
             await router.stop_reaper()
 
     async def test_multi_turn_state_transitions_across_three_turns(self) -> None:
@@ -596,6 +609,10 @@ class TestTier4TC03InteractiveBlockerResilience(unittest.IsolatedAsyncioTestCase
     async def asyncSetUp(self) -> None:
         self.executor = RunnerExecutor(herdr_bin="/usr/local/bin/herdr")
         self.observer = RunnerBufferObserver(herdr_bin="/usr/local/bin/herdr")
+
+    async def asyncTearDown(self) -> None:
+        if hasattr(self, "executor") and self.executor is not None:
+            await self.executor.async_close()
 
     async def test_long_running_command_yields_running_handle_within_3s(self) -> None:
         """TC-03: Command exceeding yield timeout yields ExecutionHandle(status='running') in <=3.0s."""
@@ -762,6 +779,8 @@ class TestTier4TC03InteractiveBlockerResilience(unittest.IsolatedAsyncioTestCase
                 self.assertEqual(len(client.posted_messages), 1)
                 self.assertIn("Liaison Online", client.posted_messages[0]["text"])
             finally:
+                for s in list(router.sessions.values()):
+                    await s.close()
                 await router.stop_reaper()
 
 

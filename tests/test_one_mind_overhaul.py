@@ -107,14 +107,24 @@ class TestZeroChoAndPeripheralVision(unittest.TestCase):
 
     def test_zero_cho_strings_in_system_instruction_with_peripheral_vision(self):
         """Verify full system instruction contains zero CHO keys and includes peripheral vision."""
-        full_instruction = build_mouth_system_instruction()
-        matches = re.findall(r"CHO-\d+", full_instruction)
-        self.assertEqual(matches, [], f"Found hardcoded CHO keys in build_mouth_system_instruction: {matches}")
-        from golem.memory.peripheral import compile_peripheral_vision
-        peripheral = compile_peripheral_vision()
-        self.assertIn(BASE_CHIEF_OF_STAFF_INSTRUCTION, full_instruction)
-        if peripheral:
-            self.assertIn(peripheral, full_instruction)
+        import tempfile
+        from pathlib import Path
+        from golem.memory.peripheral import clear_peripheral_vision_cache, compile_peripheral_vision
+
+        with tempfile.TemporaryDirectory() as tmp_wiki:
+            context_dir = Path(tmp_wiki) / "context"
+            context_dir.mkdir(parents=True, exist_ok=True)
+            (context_dir / "overview.md").write_text("# Fleet\nPeripheral vision test doc.")
+            with patch.dict(os.environ, {"GOLEM_WIKI_DIR": tmp_wiki}):
+                clear_peripheral_vision_cache()
+                full_instruction = build_mouth_system_instruction()
+                matches = re.findall(r"CHO-\d+", full_instruction)
+                self.assertEqual(matches, [], f"Found hardcoded CHO keys in build_mouth_system_instruction: {matches}")
+                peripheral = compile_peripheral_vision(Path(tmp_wiki))
+                self.assertIn(BASE_CHIEF_OF_STAFF_INSTRUCTION, full_instruction)
+                if peripheral:
+                    self.assertIn(peripheral, full_instruction)
+                clear_peripheral_vision_cache()
 
 
 # ---------------------------------------------------------------------------
