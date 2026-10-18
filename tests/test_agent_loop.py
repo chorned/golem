@@ -1073,8 +1073,14 @@ class TestIngressLifecycleStateMachine(unittest.IsolatedAsyncioTestCase):
     """
 
     def setUp(self):
+        self._orig_env = dict(os.environ)
+        os.environ["DUAL_PANE_WORKSPACE"] = "0"
         app.sessions.clear()
         app.agent_name_to_session.clear()
+
+    def tearDown(self):
+        os.environ.clear()
+        os.environ.update(self._orig_env)
 
     async def test_boot_splash_rendering_does_not_post_task_completed(self):
         """Simulate CLI boot splash rendering without execution -> assert relay DOES NOT post 'Task Completed'."""

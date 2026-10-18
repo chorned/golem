@@ -35,6 +35,8 @@ import shutil
 import inspect
 import asyncio
 import logging
+import subprocess
+from datetime import datetime
 from pathlib import Path
 from dataclasses import dataclass, field, asdict
 from typing import Dict, Any, Optional, List, Set, Union, Tuple, Literal
@@ -1356,6 +1358,406 @@ class EmailSniffer:
 
 
 # ==============================================================================
+# Active Work Detection for Linear Assigned Tickets
+# ==============================================================================
+
+def _check_recent_files(ws: str, current_time: float, max_age_seconds: float, max_files: int = 40) -> bool:
+    """Safely check if files in workspace were modified within max_age_seconds (bounded to top 2 levels, max_files)."""
+    if not isinstance(ws, str) or _is_mock_object(ws) or not os.path.isdir(ws):
+        return False
+    count = 0
+    try:
+        with os.scandir(ws) as it:
+            for entry in it:
+                if entry.name.startswith(".") or entry.name in ("node_modules", "venv", ".venv", "__pycache__", "build", "dist", ".git"):
+                    continue
+                if entry.is_file():
+                    count += 1
+                    try:
+                        if current_time - entry.stat().st_mtime <= max_age_seconds:
+                            return True
+                    except Exception:
+                        pass
+                elif entry.is_dir():
+                    try:
+                        with os.scandir(entry.path) as sub_it:
+                            for sub_entry in sub_it:
+                                if sub_entry.name.startswith(".") or sub_entry.name in ("node_modules", "venv", ".venv", "__pycache__", "build", "dist", ".git"):
+                                    continue
+                                if sub_entry.is_file():
+                                    count += 1
+                                    try:
+                                        if current_time - sub_entry.stat().st_mtime <= max_age_seconds:
+                                            return True
+                                    except Exception:
+                                        pass
+                                if count >= max_files:
+                                    break
+                    except Exception:
+                        pass
+                if count >= max_files:
+                    break
+    except Exception:
+        pass
+    return False
+
+
+def is_ticket_actively_worked(
+    ticket: Dict[str, Any],
+    session_router: Optional[Any] = None,
+    eyes_observer: Optional[Any] = None,
+    registry_path: Optional[str] = None,
+    now: Optional[float] = None,
+) -> bool:
+    """
+    Deterministic Active Work Detection for Linear tickets.
+    Returns True if an 'In Progress' ticket is actively being worked on
+    via Signal A (Active Session / Linear Plan Binding),
+    Signal B (Active Runner / Subprocess / Herdr Process), or
+    Signal C (Recent Activity Grace Window on In Progress).
+    Returns False if the ticket is stalled/idle or not In Progress.
+    """
+    if not ticket or not isinstance(ticket, dict):
+        return False
+
+    state_val = ticket.get("state")
+    if isinstance(state_val, dict):
+        state_name = str(state_val.get("name") or "").lower()
+        state_type = str(state_val.get("type") or "").lower()
+    else:
+        state_name = str(state_val or "").lower()
+        state_type = str(ticket.get("state_type") or "").lower()
+
+    if state_name in ("done", "canceled", "cancelled") or state_type in ("completed", "canceled"):
+        return False
+
+    is_in_progress = bool("in progress" in state_name or state_type == "started" or state_name == "started")
+
+    current_time = float(now) if now is not None else time.time()
+
+    ticket_key = str(ticket.get("identifier") or ticket.get("id") or "").strip()
+    related_keys: Set[str] = {ticket_key} if ticket_key else set()
+
+    # Extract parent key
+    parent = ticket.get("parent")
+    if isinstance(parent, dict) and parent.get("identifier"):
+        related_keys.add(str(parent["identifier"]))
+
+    # Extract children / subtask keys
+    children = ticket.get("children")
+    if isinstance(children, dict):
+        for node in children.get("nodes", []):
+            if isinstance(node, dict) and node.get("identifier"):
+                related_keys.add(str(node["identifier"]))
+    elif isinstance(ticket.get("subtasks"), list):
+        for st in ticket["subtasks"]:
+            if isinstance(st, dict) and st.get("identifier"):
+                related_keys.add(str(st["identifier"]))
+            elif isinstance(st, str) and st.startswith("CHO-"):
+                related_keys.add(st)
+
+    # Extract keys from title and description
+    title = str(ticket.get("title") or "")
+    description = str(ticket.get("description") or "")
+    combined_text = f"{title} {description}"
+    for k in re.findall(r"CHO-\d+", combined_text):
+        related_keys.add(k)
+    related_keys.discard("")
+
+    # Extract candidate workspaces (excluding Golem's own host repo where bot.err/app.py run 24/7)
+    golem_self_names = {"golem", "first-mate", "agy"}
+    try:
+        self_real = os.path.realpath(str(_PROJECT_ROOT))
+    except Exception:
+        self_real = ""
+
+    def _is_self_repo(path_str: str) -> bool:
+        if os.path.basename(path_str.rstrip("/")).lower() in golem_self_names:
+            return True
+        try:
+            return bool(self_real and os.path.realpath(path_str) == self_real)
+        except Exception:
+            return False
+
+    workspace_candidates: List[str] = []
+    # 1. Direct path mentions in text
+    for m in re.finditer(r"(/[a-zA-Z0-9_.-]+(?:/[a-zA-Z0-9_.-]+)+)", combined_text):
+        cand = m.group(1).rstrip(",;.")
+        if os.path.isdir(cand) and not _is_self_repo(cand) and cand not in workspace_candidates:
+            workspace_candidates.append(cand)
+    # 2. Known project directory matches
+    generic_stop_words = {"skill", "build", "task", "project", "fix", "update", "create", "test", "issue", "golem", "first-mate", "agy"}
+    for token in re.findall(r"[A-Za-z0-9_-]+", title):
+        if len(token) > 3 and token.lower() not in generic_stop_words:
+            p = f"/Users/hermes/projects/{token}"
+            if os.path.isdir(p) and not _is_self_repo(p) and p not in workspace_candidates:
+                workspace_candidates.append(p)
+    target_cwd = ticket.get("target_cwd")
+    if isinstance(target_cwd, str) and not _is_mock_object(target_cwd) and os.path.isdir(target_cwd) and not _is_self_repo(target_cwd):
+        if target_cwd not in workspace_candidates:
+            workspace_candidates.append(target_cwd)
+
+    has_active_session_lock = False
+    active_session_matched_key = False
+    has_active_runner_or_process = False
+    has_recent_activity = False
+
+    # ------------------------------------------------------------------
+    # Signal A: Active Session / Linear Plan Binding
+    # ------------------------------------------------------------------
+    session_records: List[Dict[str, Any]] = []
+
+    live_sessions_map: Dict[str, Any] = {}
+    if session_router is not None:
+        sessions_map = getattr(session_router, "sessions", {})
+        if isinstance(sessions_map, dict):
+            live_sessions_map = sessions_map
+            for s_key, s_obj in list(sessions_map.items()):
+                state_obj = getattr(s_obj, "state", None)
+                state_val_s = getattr(state_obj, "value", state_obj)
+                in_flight_s = getattr(s_obj, "in_flight_subtasks", None)
+                queued_s = getattr(s_obj, "queued_subtasks", None)
+                has_batch_s = bool(
+                    (isinstance(in_flight_s, (list, tuple, set)) and len(in_flight_s) > 0)
+                    or (isinstance(queued_s, (list, tuple, set)) and len(queued_s) > 0)
+                )
+                is_busy_s = getattr(s_obj, "is_busy", False) or (state_val_s in ("running", "working")) or has_batch_s
+                s_updated = (
+                    _safe_float(getattr(s_obj, "last_dispatched_at", None), 0.0)
+                    or _safe_float(getattr(s_obj, "last_activity", None), 0.0)
+                    or _safe_float(getattr(s_obj, "updated_at", None), 0.0)
+                    or _safe_float(getattr(s_obj, "last_active_ts", None), 0.0)
+                )
+                session_records.append({
+                    "session_key": s_key,
+                    "active_linear_parent_key": getattr(s_obj, "active_linear_parent_key", None),
+                    "active_linear_parent_keys": getattr(s_obj, "active_linear_parent_keys", None),
+                    "linear_issue_key": getattr(s_obj, "linear_issue_key", None),
+                    "linear_issue_id": getattr(s_obj, "linear_issue_id", None),
+                    "linear_plan_cache": getattr(s_obj, "linear_plan_cache", None),
+                    "linear_tickets_context": getattr(s_obj, "linear_tickets_context", None),
+                    "pending_subtasks": getattr(s_obj, "pending_subtasks", []),
+                    "in_flight_subtasks": in_flight_s if isinstance(in_flight_s, (list, tuple, set)) else [],
+                    "queued_subtasks": queued_s if isinstance(queued_s, (list, tuple, set)) else [],
+                    "target_cwd": getattr(s_obj, "target_cwd", getattr(s_obj, "cwd", None)),
+                    "updated_at": s_updated,
+                    "is_busy": is_busy_s,
+                    "_source": "router",
+                })
+
+    reg_file = (
+        registry_path
+        or os.environ.get("FIRSTMATE_SESSIONS_REGISTRY_PATH")
+        or os.path.expanduser("~/.gemini/golem/sessions_registry.json")
+    )
+    if reg_file and isinstance(reg_file, str) and not _is_mock_object(reg_file) and os.path.exists(reg_file):
+        try:
+            with open(reg_file, "r", encoding="utf-8") as f:
+                disk_data = json.load(f)
+                if isinstance(disk_data, dict):
+                    for d_key, d_val in disk_data.items():
+                        if isinstance(d_val, dict):
+                            d_entry = dict(d_val)
+                            d_entry.setdefault("session_key", d_key)
+                            d_entry["_source"] = "disk"
+                            session_records.append(d_entry)
+        except Exception as exc:
+            logger.debug(f"Unable to read session registry in is_ticket_actively_worked: {exc}")
+
+    for rec in session_records:
+        rec_keys: Set[str] = set()
+        for k_field in ("active_linear_parent_key", "linear_issue_key", "linear_issue_id", "linear_parent_key"):
+            val = rec.get(k_field)
+            if val and not _is_mock_object(val):
+                rec_keys.add(str(val))
+        parent_keys_list = rec.get("active_linear_parent_keys")
+        if isinstance(parent_keys_list, (list, tuple, set)):
+            for pk in parent_keys_list:
+                if pk and not _is_mock_object(pk):
+                    rec_keys.add(str(pk))
+        plan = rec.get("linear_plan_cache") or rec.get("plan_cache") or rec.get("linear_plan")
+        if isinstance(plan, dict):
+            parent_id = plan.get("parent", {}).get("identifier") or plan.get("parent", {}).get("id")
+            if parent_id and not _is_mock_object(parent_id):
+                rec_keys.add(str(parent_id))
+            for st in plan.get("subtasks", []):
+                st_id = st.get("identifier") or st.get("id")
+                if st_id and not _is_mock_object(st_id):
+                    rec_keys.add(str(st_id))
+        tickets_ctx = rec.get("linear_tickets_context")
+        if isinstance(tickets_ctx, list):
+            for t_item in tickets_ctx:
+                if isinstance(t_item, dict):
+                    t_id = t_item.get("identifier") or t_item.get("id")
+                    if t_id and not _is_mock_object(t_id):
+                        rec_keys.add(str(t_id))
+                    for st in (t_item.get("subtasks") or []):
+                        if isinstance(st, dict):
+                            st_id = st.get("identifier") or st.get("id")
+                            if st_id and not _is_mock_object(st_id):
+                                rec_keys.add(str(st_id))
+        for list_field in ("pending_subtasks", "in_flight_subtasks", "queued_subtasks"):
+            seq_val = rec.get(list_field)
+            if isinstance(seq_val, (list, tuple, set)):
+                for item in seq_val:
+                    if isinstance(item, dict):
+                        for ik in ("issue_key", "parent_key", "identifier", "id"):
+                            if item.get(ik) and not _is_mock_object(item.get(ik)):
+                                rec_keys.add(str(item[ik]))
+                    elif item and not _is_mock_object(item):
+                        rec_keys.add(str(item))
+
+        cwd = rec.get("target_cwd")
+        if isinstance(cwd, str) and not _is_mock_object(cwd) and os.path.isdir(cwd) and not _is_self_repo(cwd) and cwd not in workspace_candidates:
+            if any(k.lower() in cwd.lower() for k in related_keys) or any(t.lower() in cwd.lower() for t in re.findall(r"[A-Za-z0-9_-]+", title) if len(t) > 3 and t.lower() not in generic_stop_words):
+                workspace_candidates.append(cwd)
+
+        # Check key match or workspace match
+        matches_key = bool(related_keys.intersection(rec_keys))
+        matches_workspace = bool(isinstance(cwd, str) and cwd in workspace_candidates)
+
+        if matches_key or matches_workspace:
+            rec_updated = _safe_float(rec.get("updated_at") or rec.get("updatedAt"), 0.0)
+            is_busy = bool(rec.get("is_busy") or rec.get("running_task") or rec.get("has_active_lock"))
+            recent_session = (current_time - rec_updated <= 1800.0) if rec_updated > 0 else False
+
+            is_active = False
+            if not is_in_progress:
+                # For non-in-progress tickets (Todo, Backlog), ONLY an explicitly busy session counts
+                if is_busy:
+                    is_active = True
+                elif rec.get("_source") == "disk" and session_router is not None:
+                    s_key = rec.get("session_key")
+                    live_s = live_sessions_map.get(s_key) if s_key else None
+                    if live_s is not None:
+                        state_obj = getattr(live_s, "state", None)
+                        state_val_s = getattr(state_obj, "value", state_obj)
+                        if getattr(live_s, "is_busy", False) or (state_val_s == "running"):
+                            is_active = True
+            elif rec.get("_source") == "disk" and session_router is not None:
+                s_key = rec.get("session_key")
+                live_s = live_sessions_map.get(s_key) if s_key else None
+                live_busy = False
+                if live_s is not None:
+                    state_obj = getattr(live_s, "state", None)
+                    state_val_s = getattr(state_obj, "value", state_obj)
+                    live_busy = getattr(live_s, "is_busy", False) or (state_val_s == "running")
+                if is_busy or live_busy:
+                    is_active = True
+            else:
+                if is_busy or recent_session:
+                    is_active = True
+
+            if is_active:
+                has_active_session_lock = True
+                if matches_key:
+                    active_session_matched_key = True
+                break
+
+    if has_active_session_lock:
+        if not is_in_progress:
+            return active_session_matched_key
+        return True
+
+    if not is_in_progress:
+        return False
+
+    # ------------------------------------------------------------------
+    # Signal B: Active Runner / Subprocess / Herdr Process
+    # ------------------------------------------------------------------
+    if eyes_observer is not None:
+        if getattr(eyes_observer, "is_running", False):
+            has_active_runner_or_process = True
+        last_state = str(getattr(eyes_observer, "_last_emitted_state", "") or getattr(eyes_observer, "last_state", "")).upper()
+        if last_state == "RUNNING":
+            has_active_runner_or_process = True
+
+    if not has_active_runner_or_process:
+        try:
+            current_pid = os.getpid()
+            ps_out = subprocess.check_output(
+                ["ps", "-eo", "pid,command"],
+                text=True,
+                timeout=1.0,
+                stderr=subprocess.DEVNULL,
+            )
+            for line in ps_out.splitlines():
+                line_strip = line.strip()
+                if not line_strip:
+                    continue
+                parts = line_strip.split(None, 1)
+                if len(parts) < 2:
+                    continue
+                pid_str, cmd = parts[0], parts[1]
+                try:
+                    if int(pid_str) == current_pid:
+                        continue
+                except Exception:
+                    pass
+                cmd_lower = cmd.lower()
+                if "unittest" in cmd_lower and "test_nose" in cmd_lower:
+                    continue
+                if any(eng in cmd_lower for eng in ("agy", "herdr", "pytest", "python", "opencode")):
+                    if any(k in cmd for k in related_keys):
+                        has_active_runner_or_process = True
+                        break
+                    if any(os.path.basename(ws).lower() in cmd_lower for ws in workspace_candidates if ws):
+                        has_active_runner_or_process = True
+                        break
+        except Exception as exc:
+            logger.debug(f"ps inspection error in is_ticket_actively_worked: {exc}")
+
+    if not has_active_runner_or_process:
+        for task_dir in ("/tmp/herdr_tasks", "/tmp/golem_tasks"):
+            if os.path.isdir(task_dir):
+                try:
+                    for entry in os.scandir(task_dir):
+                        if entry.is_file():
+                            mtime = entry.stat().st_mtime
+                            if current_time - mtime <= 900.0:  # 15 min
+                                if any(k in entry.name for k in related_keys):
+                                    has_active_runner_or_process = True
+                                    break
+                                try:
+                                    with open(entry.path, "r", encoding="utf-8", errors="ignore") as f:
+                                        head = f.read(4096)
+                                        if any(k in head for k in related_keys):
+                                            has_active_runner_or_process = True
+                                            break
+                                except Exception:
+                                    pass
+                except Exception as exc:
+                    logger.debug(f"Error scanning task dir {task_dir}: {exc}")
+
+    if has_active_runner_or_process:
+        return True
+
+    # ------------------------------------------------------------------
+    # Signal C: Recent Activity Grace Window on In Progress
+    # ------------------------------------------------------------------
+    ticket_updated_at_str = ticket.get("updatedAt") or ticket.get("updated_at")
+    ticket_updated_ts = 0.0
+    if isinstance(ticket_updated_at_str, (int, float)):
+        ticket_updated_ts = float(ticket_updated_at_str)
+    elif isinstance(ticket_updated_at_str, str):
+        try:
+            clean_str = ticket_updated_at_str.replace("Z", "+00:00")
+            dt = datetime.fromisoformat(clean_str)
+            ticket_updated_ts = dt.timestamp()
+        except Exception:
+            ticket_updated_ts = 0.0
+
+    # Recent activity grace window (20 min): requires recent update AND modified files
+    if ticket_updated_ts > 0.0 and (current_time - ticket_updated_ts <= 1200.0):
+        for ws in workspace_candidates:
+            if _check_recent_files(ws, current_time, max_age_seconds=600.0):
+                has_recent_activity = True
+                break
+
+    return has_recent_activity
+
+
+# ==============================================================================
 # The Nose Sentinel: Main Watchdog Class
 # ==============================================================================
 
@@ -1390,10 +1792,29 @@ class NoseSentinel:
         email_query: Optional[str] = None,
         email_senders: Optional[str] = None,
         email_enabled: Optional[bool] = None,
+        linear_bridge: Optional[Any] = None,
+        session_router: Optional[Any] = None,
+        router: Optional[Any] = None,
+        eyes_observer: Optional[Any] = None,
+        eyes: Optional[Any] = None,
+        registry_path: Optional[str] = None,
+        webui_server: Optional[Any] = None,
+        server: Optional[Any] = None,
     ) -> None:
         self.fleet = fleet
         self.bus = event_bus or bus or get_default_event_bus()
         self.event_bus = self.bus
+        self.linear_bridge = linear_bridge
+        self.session_router = session_router or router
+        self.eyes_observer = eyes_observer or eyes
+        self.registry_path = registry_path
+        self.webui_server = webui_server or server
+        self.server = self.webui_server
+        self._last_assigned_tickets: List[Dict[str, Any]] = []
+        self._last_alerted_ticket_signatures: Set[str] = set()
+        self._last_log_delta_bytes: int = 0
+        self.last_sniff_receipt: Optional[Dict[str, Any]] = None
+        self.last_sniff_receipt_str: str = ""
 
         # bot.err file location
         self.bot_err_path = bot_err_path or os.environ.get("FIRSTMATE_LOG_ERR") or DEFAULT_BOT_ERR_PATH
@@ -1523,12 +1944,14 @@ class NoseSentinel:
         if not os.path.exists(self.bot_err_path):
             self.last_log_offset = 0
             self.last_log_inode = None
+            self._last_log_delta_bytes = 0
             return [], ""
 
         try:
             st = os.stat(self.bot_err_path)
         except OSError as e:
             logger.warning(f"Error stating log file {self.bot_err_path}: {e}")
+            self._last_log_delta_bytes = 0
             return [], ""
 
         current_size = st.st_size
@@ -1536,6 +1959,7 @@ class NoseSentinel:
 
         if not self._is_calibrated:
             self.calibrate_startup()
+            self._last_log_delta_bytes = 0
             return [], ""
 
         # Inode rotation check
@@ -1558,10 +1982,12 @@ class NoseSentinel:
 
         # Quiescent check: no new bytes written
         if current_size == self.last_log_offset:
+            self._last_log_delta_bytes = 0
             return [], ""
 
         bytes_to_read = current_size - self.last_log_offset
         read_start = self.last_log_offset
+        self._last_log_delta_bytes = bytes_to_read
 
         # Max slice bounding
         if bytes_to_read > self.max_slice_bytes:
@@ -1577,6 +2003,7 @@ class NoseSentinel:
             self.last_log_offset = current_size
         except OSError as e:
             logger.error(f"Error reading log file {self.bot_err_path}: {e}")
+            self._last_log_delta_bytes = 0
             return [], ""
 
         log_text = raw_bytes.decode("utf-8", errors="replace")
@@ -1651,6 +2078,46 @@ class NoseSentinel:
         """Sniff Gmail inbox for newly received unread emails."""
         return await self.email_sniffer.sniff_new_emails()
 
+    def get_linear_bridge(self) -> Optional[Any]:
+        """Resolve or instantiate LinearBridge singleton."""
+        if self.linear_bridge is not None:
+            return self.linear_bridge
+        try:
+            from golem.linear_bridge import LinearBridge
+            self.linear_bridge = LinearBridge()
+            return self.linear_bridge
+        except Exception as exc:
+            logger.debug(f"Unable to initialize LinearBridge in NoseSentinel: {exc}")
+            return None
+
+    async def sniff_assigned_tickets(self) -> List[Dict[str, Any]]:
+        """
+        Query Linear for issues assigned strictly to Hermes (viewer / hermes.horned@gmail.com).
+        Ignores tickets in 'Done' (or completed type), unassigned, or assigned to Carl.
+        All non-Done statuses receive attention.
+        """
+        bridge = self.get_linear_bridge()
+        if not bridge:
+            return []
+        try:
+            res = bridge.get_assigned_issues(non_done_only=True)
+            if inspect.isawaitable(res):
+                res = await res
+            return list(res) if res else []
+        except Exception as exc:
+            logger.warning(f"Error querying assigned Linear tickets in NoseSentinel: {exc}")
+            return []
+
+    def is_ticket_actively_worked(self, ticket: Dict[str, Any], now: Optional[float] = None) -> bool:
+        """Evaluate deterministic active work detection on an In Progress ticket."""
+        return is_ticket_actively_worked(
+            ticket,
+            session_router=getattr(self, "session_router", None) or getattr(self, "router", None),
+            eyes_observer=getattr(self, "eyes_observer", None) or getattr(self, "eyes", None),
+            registry_path=getattr(self, "registry_path", None),
+            now=now,
+        )
+
     def compute_status_deltas(
         self,
         prev: Optional[Any],
@@ -1724,6 +2191,204 @@ class NoseSentinel:
             except Exception as ee:
                 logger.warning(f"Error during email sniffing in NoseSentinel.tick: {ee}")
 
+            # 4b. Sniff assigned Linear tickets
+            assigned_tickets: List[Dict[str, Any]] = []
+            linear_alert: Optional[ShoulderTapAlert] = None
+            try:
+                assigned_tickets = await self.sniff_assigned_tickets()
+            except Exception as le:
+                logger.warning(f"Error checking Linear assigned tickets in NoseSentinel.tick: {le}")
+            self._last_assigned_tickets = assigned_tickets
+
+            # Active Work Detection: ignore tickets that are actively being worked on
+            # and suppress Backlog/Todo tickets tracked by an In Progress ticket in assigned_tickets
+            in_progress_texts = [
+                f"{t.get('title', '')} {t.get('description', '')}"
+                for t in assigned_tickets
+                if (
+                    "in progress" in str(t.get("state") or "").lower()
+                    or str(t.get("state_type") or "").lower() == "started"
+                    or (isinstance(t.get("state"), dict) and "in progress" in str(t.get("state", {}).get("name") or "").lower())
+                    or (isinstance(t.get("state"), dict) and str(t.get("state", {}).get("type") or "").lower() == "started")
+                )
+            ]
+
+            actionable_tickets = []
+            for t in assigned_tickets:
+                state_str = str(t.get("state") or "").lower()
+                state_type_str = str(t.get("state_type") or "").lower()
+                if isinstance(t.get("state"), dict):
+                    state_str = str(t.get("state", {}).get("name") or "").lower()
+                    state_type_str = str(t.get("state", {}).get("type") or "").lower()
+
+                ident = str(t.get("identifier") or "").strip()
+                if ident and (state_str in ("todo", "backlog") or state_type_str in ("unstarted", "backlog", "triage")):
+                    if any(ident in ip_text for ip_text in in_progress_texts):
+                        continue
+
+                if not self.is_ticket_actively_worked(t):
+                    actionable_tickets.append(t)
+
+            if actionable_tickets:
+                ticket_sig = {f"{t.get('identifier')}:{t.get('state')}" for t in actionable_tickets}
+                last_sig = getattr(self, "_last_alerted_ticket_signatures", set())
+                newly_actionable = [
+                    t for t in actionable_tickets
+                    if f"{t.get('identifier')}:{t.get('state')}" not in last_sig
+                ]
+                self._last_alerted_ticket_signatures = ticket_sig
+                if newly_actionable:
+                    ticket_summaries = [f"[{t.get('identifier')}] {t.get('title')} ({t.get('state')})" for t in newly_actionable]
+                    linear_alert = ShoulderTapAlert(
+                        alert_type="linear_assigned_tickets",
+                        source="nose",
+                        timestamp=time.time(),
+                        summary=f"The Nose detected {len(newly_actionable)} assigned Linear ticket(s) awaiting attention: " + ", ".join(ticket_summaries[:3]),
+                        data={
+                            "tickets": newly_actionable,
+                            "count": len(newly_actionable),
+                        },
+                    )
+                    if self.bus is not None:
+                        try:
+                            self.bus.publish(linear_alert)
+                            logger.info(f"Published linear_assigned_tickets alert: {linear_alert.summary}")
+                        except Exception as e:
+                            logger.warning(f"Error publishing linear assigned tickets alert: {e}")
+            else:
+                self._last_alerted_ticket_signatures = set()
+
+            # 4c. Assemble & Stream Real-Time Sniff Cycle Telemetry Receipt
+            nodes_data = {}
+            if hasattr(current_snapshot, "nodes") and isinstance(current_snapshot.nodes, dict):
+                nodes_data = current_snapshot.nodes
+            elif hasattr(current_snapshot, "get"):
+                nodes_data = current_snapshot.get("nodes", {}) or {}
+
+            total_nodes = len(nodes_data) if isinstance(nodes_data, dict) else 0
+            online_nodes = (
+                sum(
+                    1
+                    for n in nodes_data.values()
+                    if (isinstance(n, dict) and n.get("online")) or (isinstance(n, bool) and n)
+                )
+                if isinstance(nodes_data, dict)
+                else 0
+            )
+            fleet_str = f"{online_nodes}/{total_nodes} nodes online" if total_nodes > 0 else "0 nodes online"
+
+            disk_data = {}
+            if hasattr(current_snapshot, "disk") and isinstance(current_snapshot.disk, dict):
+                disk_data = current_snapshot.disk
+            elif hasattr(current_snapshot, "get"):
+                disk_data = current_snapshot.get("disk", {}) or {}
+
+            free_gb = float(disk_data.get("free_gb", 0.0) if hasattr(disk_data, "get") else 0.0)
+            pct_used = float(disk_data.get("percent_used", 0.0) if hasattr(disk_data, "get") else 0.0)
+            disk_pressure = bool(disk_data.get("pressure", False) if hasattr(disk_data, "get") else False)
+            disk_str = f"{free_gb:.1f}GB free ({pct_used:.1f}%)"
+
+            docker_data = {}
+            if hasattr(current_snapshot, "docker") and isinstance(current_snapshot.docker, dict):
+                docker_data = current_snapshot.docker
+            elif hasattr(current_snapshot, "get"):
+                docker_data = current_snapshot.get("docker", {}) or {}
+
+            docker_running = bool(docker_data.get("docker_running", docker_data.get("running", False)) if hasattr(docker_data, "get") else False)
+            raw_c_list = docker_data.get("containers", []) if hasattr(docker_data, "get") else []
+            container_count = int(
+                docker_data.get(
+                    "container_count",
+                    len(raw_c_list) if isinstance(raw_c_list, list) else 0,
+                ) if hasattr(docker_data, "get") else 0
+            )
+            docker_status = "running" if docker_running else "stopped"
+            docker_str = f"{docker_status} ({container_count} containers)"
+
+            log_offset = int(getattr(self, "last_log_offset", 0))
+            log_delta = int(getattr(self, "_last_log_delta_bytes", 0))
+            if log_delta == 0 and raw:
+                log_delta = len(raw.encode("utf-8", errors="replace"))
+            error_count = int(self._last_error_count)
+            bot_err_str = f"offset={log_offset}b (+{log_delta}b delta, {error_count} errs)"
+
+            assigned_count = len(assigned_tickets)
+            actionable_count = len(actionable_tickets)
+            actionable_ids = [
+                str(t.get("identifier") or t.get("id"))
+                for t in actionable_tickets
+                if t.get("identifier") or t.get("id")
+            ]
+            if actionable_count > 0:
+                linear_str = f"{assigned_count} assigned ({actionable_count} actionable: {', '.join(actionable_ids[:3])})"
+            else:
+                linear_str = f"{assigned_count} assigned (0 actionable)"
+
+            receipt_str = (
+                f"[SNIFF] Fleet: {fleet_str} | Disk: {disk_str} | "
+                f"Docker: {docker_str} | bot.err: {bot_err_str} | Linear: {linear_str}"
+            )
+            receipt_data = {
+                "fleet": {
+                    "total": total_nodes,
+                    "online": online_nodes,
+                    "nodes": nodes_data if isinstance(nodes_data, dict) else {},
+                },
+                "disk": {
+                    "free_gb": free_gb,
+                    "percent_used": pct_used,
+                    "pressure": disk_pressure,
+                },
+                "docker": {
+                    "running": docker_running,
+                    "container_count": container_count,
+                    "containers": raw_c_list if isinstance(raw_c_list, list) else [],
+                },
+                "bot_err": {
+                    "offset": log_offset,
+                    "delta_bytes": log_delta,
+                    "error_count": error_count,
+                },
+                "linear": {
+                    "assigned_count": assigned_count,
+                    "actionable_count": actionable_count,
+                    "ticket_ids": actionable_ids,
+                    "tickets": actionable_tickets,
+                },
+                "timestamp": time.time(),
+            }
+            self.last_sniff_receipt = receipt_data
+            self.last_sniff_receipt_str = receipt_str
+
+            # Direct WebUI Server logging & SSE broadcast
+            webui = getattr(self, "webui_server", None) or getattr(self, "server", None)
+            if webui is not None:
+                try:
+                    if hasattr(webui, "append_organ_log"):
+                        webui.append_organ_log("nose", receipt_str)
+                    if hasattr(webui, "broadcast"):
+                        webui.broadcast("nose_telemetry", {
+                            "sniff_receipt": receipt_data,
+                            "receipt_str": receipt_str,
+                            "timestamp": receipt_data["timestamp"],
+                        })
+                except Exception as we:
+                    logger.debug(f"WebUI server sniff receipt emit warning: {we}")
+
+            # Shoulder Tap Bus broadcast
+            if self.bus is not None:
+                try:
+                    sniff_alert = ShoulderTapAlert(
+                        alert_type="nose_sniff",
+                        source="nose",
+                        timestamp=time.time(),
+                        summary=receipt_str,
+                        data=receipt_data,
+                    )
+                    self.bus.publish(sniff_alert)
+                except Exception as be:
+                    logger.warning(f"Error publishing nose_sniff alert to bus: {be}")
+
             # 5. Quiescent Zero-Regex Gate: 0 tokens if quiet
             if self.evaluator.is_quiescent(errors, deltas):
                 logger.debug("NoseSentinel tick: Quiescent state, 0 errors, 0 actionable deltas.")
@@ -1735,7 +2400,7 @@ class NoseSentinel:
                     affected_nodes=[],
                     recommended_action="",
                 )
-                return email_alerts[0] if email_alerts else None
+                return linear_alert or (email_alerts[0] if email_alerts else None)
 
             # 6. Evaluate via NOSE_MODEL
             verdict = await self.evaluate_anomaly(errors, deltas)
@@ -1776,7 +2441,7 @@ class NoseSentinel:
 
                 return alert
 
-            return email_alerts[0] if email_alerts else None
+            return linear_alert or (email_alerts[0] if email_alerts else None)
 
     def start(self) -> asyncio.Task[Any]:
         """
@@ -1845,6 +2510,15 @@ class NoseSentinel:
                 except Exception as e:
                     logger.error(f"Error awaiting NoseSentinel task cancellation: {e}")
             self._task = None
+        if getattr(self, "linear_bridge", None) is not None:
+            if hasattr(self.linear_bridge, "close"):
+                try:
+                    res = self.linear_bridge.close()
+                    if inspect.isawaitable(res):
+                        await res
+                except Exception:
+                    pass
+            self.linear_bridge = None
         logger.info("NoseSentinel stopped cleanly")
 
     async def get_telemetry_digest(self, trigger_fresh_sniff: bool = False) -> Dict[str, Any]:
@@ -1923,6 +2597,7 @@ class NoseSentinel:
                 verdict_summary = str(self.last_verdict.get("summary") or verdict_summary)
 
         recent_err_count = _safe_int(getattr(self, "_last_error_count", 0), 0)
+        assigned_tickets_list = list(getattr(self, "_last_assigned_tickets", []))
 
         digest: Dict[str, Any] = {
             "seconds_ago": seconds_ago,
@@ -1935,6 +2610,8 @@ class NoseSentinel:
             "docker": docker_dict,
             "tailscale": tailscale_dict,
             "email": self.email_sniffer.get_telemetry(),
+            "assigned_tickets": assigned_tickets_list,
+            "linear_assigned_tickets": assigned_tickets_list,
             "recent_error_count": recent_err_count,
             "error_count": recent_err_count,
         }

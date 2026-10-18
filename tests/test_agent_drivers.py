@@ -140,6 +140,15 @@ class TestBaseAgentDriverABC(unittest.TestCase):
 class TestConfigModule(unittest.TestCase):
     """Test golem/config.py declarative environment resolution and zero-hardcoding."""
 
+    def setUp(self) -> None:
+        self._orig_env = dict(os.environ)
+        os.environ.pop("GOLEM_DEFAULT_HAND_WORKER", None)
+        os.environ.pop("FIRST_MATE_ENGINE", None)
+
+    def tearDown(self) -> None:
+        os.environ.clear()
+        os.environ.update(self._orig_env)
+
     def test_get_active_engine_default(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
             self.assertEqual(get_active_engine(), "antigravity")
@@ -409,9 +418,14 @@ class TestSessionRouterDriverResolution(unittest.IsolatedAsyncioTestCase):
     """Test SessionRouter dynamic engine resolution, driver_factory, and legacy adapter_factory."""
 
     async def asyncSetUp(self) -> None:
+        self._orig_env = dict(os.environ)
+        os.environ.pop("GOLEM_DEFAULT_HAND_WORKER", None)
+        os.environ.pop("FIRST_MATE_ENGINE", None)
         self.router: Optional[SessionRouter] = None
 
     async def asyncTearDown(self) -> None:
+        os.environ.clear()
+        os.environ.update(self._orig_env)
         if self.router:
             for s in list(self.router.sessions.values()):
                 try:

@@ -274,6 +274,65 @@ def get_engine_fallback_models(engine: Optional[str] = None) -> list[str]:
     return [m.strip() for m in raw.split(",") if m.strip()]
 
 
+def get_architect_model() -> str:
+    """
+    Resolve Tier 1 Architect / Liaison model (default: gemini-4-argon).
+    Resolves from GOLEM_MODEL_ARCHITECT, GOLEM_ARCHITECT_MODEL, or ARCHITECT_MODEL.
+    """
+    candidates = ["GOLEM_MODEL_ARCHITECT", "GOLEM_ARCHITECT_MODEL", "ARCHITECT_MODEL"]
+    for var in candidates:
+        val = (os.environ.get(var) or "").strip()
+        if val:
+            return val
+    file_env = _get_file_env()
+    for var in candidates:
+        val = (file_env.get(var) or "").strip()
+        if val:
+            return val
+    return "gemini-4-argon"
+
+
+def get_workhorse_model() -> str:
+    """
+    Resolve Tier 2 Agentic Workhorse model (default: gemini-3.8-flash).
+    Resolves from GOLEM_MODEL_WORKHORSE, GOLEM_MODEL_AGENTIC, GOLEM_WORKHORSE_MODEL, or WORKHORSE_MODEL.
+    """
+    candidates = [
+        "GOLEM_MODEL_WORKHORSE",
+        "GOLEM_MODEL_AGENTIC",
+        "GOLEM_WORKHORSE_MODEL",
+        "WORKHORSE_MODEL",
+    ]
+    for var in candidates:
+        val = (os.environ.get(var) or "").strip()
+        if val:
+            return val
+    file_env = _get_file_env()
+    for var in candidates:
+        val = (file_env.get(var) or "").strip()
+        if val:
+            return val
+    return "gemini-3.8-flash"
+
+
+def get_sentinel_model() -> str:
+    """
+    Resolve Tier 3 Sentinel / Harvester model (default: gemini-3.5-flash-lite).
+    Resolves from GOLEM_MODEL_SENTINEL, GOLEM_SENTINEL_MODEL, or SENTINEL_MODEL.
+    """
+    candidates = ["GOLEM_MODEL_SENTINEL", "GOLEM_SENTINEL_MODEL", "SENTINEL_MODEL"]
+    for var in candidates:
+        val = (os.environ.get(var) or "").strip()
+        if val:
+            return val
+    file_env = _get_file_env()
+    for var in candidates:
+        val = (file_env.get(var) or "").strip()
+        if val:
+            return val
+    return "gemini-3.5-flash-lite"
+
+
 def get_mouth_model() -> str:
     """
     Resolve Mouth model from GOLEM_MOUTH_MODEL, MOUTH_MODEL, or GEMINI_MODEL.
@@ -576,6 +635,9 @@ def get_config_dict() -> Dict[str, str]:
         "default_hand_worker": get_default_hand_worker(),
         "engine_model": get_engine_model(),
         "mouth_model": get_mouth_model(),
+        "architect_model": get_architect_model(),
+        "workhorse_model": get_workhorse_model(),
+        "sentinel_model": get_sentinel_model(),
         "mouth_fallback_models": ",".join(get_mouth_fallback_models()),
         "eyes_model": get_eyes_model(),
         "nose_model": get_nose_model(),

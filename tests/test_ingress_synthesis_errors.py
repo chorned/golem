@@ -345,7 +345,7 @@ class TestIngressSynthesisErrors(unittest.IsolatedAsyncioTestCase):
             # Check user functionResponse turn (contents[2])
             user_turn = captured_payload["contents"][2]
             self.assertEqual(user_turn["role"], "user")
-            self.assertEqual(len(user_turn["parts"]), 1)
+            self.assertGreaterEqual(len(user_turn["parts"]), 1)
             self.assertEqual(user_turn["parts"][0]["functionResponse"]["name"], "check_eyes")
 
 

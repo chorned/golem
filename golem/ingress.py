@@ -65,7 +65,15 @@ from golem.file_transfer import (
     sanitize_filename,
     save_staged_file,
 )
-from golem.config import get_mouth_model, get_default_hand_worker, get_host_dir, get_daemon_label
+from golem.config import (
+    get_mouth_model,
+    get_default_hand_worker,
+    get_host_dir,
+    get_daemon_label,
+    get_architect_model,
+    get_workhorse_model,
+    get_sentinel_model,
+)
 from golem.delegation import WorkerDelegator
 from golem.mouth import (
     DISPATCH_TASK_TOOL_DECLARATION,
@@ -77,6 +85,7 @@ from golem.mouth import (
     APPROVE_LINEAR_TASK_DECLARATION,
     CANCEL_ACTIVE_TASK_DECLARATION,
     build_mouth_system_instruction,
+    calculate_token_cost,
 )
 
 logger = logging.getLogger("Golem.Gateway.Ingress")
@@ -204,6 +213,128 @@ def strip_read_only_tools(tools: Any) -> List[Dict[str, Any]]:
         if decls:
             stripped.append({"functionDeclarations": decls})
     return stripped
+
+
+def compact_tool_output(tool_name: str, result: Any) -> Any:
+    """
+    Compact and sanitize verbose tool outputs before appending to working_contents.
+    Preserves essential operational fields while preventing KV cache bloat:
+    - read_project_file: cap large outputs (>12,000 chars) to first 100 lines + summary + last 50 lines.
+    - dispatch_task / check_eyes: cap buffer tails to bounded lines (max 100 lines).
+    - plan_task_with_subtasks / check_linear_task_status: prune verbose internal JSON schemas and keep ticket keys, titles, states, and URLs.
+    """
+    if result is None:
+        return result
+
+    if tool_name == "read_project_file":
+        if isinstance(result, dict) and "content" in result and isinstance(result["content"], str):
+            content = result["content"]
+            if len(content) > 12000:
+                lines = content.splitlines()
+                if len(lines) > 150:
+                    head = lines[:100]
+                    tail = lines[-50:]
+                    omitted = len(lines) - 150
+                    summary = f"... [{omitted} lines / {len(content)} chars truncated for context hygiene] ..."
+                    compacted = dict(result)
+                    compacted["content"] = "\n".join(head) + f"\n\n{summary}\n\n" + "\n".join(tail)
+                    compacted["compacted"] = True
+                    compacted["original_total_lines"] = len(lines)
+                    return compacted
+        elif isinstance(result, str) and len(result) > 12000:
+            lines = result.splitlines()
+            if len(lines) > 150:
+                head = lines[:100]
+                tail = lines[-50:]
+                omitted = len(lines) - 150
+                summary = f"... [{omitted} lines / {len(result)} chars truncated for context hygiene] ..."
+                return "\n".join(head) + f"\n\n{summary}\n\n" + "\n".join(tail)
+
+    elif tool_name in ("dispatch_task", "check_eyes"):
+        if isinstance(result, dict):
+            compacted = dict(result)
+            for k in ("output", "raw_output", "buffer_tail", "buffer", "tail"):
+                if k in compacted and isinstance(compacted[k], str):
+                    val = compacted[k]
+                    lines = val.splitlines()
+                    if len(lines) > 100:
+                        compacted[k] = "\n".join(lines[-100:])
+                        compacted[f"{k}_truncated"] = True
+            return compacted
+        elif isinstance(result, str):
+            lines = result.splitlines()
+            if len(lines) > 100:
+                return "\n".join(lines[-100:])
+
+    elif tool_name in ("plan_task_with_subtasks", "check_linear_task_status"):
+        if isinstance(result, dict):
+            compacted = {}
+            if "parent" in result and isinstance(result["parent"], dict):
+                p = result["parent"]
+                compacted["parent"] = {
+                    "identifier": p.get("identifier") or p.get("key") or p.get("id"),
+                    "title": p.get("title"),
+                    "state": (p.get("state") or {}).get("name") if isinstance(p.get("state"), dict) else p.get("state"),
+                    "url": p.get("url"),
+                }
+            if "subtasks" in result and isinstance(result["subtasks"], list):
+                compact_subtasks = []
+                for st in result["subtasks"]:
+                    if isinstance(st, dict):
+                        compact_subtasks.append({
+                            "identifier": st.get("identifier") or st.get("key") or st.get("id"),
+                            "title": st.get("title"),
+                            "state": (st.get("state") or {}).get("name") if isinstance(st.get("state"), dict) else st.get("state"),
+                            "url": st.get("url"),
+                        })
+                    else:
+                        compact_subtasks.append(st)
+                compacted["subtasks"] = compact_subtasks
+            if "tasks" in result and isinstance(result["tasks"], list):
+                compact_tasks = []
+                for t in result["tasks"]:
+                    if isinstance(t, dict):
+                        compact_tasks.append({
+                            "identifier": t.get("parent_key") or t.get("identifier") or t.get("key"),
+                            "title": t.get("title"),
+                            "state": t.get("state"),
+                            "url": t.get("url"),
+                            "subtasks": t.get("subtasks"),
+                        })
+                    else:
+                        compact_tasks.append(t)
+                compacted["tasks"] = compact_tasks
+            for keep_key in ("status", "success", "error", "message"):
+                if keep_key in result:
+                    compacted[keep_key] = result[keep_key]
+            return compacted if compacted else result
+
+    return result
+
+
+def is_high_complexity_turn(prompt: str) -> bool:
+    """Detect if prompt demands Tier 1 Architect (gemini-4-argon)."""
+    p_lower = (prompt or "").lower()
+    architect_indicators = [
+        "architect", "architecture", "refactor", "system design",
+        "redesign", "deep design", "migration plan", "codebase overhaul",
+        "architectural", "multi-phase refactor",
+    ]
+    return any(ind in p_lower for ind in architect_indicators)
+
+
+def route_mouth_turn_model(prompt: str, explicit_model: Optional[str] = None) -> str:
+    """
+    Route turn to appropriate tier:
+    - If explicit_model provided (or custom gateway model set), respect it unless routing routine turn.
+    - If high-complexity architectural planning/refactoring -> Tier 1 (gemini-4-argon).
+    - Otherwise -> Tier 2 Workhorse (gemini-3.8-flash).
+    """
+    if explicit_model and explicit_model not in ("gemini-4-argon", "gemini-3.8-flash"):
+        return explicit_model
+    if is_high_complexity_turn(prompt):
+        return get_architect_model()
+    return get_workhorse_model()
 
 
 def build_linear_notes_block(notes: Optional[Dict[str, Any]], max_chars: int = 3500) -> str:
@@ -390,33 +521,23 @@ class MouthToolsList(list):
 
 
 def get_mouth_tools_declaration() -> List[Dict[str, Any]]:
-    """Return standard Google Gemini REST API tools declaration."""
-    return MouthToolsList([
-        {
-            "functionDeclarations": [
-                DISPATCH_TASK_TOOL_DECLARATION,
-                DISPATCH_SUBTASKS_TOOL_DECLARATION,
-                CHECK_EYES_TOOL_DECLARATION,
-                CHECK_NOSE_TOOL_DECLARATION,
-            ]
-        },
-        {
-            "functionDeclarations": [
-                CONSULT_MEMORY_TOOL_DECLARATION,
-                READ_PROJECT_FILE_DECLARATION,
-                SHARE_ARTIFACT_TOOL_DECLARATION,
-                PROPOSE_MEMORY_UPDATE_TOOL_DECLARATION,
-            ]
-        },
-        {
-            "functionDeclarations": [
-                PLAN_TASK_WITH_SUBTASKS_DECLARATION,
-                CHECK_LINEAR_TASK_STATUS_DECLARATION,
-                APPROVE_LINEAR_TASK_DECLARATION,
-                CANCEL_ACTIVE_TASK_DECLARATION,
-            ]
-        },
-    ])
+    """Return standard Google Gemini REST API tools declaration with deterministically sorted functionDeclarations."""
+    all_decls = [
+        DISPATCH_TASK_TOOL_DECLARATION,
+        DISPATCH_SUBTASKS_TOOL_DECLARATION,
+        CHECK_EYES_TOOL_DECLARATION,
+        CHECK_NOSE_TOOL_DECLARATION,
+        CONSULT_MEMORY_TOOL_DECLARATION,
+        READ_PROJECT_FILE_DECLARATION,
+        SHARE_ARTIFACT_TOOL_DECLARATION,
+        PROPOSE_MEMORY_UPDATE_TOOL_DECLARATION,
+        PLAN_TASK_WITH_SUBTASKS_DECLARATION,
+        CHECK_LINEAR_TASK_STATUS_DECLARATION,
+        APPROVE_LINEAR_TASK_DECLARATION,
+        CANCEL_ACTIVE_TASK_DECLARATION,
+    ]
+    sorted_decls = sorted(all_decls, key=lambda d: d.get("name", ""))
+    return MouthToolsList([{"functionDeclarations": sorted_decls}])
 
 
 def _is_mock_object(obj: Any) -> bool:
@@ -1064,6 +1185,8 @@ class IngressGateway:
         self._file_locks_guard = asyncio.Lock()
         self._seen_email_ids: Set[str] = set()
         self.nose_sentinel = nose_sentinel
+        if self.nose_sentinel is not None and getattr(self.nose_sentinel, "session_router", None) is None:
+            self.nose_sentinel.session_router = self.router
         self.webui_server = webui_server
         self.webui = webui_server
 
@@ -1079,6 +1202,10 @@ class IngressGateway:
         if self.bus is not None and hasattr(self.bus, "subscribe"):
             self.bus.subscribe(self._handle_health_anomaly_alert, alert_types=["health_anomaly"])
             self.bus.subscribe(self._handle_email_received_alert, alert_types=["email_received"])
+            self.bus.subscribe(
+                self._handle_linear_assigned_tickets_alert,
+                alert_types=["linear_assigned_tickets", "assigned_tickets"],
+            )
 
         # Ensure router shares the same event bus if not explicitly configured
         if self.router is not None and getattr(self.router, "bus", None) is None:
@@ -1100,13 +1227,31 @@ class IngressGateway:
     def _broadcast_mouth_log(self, text: str, model: Optional[str] = None) -> None:
         """Broadcast live multi-hop mouth telemetry log line to connected WebUI."""
         webui = getattr(self, "webui", None) or getattr(self, "webui_server", None)
+        if webui is None:
+            try:
+                from golem.webui import get_active_webui_server
+                webui = get_active_webui_server()
+            except Exception:
+                pass
         if webui is not None and not _is_mock_object(webui):
             effective_model = model or getattr(self, "mouth_model", None) or get_mouth_model()
+            if hasattr(webui, "append_organ_log"):
+                try:
+                    webui.append_organ_log("mouth", text)
+                    return
+                except Exception as exc:
+                    logger.debug(f"WebUI append_organ_log failed: {exc}")
             if hasattr(webui, "record_mouth_event"):
                 try:
                     webui.record_mouth_event(briefing=text, model=effective_model)
+                    return
                 except Exception as exc:
                     logger.debug(f"WebUI record_mouth_event failed: {exc}")
+            if hasattr(webui, "broadcast"):
+                try:
+                    webui.broadcast("mouth_briefing", {"briefing": text, "model": effective_model})
+                except Exception as exc:
+                    logger.debug(f"WebUI broadcast failed: {exc}")
 
     async def _broadcast_mouth_briefing(self, briefing: str, model: Optional[str] = None) -> None:
         """Broadcast executive mouth briefing to connected WebUI clients."""
@@ -1170,6 +1315,355 @@ class IngressGateway:
 
         elif alert.alert_type == "email_received":
             await self._handle_email_received_alert(alert, client=client)
+
+        elif alert.alert_type in ("linear_assigned_tickets", "assigned_tickets"):
+            await self._handle_linear_assigned_tickets_alert(alert, client=client)
+
+    def _find_existing_thread_for_ticket(self, channel: str, ticket: Dict[str, Any]) -> Optional[str]:
+        """Find an existing Slack thread_ts in recent history bound to this specific Linear ticket."""
+        if not channel or not ticket or not isinstance(ticket, dict):
+            return None
+        ident = str(ticket.get("identifier") or ticket.get("id") or "").strip()
+        if not ident:
+            return None
+
+        best_thread_ts: Optional[str] = None
+        best_updated: float = -1.0
+        prefix = f"{channel}:"
+
+        def _record_matches_ticket(rec: Dict[str, Any]) -> bool:
+            if not isinstance(rec, dict):
+                return False
+            for k_field in ("active_linear_parent_key", "linear_issue_key", "linear_parent_key"):
+                if str(rec.get(k_field) or "").strip() == ident:
+                    return True
+            parent = rec.get("parent")
+            if isinstance(parent, dict) and str(parent.get("identifier") or "").strip() == ident:
+                return True
+            plan = rec.get("linear_plan_cache")
+            if isinstance(plan, dict):
+                p_id = (plan.get("parent") or {}).get("identifier")
+                if str(p_id or "").strip() == ident:
+                    return True
+            t_ctx = rec.get("linear_tickets_context")
+            if isinstance(t_ctx, list) and len(t_ctx) == 1 and isinstance(t_ctx[0], dict):
+                if str(t_ctx[0].get("identifier") or "").strip() == ident:
+                    return True
+            return False
+
+        for k, cache_val in list(_THREAD_PLAN_CACHE.items()):
+            if k.startswith(prefix) and not k.endswith(":latest_linear_alert"):
+                t_ts = k[len(prefix):]
+                if t_ts and _record_matches_ticket(cache_val):
+                    upd = float(cache_val.get("updated_at") or 0.0)
+                    if upd >= best_updated:
+                        best_updated = upd
+                        best_thread_ts = t_ts
+
+        if hasattr(self, "router") and self.router:
+            sessions_map = getattr(self.router, "sessions", {})
+            if isinstance(sessions_map, dict):
+                for s_key, s_obj in list(sessions_map.items()):
+                    if isinstance(s_key, str) and s_key.startswith(prefix):
+                        t_ts = s_key[len(prefix):]
+                        s_dict = {
+                            "active_linear_parent_key": getattr(s_obj, "active_linear_parent_key", None),
+                            "linear_issue_key": getattr(s_obj, "linear_issue_key", None),
+                            "linear_plan_cache": getattr(s_obj, "linear_plan_cache", None),
+                            "linear_tickets_context": getattr(s_obj, "linear_tickets_context", None),
+                        }
+                        if t_ts and _record_matches_ticket(s_dict):
+                            upd = float(getattr(s_obj, "last_active_ts", 0.0) or 0.0)
+                            if upd >= best_updated:
+                                best_updated = upd
+                                best_thread_ts = t_ts
+
+            reg_map = getattr(self.router, "_registry", {})
+            if isinstance(reg_map, dict):
+                for r_key, r_val in list(reg_map.items()):
+                    if isinstance(r_key, str) and r_key.startswith(prefix) and not r_key.endswith(":latest_linear_alert"):
+                        t_ts = r_key[len(prefix):]
+                        if t_ts and isinstance(r_val, dict) and _record_matches_ticket(r_val):
+                            upd = float(r_val.get("updated_at") or 0.0)
+                            if upd >= best_updated:
+                                best_updated = upd
+                                best_thread_ts = t_ts
+
+        return best_thread_ts
+
+    def _build_ticket_runtime_telemetry(
+        self,
+        ticket: Optional[Dict[str, Any]] = None,
+        now: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """
+        Assemble live in-memory runtime telemetry across active hands, sessions,
+        queued batch subtasks, and recent human/agent interaction timestamps.
+        """
+        current_time = float(now) if now is not None else time.time()
+        in_flight_keys: Set[str] = set()
+        queued_keys: Set[str] = set()
+        active_hands_summary: List[Dict[str, Any]] = []
+        last_error: Optional[str] = None
+        latest_interaction_ts: float = 0.0
+
+        related_keys: Set[str] = set()
+        if isinstance(ticket, dict):
+            t_ident = str(ticket.get("identifier") or ticket.get("id") or "").strip()
+            if t_ident:
+                related_keys.add(t_ident)
+            for st in (ticket.get("subtasks") or []):
+                if isinstance(st, dict) and st.get("identifier"):
+                    related_keys.add(str(st["identifier"]))
+
+        # 1. Inspect WebUI active hands
+        webui = getattr(self, "webui_server", None) or getattr(self, "webui", None)
+        if webui is not None and not _is_mock_object(webui):
+            raw_hands = getattr(webui, "_active_hands", {})
+            if isinstance(raw_hands, dict):
+                terminal_statuses = {"EXIT_0", "COMPLETED", "FAILED", "DONE", "SETTLED", "CANCELLED", "SUCCESS"}
+                for h_key, h_val in list(raw_hands.items()):
+                    if isinstance(h_val, dict):
+                        st_str = str(h_val.get("status") or "").upper()
+                        cmd_str = str(h_val.get("command") or "")
+                        if st_str not in terminal_statuses and h_val.get("exit_code") is None:
+                            active_hands_summary.append({
+                                "pane_id": h_val.get("pane_id") or h_key,
+                                "node": h_val.get("node", "localhost"),
+                                "status": st_str or "RUNNING",
+                                "command": cmd_str[:120],
+                                "pid": h_val.get("pid"),
+                                "started_at": h_val.get("started_at") or h_val.get("start_time"),
+                                "last_output_at": h_val.get("last_output_at") or h_val.get("updated_at"),
+                            })
+                            for k in re.findall(r"CHO-\d+", f"{h_key} {cmd_str}"):
+                                in_flight_keys.add(k)
+                        elif st_str in ("FAILED", "ERROR") or (h_val.get("exit_code") not in (None, 0)):
+                            if any(rk in f"{h_key} {cmd_str}" for rk in related_keys):
+                                last_error = str(h_val.get("error") or f"Hand {h_key} exited with status {st_str}")
+
+        # 2. Inspect live sessions in SessionRouter
+        if hasattr(self, "router") and self.router is not None:
+            sessions_map = getattr(self.router, "sessions", {})
+            if isinstance(sessions_map, dict):
+                for s_key, s_obj in list(sessions_map.items()):
+                    state_obj = getattr(s_obj, "state", None)
+                    state_val_s = getattr(state_obj, "value", state_obj)
+                    in_flight_s = getattr(s_obj, "in_flight_subtasks", None)
+                    queued_s = getattr(s_obj, "queued_subtasks", None)
+                    parent_keys_s = getattr(s_obj, "active_linear_parent_keys", None)
+
+                    s_keys: Set[str] = set()
+                    for attr_name in ("active_linear_parent_key", "linear_issue_key", "linear_issue_id"):
+                        val = getattr(s_obj, attr_name, None)
+                        if isinstance(val, str) and val:
+                            s_keys.add(val)
+                    if isinstance(parent_keys_s, (list, tuple, set)):
+                        for pk in parent_keys_s:
+                            if isinstance(pk, str) and pk:
+                                s_keys.add(pk)
+                    if isinstance(in_flight_s, (list, tuple, set)):
+                        for item in in_flight_s:
+                            if isinstance(item, dict):
+                                for k_f in ("issue_key", "parent_key", "identifier"):
+                                    if item.get(k_f):
+                                        in_flight_keys.add(str(item[k_f]))
+                                        s_keys.add(str(item[k_f]))
+                            elif isinstance(item, str) and item:
+                                in_flight_keys.add(item)
+                                s_keys.add(item)
+                    if isinstance(queued_s, (list, tuple, set)):
+                        for item in queued_s:
+                            if isinstance(item, dict):
+                                for k_f in ("issue_key", "parent_key", "identifier"):
+                                    if item.get(k_f):
+                                        queued_keys.add(str(item[k_f]))
+                                        s_keys.add(str(item[k_f]))
+                            elif isinstance(item, str) and item:
+                                queued_keys.add(item)
+                                s_keys.add(item)
+
+                    is_busy_s = bool(getattr(s_obj, "is_busy", False) or state_val_s in ("running", "working"))
+                    if is_busy_s:
+                        in_flight_keys.update(s_keys)
+
+                    if related_keys and related_keys.intersection(s_keys):
+                        for ts_attr in ("last_dispatched_at", "last_activity", "last_active_ts", "updated_at"):
+                            ts_val = getattr(s_obj, ts_attr, None)
+                            if isinstance(ts_val, (int, float)) and not isinstance(ts_val, bool):
+                                if float(ts_val) > latest_interaction_ts:
+                                    latest_interaction_ts = float(ts_val)
+                        s_err = getattr(s_obj, "last_subtask_error", None)
+                        if isinstance(s_err, str) and s_err:
+                            last_error = s_err
+
+        # 3. Inspect gateway-level ticket activity tracker
+        activity_map = getattr(self, "_ticket_activity_tracker", None)
+        if isinstance(activity_map, dict) and related_keys:
+            for rk in related_keys:
+                entry = activity_map.get(rk)
+                if isinstance(entry, dict):
+                    ts_e = entry.get("last_interaction_at") or entry.get("updated_at") or 0.0
+                    if isinstance(ts_e, (int, float)) and float(ts_e) > latest_interaction_ts:
+                        latest_interaction_ts = float(ts_e)
+                    if entry.get("status") == "in_flight":
+                        in_flight_keys.add(rk)
+                    elif entry.get("status") == "queued":
+                        queued_keys.add(rk)
+                    if entry.get("last_error") and not last_error:
+                        last_error = str(entry["last_error"])
+
+        is_in_flight = bool(related_keys and related_keys.intersection(in_flight_keys))
+        is_queued = bool(related_keys and related_keys.intersection(queued_keys))
+        sec_since: Optional[float] = (
+            max(0.0, current_time - latest_interaction_ts)
+            if latest_interaction_ts > 0.0
+            else None
+        )
+
+        is_zombie_in_progress = False
+        if isinstance(ticket, dict):
+            state_val = ticket.get("state")
+            if isinstance(state_val, dict):
+                st_name = str(state_val.get("name") or "").lower()
+                st_type = str(state_val.get("type") or "").lower()
+            else:
+                st_name = str(state_val or "").lower()
+                st_type = str(ticket.get("state_type") or "").lower()
+            is_started = bool("in progress" in st_name or st_type == "started" or st_name == "started")
+            if is_started and not is_in_flight and not is_queued:
+                is_zombie_in_progress = True
+
+        return {
+            "is_in_flight": is_in_flight,
+            "is_queued_in_batch": is_queued,
+            "is_zombie_in_progress": is_zombie_in_progress,
+            "in_flight_keys": sorted(in_flight_keys),
+            "queued_keys": sorted(queued_keys),
+            "active_hands": active_hands_summary,
+            "seconds_since_last_interaction": sec_since,
+            "last_error": last_error,
+        }
+
+    async def _handle_linear_assigned_tickets_alert(self, alert: Any, client: Optional[Any] = None) -> None:
+        """
+        Receive assigned Linear ticket alerts from The Nose Sentinel.
+        Enforces:
+          1. In-Flight vs. Stalled Awareness via live runtime telemetry & Mouth Nudge Hygiene.
+          2. One Thread Per Ticket (never bundling unrelated parent tickets into one Slack message;
+             reuses an existing thread for that ticket if present, or posts a standalone message per ticket).
+          3. Natural, context-aware calls-to-action based on actual subtask state.
+        """
+        if not alert:
+            return
+        data = getattr(alert, "data", {}) or {}
+        tickets = data.get("tickets") or []
+        if not tickets:
+            return
+
+        # Defensive Active Work Detection filter
+        tickets = [t for t in tickets if not self._is_ticket_actively_worked(t)]
+        if not tickets:
+            return
+
+        channel = (
+            getattr(alert, "channel", None)
+            or data.get("channel")
+            or os.environ.get("FIRSTMATE_DEFAULT_CHANNEL")
+            or os.environ.get("GOLEM_DEFAULT_CHANNEL")
+        )
+        if not channel:
+            try:
+                from golem.notify import DEFAULT_SLACK_CHANNEL
+                channel = DEFAULT_SLACK_CHANNEL
+            except Exception:
+                channel = ""
+
+        explicit_thread_ts = getattr(alert, "thread_ts", None) or data.get("thread_ts")
+        from golem.mouth import synthesize_linear_ticket_nudge
+
+        for ticket in tickets:
+            if not isinstance(ticket, dict):
+                continue
+            runtime_telemetry = self._build_ticket_runtime_telemetry(ticket)
+            msg_text = await synthesize_linear_ticket_nudge(ticket, runtime_telemetry=runtime_telemetry)
+            if not msg_text:
+                continue
+
+            target_thread_ts = explicit_thread_ts or self._find_existing_thread_for_ticket(channel, ticket)
+            posted_ts = ""
+
+            if client and channel and hasattr(client, "chat_postMessage"):
+                try:
+                    resp = client.chat_postMessage(channel=channel, text=msg_text, thread_ts=target_thread_ts)
+                    if inspect.isawaitable(resp):
+                        resp = await resp
+                    if isinstance(resp, dict):
+                        posted_ts = str(resp.get("ts") or "")
+                    elif hasattr(resp, "data") and isinstance(resp.data, dict):
+                        posted_ts = str(resp.data.get("ts") or "")
+                except Exception as ce:
+                    logger.warning(f"chat_postMessage for linear assigned ticket failed: {ce}")
+
+            if not posted_ts and channel:
+                try:
+                    from golem.notify import send_slack_message
+                    resp = await send_slack_message(text=msg_text, channel=channel, thread_ts=target_thread_ts)
+                    if isinstance(resp, dict):
+                        posted_ts = str(resp.get("ts") or "")
+                    elif hasattr(resp, "data") and isinstance(resp.data, dict):
+                        posted_ts = str(resp.data.get("ts") or "")
+                except Exception as se:
+                    logger.warning(f"send_slack_message for linear assigned ticket failed: {se}")
+
+            effective_root_ts = target_thread_ts or getattr(alert, "root_ts", None) or data.get("root_ts") or ""
+            bound_ts = str(effective_root_ts or posted_ts or "").strip()
+            now_ts = time.time()
+            t_ident = str(ticket.get("identifier") or "").strip()
+            context_payload = {
+                "linear_tickets_context": [ticket],
+                "active_linear_parent_key": t_ident,
+                "parent": ticket,
+                "subtasks": ticket.get("subtasks") or [],
+                "updated_at": now_ts,
+            }
+
+            if channel and bound_ts:
+                bound_key = f"{channel}:{bound_ts}"
+                _THREAD_PLAN_CACHE[bound_key] = context_payload
+                if hasattr(self, "router") and self.router and hasattr(self.router, "_registry"):
+                    existing_rec = self.router._registry.get(bound_key) or {}
+                    existing_rec["linear_tickets_context"] = [ticket]
+                    if t_ident:
+                        existing_rec["active_linear_parent_key"] = t_ident
+                    existing_rec["updated_at"] = now_ts
+                    self.router._registry[bound_key] = existing_rec
+
+        if channel and hasattr(self, "router") and self.router and hasattr(self.router, "_save_registry"):
+            try:
+                self.router._save_registry()
+            except Exception as sre:
+                logger.debug(f"Unable to save router registry: {sre}")
+
+    def _is_ticket_actively_worked(self, ticket: Dict[str, Any], now: Optional[float] = None) -> bool:
+        """Determine whether a Linear ticket is actively being worked on or queued in an active batch."""
+        try:
+            telemetry = self._build_ticket_runtime_telemetry(ticket, now=now)
+            if telemetry.get("is_in_flight") or telemetry.get("is_queued_in_batch"):
+                return True
+            sec_since = telemetry.get("seconds_since_last_interaction")
+            if isinstance(sec_since, (int, float)) and 0.0 <= float(sec_since) <= 900.0:
+                return True
+            from golem.nose import is_ticket_actively_worked
+            return is_ticket_actively_worked(
+                ticket,
+                session_router=getattr(self, "router", None),
+                registry_path=getattr(getattr(self, "router", None), "registry_path", None),
+                now=now,
+            )
+        except Exception as exc:
+            logger.debug(f"Error checking active work in IngressGateway: {exc}")
+            return False
 
     async def _handle_health_anomaly_alert(self, alert: Any, client: Optional[Any] = None) -> None:
         """Receive health anomaly alerts from The Nose Sentinel and deliver advisory to Carl."""
@@ -1611,8 +2105,6 @@ class IngressGateway:
                 "status": "failed",
             }
 
-        return results
-
     async def handle_file_shared(self, event: Dict[str, Any], client: Any) -> None:
         """
         Capture standalone file_shared event, retrieve metadata via files_info, and stage file.
@@ -1825,6 +2317,12 @@ class IngressGateway:
         if not clean_text and not has_files:
             return
 
+        inbound_preview = " ".join(clean_text.splitlines()).strip()
+        if len(inbound_preview) > 140:
+            inbound_preview = inbound_preview[:137] + "..."
+        if inbound_preview:
+            self._broadcast_mouth_log(f"[INBOUND] {inbound_preview}")
+
         # 3. Non-verbal ingress acknowledgment (<200ms)
         # ZERO canned greeting announcements are posted
         if ts:
@@ -2002,15 +2500,61 @@ class IngressGateway:
                                 h for h in raw_hands
                                 if not (isinstance(h, dict) and (str(h.get("status", "")).upper() in terminal_statuses or h.get("exit_code") is not None))
                             ]
-                active_count = len(active_hands)
-                if active_count > 0:
-                    msg = f"⚠️ *Update Aborted:* Fleet active with {active_count} executing task(s). Wait for completion before reloading."
-                    if ts:
-                        await swap_reaction(client, channel, ts, "gear", "warning")
-                    await self._post_response(client, channel, thread_ts, msg, is_imessage)
-                    return
 
-                msg = "🚀 *Update:* Verifying core test suite and fleet AGY binaries..."
+                # Gracefully close any open/stuck hands and busy sessions rather than aborting
+                closed_count = len(active_hands)
+                if getattr(self, "webui_server", None):
+                    ws = self.webui_server
+                    try:
+                        is_mock = "Mock" in type(ws).__name__
+                        if hasattr(ws, "close_all_open_hands") and (not is_mock or "close_all_open_hands" in ws.__dict__):
+                            ws.close_all_open_hands(reason="Gracefully closed for !update")
+                        raw_hands = getattr(ws, "_active_hands", None)
+                        if isinstance(raw_hands, (dict, list, set)):
+                            raw_hands.clear()
+                    except Exception as close_err:
+                        logger.warning(f"Error closing open hands during !update: {close_err}")
+
+                if hasattr(self, "router") and self.router is not None:
+                    sessions_map = getattr(self.router, "sessions", {})
+                    if isinstance(sessions_map, dict):
+                        for s_obj in list(sessions_map.values()):
+                            state_obj = getattr(s_obj, "state", None)
+                            state_val_s = getattr(state_obj, "value", state_obj)
+                            if getattr(s_obj, "is_busy", False) or state_val_s in ("running", "working") or getattr(s_obj, "status", "") == "running":
+                                closed_count += 1
+                                try:
+                                    cancel_fn = getattr(s_obj, "cancel_execution", None)
+                                    if callable(cancel_fn):
+                                        res_c = cancel_fn()
+                                        if inspect.isawaitable(res_c):
+                                            await res_c
+                                except Exception as ce:
+                                    logger.debug(f"Session cancel_execution warning during !update: {ce}")
+                                try:
+                                    s_obj.is_busy = False
+                                    if hasattr(s_obj, "status"):
+                                        s_obj.status = "idle"
+                                    for q_attr in ("in_flight_subtasks", "queued_subtasks", "pending_subtasks"):
+                                        q_val = getattr(s_obj, q_attr, None)
+                                        if isinstance(q_val, (list, set, dict)):
+                                            q_val.clear()
+                                except Exception:
+                                    pass
+
+                # Also reconcile any orphaned Linear [Hand] tickets in the background
+                try:
+                    if not _linear_disabled_for_tests():
+                        bridge = self._get_linear_bridge()
+                        if getattr(bridge, "api_key", None) and hasattr(bridge, "reconcile_zombie_hand_issues"):
+                            asyncio.create_task(bridge.reconcile_zombie_hand_issues())
+                except Exception:
+                    pass
+
+                if closed_count > 0:
+                    msg = f"🚀 *Update:* Gracefully closed {closed_count} open task(s). Verifying core test suite and fleet AGY binaries..."
+                else:
+                    msg = "🚀 *Update:* Verifying core test suite and fleet AGY binaries..."
                 if ts:
                     await swap_reaction(client, channel, ts, "gear", "eyes")
                 if thread_ts:
@@ -2073,9 +2617,14 @@ class IngressGateway:
 
                     table_lines.append("```")
 
+                    gate_detail = (
+                        f"Passed (gracefully closed {closed_count} open task(s); backstage hands quiescent)"
+                        if closed_count > 0
+                        else "Passed (0 active tasks running; backstage hands quiescent)"
+                    )
                     report = (
                         "🚀 *Full-Stack Update & Refresh Complete*\n\n"
-                        f"• *Pre-Flight Task Gate:* Passed (0 active tasks running; backstage hands quiescent)\n"
+                        f"• *Pre-Flight Task Gate:* {gate_detail}\n"
                         f"• *Regression Verification:* {test_str}\n"
                         f"• *Code Synchronization:* {git_bullet}\n"
                         f"• *Herdr Multiplexer:* {herdr_bullet}\n"
@@ -2956,31 +3505,56 @@ class IngressGateway:
             except Exception as exc:
                 logger.debug(f"WebUI hand_spawn broadcast warning ({effective_pane_id}): {exc}")
 
+        linear_guardrail = (
+            "\n[LINEAR GUARDRAIL: NEVER call Linear GraphQL APIs or modify Linear issue states directly from a Hand. Only The Mouth manages Linear ticket transitions.]\n"
+            "[IRON LAW OF EXTERNAL INTEGRATIONS — NO SILENT MOCKS: Never fabricate synthetic fallbacks, mock IDs, or offline heuristic stubs when an external API is blocked by auth, 2FA, or WAF/Cloudflare/Imperva. Fail loudly at the boundary, leave downstream state untouched, and report the exact blocker. Never claim 'Staged', 'Deployed', or 'Sent' without a verified network response.]\n"
+        )
+        task_prompt = task_brief
+        if "[LINEAR GUARDRAIL:" not in task_prompt:
+            task_prompt = f"{task_prompt}{linear_guardrail}"
+
         # 3. Stream / execute subtask
         accumulator = BackstageExecutionAccumulator()
         try:
             if session is not None and hasattr(self, "_stream_backstage_events"):
                 try:
-                    stream_gen = self._stream_backstage_events(session, task_brief)
-                    async for event_item in stream_gen:
-                        accumulator.record_event(event_item)
-                        delta_text = _format_hand_event_for_webui(event_item)
-                        if delta_text and webui is not None:
+                    stream_lock = getattr(session, "_hand_stream_lock", None)
+                    if stream_lock is None:
+                        stream_lock = asyncio.Lock()
+                        setattr(session, "_hand_stream_lock", stream_lock)
+                    async with stream_lock:
+                        if issue_key:
+                            session.linear_issue_key = issue_key
+                        if client and channel and thread_ts:
                             try:
-                                res = webui.update_hand_buffer(pane_id=effective_pane_id, delta=delta_text)
-                                if inspect.isawaitable(res):
-                                    await res
+                                await set_assistant_status(
+                                    client,
+                                    channel,
+                                    thread_ts,
+                                    f"Working on {issue_key or role_name or 'subtask'}...",
+                                )
                             except Exception as exc:
-                                logger.debug(f"WebUI update_hand_buffer warning: {exc}")
-                            try:
-                                res = webui.broadcast("hand_buffer", {
-                                    "pane_id": effective_pane_id,
-                                    "delta": delta_text,
-                                })
-                                if inspect.isawaitable(res):
-                                    await res
-                            except Exception as exc:
-                                logger.debug(f"WebUI hand_buffer broadcast warning: {exc}")
+                                logger.debug(f"Slack assistant status notice: {exc}")
+                        stream_gen = self._stream_backstage_events(session, task_prompt)
+                        async for event_item in stream_gen:
+                            accumulator.record_event(event_item)
+                            delta_text = _format_hand_event_for_webui(event_item)
+                            if delta_text and webui is not None:
+                                try:
+                                    res = webui.update_hand_buffer(pane_id=effective_pane_id, delta=delta_text)
+                                    if inspect.isawaitable(res):
+                                        await res
+                                except Exception as exc:
+                                    logger.debug(f"WebUI update_hand_buffer warning: {exc}")
+                                try:
+                                    res = webui.broadcast("hand_buffer", {
+                                        "pane_id": effective_pane_id,
+                                        "delta": delta_text,
+                                    })
+                                    if inspect.isawaitable(res):
+                                        await res
+                                except Exception as exc:
+                                    logger.debug(f"WebUI hand_buffer broadcast warning: {exc}")
                 except Exception as exc:
                     accumulator.record_event(FinishEvent(status="ERROR", response="", error=str(exc)))
             else:
@@ -3034,13 +3608,14 @@ class IngressGateway:
                     bridge = self._get_linear_bridge()
                     t_status = getattr(accumulator, "turn_status", "SUCCESS")
                     exit_c = 0 if t_status == "SUCCESS" else 1
-                    out_tail = getattr(accumulator, "output_tail", "") or accumulator.get_full_output()[:2000]
-                    await bridge.settle_subtask_and_evaluate_parent(
-                        subtask_issue_id=issue_key,
-                        exit_code=exit_c,
-                        output_tail=out_tail,
-                        pane_coordinate=effective_pane_id,
-                    )
+                    if exit_c == 0 and t_status == "SUCCESS":
+                        out_tail = getattr(accumulator, "output_tail", "") or accumulator.get_full_output()[:2000]
+                        await bridge.settle_subtask_and_evaluate_parent(
+                            subtask_issue_id=issue_key,
+                            exit_code=exit_c,
+                            output_tail=out_tail,
+                            pane_coordinate=effective_pane_id,
+                        )
                 except Exception as exc:
                     logger.debug(f"Linear subtask settlement warning ({issue_key}): {exc}")
 
@@ -3083,12 +3658,91 @@ class IngressGateway:
         # Multi-hand batch routing (dispatch_subtasks)
         if subtasks:
             mode = (execution_mode or kwargs.get("mode") or "parallel").lower()
-            if mode == "parallel":
-                results = await asyncio.gather(
-                    *[
-                        self._spawn_hand(
+            now_ts = time.time()
+            all_sub_keys = [str(t.get("issue_key")).strip() for t in subtasks if t.get("issue_key")]
+            all_parent_keys = {str(t.get("parent_key")).strip() for t in subtasks if t.get("parent_key")}
+            if parent_issue_key:
+                all_parent_keys.add(str(parent_issue_key).strip())
+            if not hasattr(self, "_ticket_activity_tracker") or self._ticket_activity_tracker is None:
+                self._ticket_activity_tracker = {}
+            if session is not None:
+                session.last_dispatched_at = now_ts
+                session.active_linear_parent_keys = sorted(all_parent_keys)
+                session.queued_subtasks = list(all_sub_keys)
+                session.in_flight_subtasks = []
+            for pk in all_parent_keys | set(all_sub_keys):
+                if pk:
+                    self._ticket_activity_tracker[pk] = {
+                        "last_dispatched_at": now_ts,
+                        "in_flight_subtasks": [],
+                        "queued_subtasks": list(all_sub_keys),
+                        "last_error": None,
+                    }
+            ack_task: Optional[asyncio.Task] = None
+            if client and channel:
+                async def _delayed_subtasks_ack() -> None:
+                    try:
+                        await asyncio.sleep(max(0.05, yield_timeout))
+                        ack_msg = (
+                            natural_ack_text.strip()
+                            if (natural_ack_text and natural_ack_text.strip())
+                            else (
+                                f"⚙️ *On it:* Executing {len(subtasks)} project subtask(s) in the background. "
+                                "I'll update each ticket to `Claimed Fixed` as it settles and brief you when complete."
+                            )
+                        )
+                        await self._post_response(client, channel, thread_ts, ack_msg, is_imessage)
+                    except (asyncio.CancelledError, Exception):
+                        pass
+                ack_task = asyncio.create_task(_delayed_subtasks_ack())
+            try:
+                if mode == "parallel":
+                    if session is not None:
+                        session.in_flight_subtasks = list(all_sub_keys)
+                        session.queued_subtasks = []
+                    for pk in all_parent_keys | set(all_sub_keys):
+                        if pk and pk in self._ticket_activity_tracker:
+                            self._ticket_activity_tracker[pk]["in_flight_subtasks"] = list(all_sub_keys)
+                            self._ticket_activity_tracker[pk]["queued_subtasks"] = []
+                    results = await asyncio.gather(
+                        *[
+                            self._spawn_hand(
+                                task,
+                                pane_id=f"hand_{task['issue_key']}" if task.get("issue_key") else f"hand_{i}",
+                                session=session,
+                                client=client,
+                                channel=channel,
+                                thread_ts=thread_ts,
+                                worker=worker,
+                                **kwargs,
+                            )
+                            for i, task in enumerate(subtasks)
+                        ],
+                        return_exceptions=True,
+                    )
+                else:  # sequential
+                    results = []
+                    for i, task in enumerate(subtasks):
+                        cur_key = str(task.get("issue_key") or "").strip()
+                        rem_keys = [
+                            str(t.get("issue_key") or "").strip()
+                            for t in subtasks[i + 1:]
+                            if t.get("issue_key")
+                        ]
+                        step_ts = time.time()
+                        if session is not None:
+                            session.last_dispatched_at = step_ts
+                            session.in_flight_subtasks = [cur_key] if cur_key else []
+                            session.queued_subtasks = rem_keys
+                        for pk in all_parent_keys | set(all_sub_keys):
+                            if pk and pk in self._ticket_activity_tracker:
+                                self._ticket_activity_tracker[pk]["last_dispatched_at"] = step_ts
+                                self._ticket_activity_tracker[pk]["in_flight_subtasks"] = [cur_key] if cur_key else []
+                                self._ticket_activity_tracker[pk]["queued_subtasks"] = rem_keys
+                        p_id = f"hand_{task['issue_key']}" if task.get("issue_key") else f"hand_{i}"
+                        res = await self._spawn_hand(
                             task,
-                            pane_id=f"hand_{task['issue_key']}" if task.get("issue_key") else f"hand_{i}",
+                            pane_id=p_id,
                             session=session,
                             client=client,
                             channel=channel,
@@ -3096,52 +3750,62 @@ class IngressGateway:
                             worker=worker,
                             **kwargs,
                         )
-                        for i, task in enumerate(subtasks)
-                    ],
-                    return_exceptions=True,
-                )
-            else:  # sequential
-                results = []
-                for i, task in enumerate(subtasks):
-                    p_id = f"hand_{task['issue_key']}" if task.get("issue_key") else f"hand_{i}"
-                    res = await self._spawn_hand(
-                        task,
-                        pane_id=p_id,
-                        session=session,
-                        client=client,
-                        channel=channel,
-                        thread_ts=thread_ts,
-                        worker=worker,
-                        **kwargs,
-                    )
-                    results.append(res)
+                        results.append(res)
+            finally:
+                if session is not None:
+                    session.in_flight_subtasks = []
+                    session.queued_subtasks = []
+                for pk in all_parent_keys | set(all_sub_keys):
+                    if pk and pk in self._ticket_activity_tracker:
+                        self._ticket_activity_tracker[pk]["in_flight_subtasks"] = []
+                        self._ticket_activity_tracker[pk]["queued_subtasks"] = []
+                if ack_task is not None and not ack_task.done():
+                    ack_task.cancel()
+                    try:
+                        await ack_task
+                    except (asyncio.CancelledError, Exception):
+                        pass
 
             combined_acc = BackstageExecutionAccumulator()
             outputs = []
             has_error = False
+            last_err_text: Optional[str] = None
             for i, r in enumerate(results):
                 t_key = subtasks[i].get("issue_key", f"subtask_{i}") if i < len(subtasks) else f"subtask_{i}"
                 if isinstance(r, Exception):
                     has_error = True
+                    last_err_text = f"{t_key}: {r}"
                     outputs.append(f"• *{t_key}*: ERROR - {r}")
                 elif isinstance(r, dict):
                     st = r.get("status", "SUCCESS")
+                    out = r.get("output") or r.get("output_tail") or ""
                     if st in ("ERROR", "FAILED"):
                         has_error = True
-                    out = r.get("output") or r.get("output_tail") or ""
+                        last_err_text = f"{t_key}: {r.get('error') or out.strip()[:200]}"
                     outputs.append(f"• *{t_key}* ({st}): {out.strip()[:500]}")
                 elif hasattr(r, "get_full_output"):
                     st = getattr(r, "turn_status", "SUCCESS")
+                    out = r.get_full_output()
                     if st in ("ERROR", "FAILED"):
                         has_error = True
-                    out = r.get_full_output()
+                        last_err_text = f"{t_key}: {out.strip()[:200]}"
                     outputs.append(f"• *{t_key}* ({st}): {out.strip()[:500]}")
                 else:
                     outputs.append(f"• *{t_key}*: Completed")
 
+            if last_err_text:
+                if session is not None:
+                    session.last_subtask_error = last_err_text
+                for pk in all_parent_keys:
+                    if pk and pk in self._ticket_activity_tracker:
+                        self._ticket_activity_tracker[pk]["last_error"] = last_err_text
+
             combined_acc.turn_status = "ERROR" if has_error else "SUCCESS"
             combined_acc.final_response = "\n".join(outputs)
             return combined_acc
+
+        if session is not None:
+            session.last_dispatched_at = time.time()
 
         cmd_input = command or kwargs.get("command")
         effective_task = cmd_input or task_description or task_desc or ""
@@ -3198,32 +3862,63 @@ class IngressGateway:
         task_desc = effective_task
 
         # Detached background Linear tracking for dispatched tasks
+        ephemeral_hand_issue: Dict[str, Optional[str]] = {
+            "id": None,
+            "identifier": None,
+            "thread_ref": _THREAD_REF.get() or "",
+        }
         if not subtask_id:
             try:
-                from golem.linear_bridge import LinearBridge
+                from golem.linear_bridge import LinearBridge, _THREAD_ISSUE_CACHE
                 bridge = self._get_linear_bridge()
                 if bridge.api_key and not _linear_disabled_for_tests():
                     thread_ref = _THREAD_REF.get()
+                    cached_plan = (
+                        (getattr(session, "linear_plan_cache", None) if session else None)
+                        or (_THREAD_PLAN_CACHE.get(thread_ref) if thread_ref else None)
+                    )
+                    parent_dict = cached_plan.get("parent") if isinstance(cached_plan, dict) else None
+                    parent_issue_id = (
+                        (parent_dict.get("id") or parent_dict.get("identifier"))
+                        if isinstance(parent_dict, dict)
+                        else None
+                    ) or (getattr(session, "active_linear_parent_key", None) if session else None)
 
                     async def _safe_linear_create_ingress():
                         try:
                             description = f"Node: {effective_node}\nCWD: {target_cwd}\nCommand: `{effective_task}`"
+                            hand_title = f"[Hand] {effective_task[:60]}"
+                            if parent_issue_id:
+                                # Thread already has a parent project ticket (e.g. CHO-197): attach execution
+                                # note directly to the parent ticket rather than spawning a top-level [Hand] ticket.
+                                await bridge.add_comment(
+                                    parent_issue_id,
+                                    f"**[Hand] Dispatched** on `{effective_node}` (`{target_cwd}`)\nTask: `{effective_task[:300]}`",
+                                )
+                                return
                             if thread_ref:
                                 # One issue per conversation thread: hand results are appended as comments
                                 # (see _record_hand_result_to_linear), and later turns read them back.
-                                await bridge.ensure_thread_issue(
+                                issue = await bridge.ensure_thread_issue(
                                     thread_ref,
-                                    title=f"[Hand] {effective_task[:60]}",
+                                    title=hand_title,
                                     description=description,
                                 )
+                                if isinstance(issue, dict) and str(issue.get("title") or hand_title).startswith("[Hand]"):
+                                    ephemeral_hand_issue["id"] = issue.get("id")
+                                    ephemeral_hand_issue["identifier"] = issue.get("identifier")
                                 return
-                            issue = await bridge.create_task_issue(
-                                title=f"[Hand] {effective_task[:60]}",
+                            existing_hand = await bridge.find_open_hand_issue(hand_title)
+                            issue = existing_hand or await bridge.create_task_issue(
+                                title=hand_title,
                                 description=description,
                             )
-                            if session is not None and isinstance(issue, dict):
-                                session.linear_issue_id = issue.get("id")
-                                session.linear_issue_key = issue.get("identifier")
+                            if isinstance(issue, dict):
+                                ephemeral_hand_issue["id"] = issue.get("id")
+                                ephemeral_hand_issue["identifier"] = issue.get("identifier")
+                                if session is not None and not getattr(session, "active_linear_parent_key", None):
+                                    session.linear_issue_id = issue.get("id")
+                                    session.linear_issue_key = issue.get("identifier")
                         except Exception as e:
                             logger.warning(f"Linear background issue creation skipped: {e}")
 
@@ -3239,6 +3934,13 @@ class IngressGateway:
                 task_desc = f"[Node Context & Invariants]\n{node_invariants}\n\n[Task]\n{task_desc}"
         except Exception as e:
             logger.debug(f"Error retrieving preflight node invariants: {e}")
+
+        linear_guardrail = (
+            "\n[LINEAR GUARDRAIL: NEVER call Linear GraphQL APIs or modify Linear issue states directly from a Hand. Only The Mouth manages Linear ticket transitions.]\n"
+            "[IRON LAW OF EXTERNAL INTEGRATIONS — NO SILENT MOCKS: Never fabricate synthetic fallbacks, mock IDs, or offline heuristic stubs when an external API is blocked by auth, 2FA, or WAF/Cloudflare/Imperva. Fail loudly at the boundary, leave downstream state untouched, and report the exact blocker. Never claim 'Staged', 'Deployed', or 'Sent' without a verified network response.]\n"
+        )
+        if "[LINEAR GUARDRAIL:" not in task_desc:
+            task_desc = f"{task_desc}{linear_guardrail}"
 
         # On-demand delegation to specialized workers (OpenCode, Hermes)
         if effective_worker not in ("agy", "antigravity"):
@@ -3440,7 +4142,7 @@ class IngressGateway:
                                 if matched_flow:
                                     flow_name = matched_flow.get("flow_name", "automated_flow")
                                     flow_path = matched_flow.get("flow_path", "")
-                                    card = f"⚡ *Automated Reflex Triggered:* Blocker matched flow runbook `{flow_path}`. Executing flow `{flow_name}`..."
+                                    card = None
                                     logger.info(f"Triggered automated flow '{flow_name}' from {flow_path}")
                                 else:
                                     b_type = blocker_data.get("type", blocker_data.get("blocker_type", "prompt"))
@@ -3454,7 +4156,7 @@ class IngressGateway:
                                         await swap_reaction(client, channel, ts, "gear", "warning")
                                         if thread_ts:
                                             await set_assistant_status(client, channel, thread_ts, "Awaiting input...")
-                                if client and channel:
+                                if card and client and channel:
                                     await self._post_response(client, channel, thread_ts, card, is_imessage)
                             if eq_task not in done:
                                 continue
@@ -3618,49 +4320,135 @@ class IngressGateway:
             except Exception as e:
                 logger.debug(f"Failed to trigger reflection in ingress: {e}")
 
-            # Subtask Settlement & Parent Evaluation in Linear
-            sub_id = subtask_issue_id or kwargs.get("subtask_issue_id") or getattr(session, "linear_issue_id", None)
+            # Subtask Settlement & Ephemeral [Hand] Settlement in Linear
+            sub_id = subtask_issue_id or kwargs.get("subtask_issue_id")
+            hand_id = ephemeral_hand_issue.get("id") or (
+                getattr(session, "linear_issue_id", None) if not sub_id and not getattr(session, "active_linear_parent_key", None) else None
+            )
             if sub_id:
                 try:
                     from golem.linear_bridge import LinearBridge
                     linear_bridge = self._get_linear_bridge()
                     t_status = getattr(accumulator, "turn_status", "SUCCESS")
                     exit_c = 0 if t_status == "SUCCESS" else 1
-                    out_tail = getattr(accumulator, "output_tail", "") or ""
-                    coord = getattr(session, "runner_pane", effective_node) or effective_node
-                    receipt = (
-                        f"### Subtask Hand Settled (`{coord}`)\n"
-                        f"- **Exit Code:** `{exit_c}`\n"
-                        f"- **Task ID:** `{t_id}`\n"
-                        f"- **Outbox:** `~/.golem/outbox/{t_id}/`\n\n"
-                        f"**Tail Output:**\n```\n{out_tail[-800:] if out_tail else '(empty)'}\n```"
-                    )
+                    if exit_c == 0 and t_status == "SUCCESS":
+                        out_tail = getattr(accumulator, "output_tail", "") or ""
+                        coord = getattr(session, "runner_pane", effective_node) or effective_node
+                        receipt = (
+                            f"### Subtask Hand Settled (`{coord}`)\n"
+                            f"- **Exit Code:** `{exit_c}`\n"
+                            f"- **Task ID:** `{t_id}`\n"
+                            f"- **Outbox:** `~/.golem/outbox/{t_id}/`\n\n"
+                            f"**Tail Output:**\n```\n{out_tail[-800:] if out_tail else '(empty)'}\n```"
+                        )
 
-                    async def _settle_and_check():
-                        try:
-                            res = await linear_bridge.settle_subtask_and_evaluate_parent(
-                                subtask_id=sub_id,
-                                settlement_receipt=receipt,
-                            )
-                            if res.get("parent_settled"):
-                                logger.info(f"All subtasks finished. Parent {res.get('parent_key')} marked Claimed Fixed.")
-                        except Exception as ex:
-                            logger.debug(f"Linear subtask settlement failed in ingress: {ex}")
+                        async def _settle_and_check():
+                            try:
+                                res = await linear_bridge.settle_subtask_and_evaluate_parent(
+                                    subtask_id=sub_id,
+                                    settlement_receipt=receipt,
+                                    subtask_issue_id=sub_id,
+                                    exit_code=exit_c,
+                                    output_tail=out_tail,
+                                    pane_coordinate=coord,
+                                )
+                                if res.get("parent_settled"):
+                                    logger.info(f"All subtasks finished. Parent {res.get('parent_key')} marked Claimed Fixed.")
+                            except Exception as ex:
+                                logger.debug(f"Linear subtask settlement failed in ingress: {ex}")
 
-                    asyncio.create_task(_settle_and_check())
+                        asyncio.create_task(_settle_and_check())
                 except Exception as e:
                     logger.debug(f"Failed to initiate linear settlement in ingress: {e}")
+            elif hand_id and not _linear_disabled_for_tests():
+                try:
+                    linear_bridge = self._get_linear_bridge()
+                    t_status = getattr(accumulator, "turn_status", "SUCCESS")
+                    has_awaiting = bool(getattr(accumulator, "has_awaiting_input", False))
+                    final_hand_status = "CANCELED" if (has_awaiting or t_status != "SUCCESS") else "SUCCESS"
+                    hand_thread_ref = ephemeral_hand_issue.get("thread_ref") or ""
+
+                    async def _settle_ephemeral_hand():
+                        try:
+                            await linear_bridge.settle_hand_issue(
+                                hand_id,
+                                status=final_hand_status,
+                                thread_ref=hand_thread_ref,
+                            )
+                        except Exception as ex:
+                            logger.debug(f"Ephemeral [Hand] settlement skipped in ingress: {ex}")
+
+                    asyncio.create_task(_settle_ephemeral_hand())
+                except Exception as e:
+                    logger.debug(f"Failed to initiate ephemeral [Hand] settlement in ingress: {e}")
 
         return accumulator
 
     async def _load_linear_notes_block(self, thread_ref: str) -> str:
-        """Fetch this thread's Linear notes as a prompt block. Fast 0ms cache check first, then best-effort query."""
+        """Fetch this thread's Linear notes as a prompt block. Strictly thread-scoped (never leaks channel-global alerts)."""
         if not thread_ref:
             return ""
 
+        # Check for linear_tickets_context bound strictly to this thread_ref
+        tickets_ctx: Optional[List[Dict[str, Any]]] = None
+        c = _THREAD_PLAN_CACHE.get(thread_ref)
+        if c and isinstance(c, dict) and c.get("linear_tickets_context"):
+            tickets_ctx = c.get("linear_tickets_context")
+        elif hasattr(self, "router") and self.router:
+            if hasattr(self.router, "get_recorded_session"):
+                rec = self.router.get_recorded_session(thread_ref)
+                if rec and isinstance(rec, dict) and rec.get("linear_tickets_context"):
+                    tickets_ctx = rec.get("linear_tickets_context")
+            if not tickets_ctx and hasattr(self.router, "_registry"):
+                reg_item = self.router._registry.get(thread_ref)
+                if reg_item and isinstance(reg_item, dict) and reg_item.get("linear_tickets_context"):
+                    tickets_ctx = reg_item.get("linear_tickets_context")
+
+        roadmap_block = ""
+        if tickets_ctx and isinstance(tickets_ctx, list):
+            roadmap_lines = ["[THREAD LINEAR PROJECT CONTEXT & RUNTIME TELEMETRY]"]
+            for ticket in tickets_ctx:
+                t_ident = ticket.get("identifier") or ticket.get("id") or "CHO-???"
+                t_title = ticket.get("title") or "Untitled"
+                t_state = ticket.get("state")
+                if isinstance(t_state, dict):
+                    t_state_name = t_state.get("name") or "In Progress"
+                else:
+                    t_state_name = str(t_state or "In Progress")
+                roadmap_lines.append(f"• Project: {t_ident} \"{t_title}\" (State: {t_state_name})")
+                telemetry = self._build_ticket_runtime_telemetry(str(t_ident))
+                in_flight = telemetry.get("in_flight_subtasks") or []
+                queued = telemetry.get("queued_subtasks") or []
+                workers = telemetry.get("active_workers") or []
+                secs_ago = telemetry.get("seconds_since_last_activity")
+                last_err = telemetry.get("last_error")
+                if in_flight or queued or workers:
+                    roadmap_lines.append(
+                        f"  Runtime State: IN-FLIGHT={in_flight}, QUEUED={queued}, ACTIVE_WORKERS={workers}"
+                    )
+                elif secs_ago is not None:
+                    roadmap_lines.append(f"  Runtime State: IDLE (last activity {int(secs_ago)}s ago)")
+                if last_err:
+                    roadmap_lines.append(f"  Last Run Error: {last_err}")
+
+                subtasks = ticket.get("subtasks") or []
+                uncompleted_subtasks = [st for st in subtasks if not st.get("settled")]
+                if uncompleted_subtasks:
+                    roadmap_lines.append("  Uncompleted Subtasks:")
+                    for st in uncompleted_subtasks:
+                        st_ident = st.get("identifier") or ""
+                        st_title = st.get("title") or "Untitled"
+                        st_desc = st.get("description") or ""
+                        desc_str = f" - {st_desc}" if st_desc else ""
+                        roadmap_lines.append(f"    - [{st_ident}] {st_title}{desc_str}")
+                else:
+                    roadmap_lines.append("  (No remaining uncompleted subtasks)")
+            roadmap_block = "\n".join(roadmap_lines)
+
+        base_notes = ""
         # 1. 0ms memory cache hit
         cached = _THREAD_PLAN_CACHE.get(thread_ref)
-        if cached:
+        if cached and isinstance(cached, dict) and (cached.get("parent") or cached.get("subtasks")):
             parent = cached.get("parent", {})
             subtasks = cached.get("subtasks", [])
             subtasks_formatted = []
@@ -3676,28 +4464,103 @@ class IngressGateway:
                 "subtasks": subtasks_formatted,
                 "comments": cached.get("comments", []),
             }
-            return build_linear_notes_block(notes)
+            base_notes = build_linear_notes_block(notes)
+        else:
+            # 2. Check if bridge or fetch is mocked or eager fetching enabled
+            is_mocked = (
+                _is_mock_object(getattr(self, "_load_linear_notes_block", None))
+                or _is_mock_object(getattr(self, "_fetch_linear_thread_notes", None))
+                or _is_mock_object(getattr(self, "linear_bridge", None))
+            )
+            eager_fetch = os.environ.get("GOLEM_EAGER_LINEAR_FETCH") == "1"
+            if is_mocked or eager_fetch:
+                try:
+                    from golem.linear_bridge import LinearBridge
+                    bridge = self._get_linear_bridge()
+                    if bridge.api_key and not _linear_disabled_for_tests():
+                        notes = await asyncio.wait_for(bridge.get_thread_notes(thread_ref), timeout=4.0)
+                        base_notes = build_linear_notes_block(notes)
+                except Exception as exc:
+                    logger.debug(f"Linear thread notes unavailable for {thread_ref}: {exc}")
 
-        # 2. Check if bridge or fetch is mocked or eager fetching enabled
-        is_mocked = (
-            _is_mock_object(getattr(self, "_load_linear_notes_block", None))
-            or _is_mock_object(getattr(self, "_fetch_linear_thread_notes", None))
-            or _is_mock_object(getattr(self, "linear_bridge", None))
-        )
-        eager_fetch = os.environ.get("GOLEM_EAGER_LINEAR_FETCH") == "1"
-        if not is_mocked and not eager_fetch:
-            return ""
+        if roadmap_block and base_notes:
+            return f"{base_notes}\n\n{roadmap_block}".strip()
+        elif roadmap_block:
+            return roadmap_block
+        return base_notes
 
-        try:
-            from golem.linear_bridge import LinearBridge
-            bridge = self._get_linear_bridge()
-            if not bridge.api_key or _linear_disabled_for_tests():
-                return ""
-            notes = await asyncio.wait_for(bridge.get_thread_notes(thread_ref), timeout=4.0)
-            return build_linear_notes_block(notes)
-        except Exception as exc:
-            logger.debug(f"Linear thread notes unavailable for {thread_ref}: {exc}")
-            return ""
+    def _hydrate_subtasks_from_linear_context(
+        self,
+        thread_ref: str,
+        channel: str,
+        parent_key: Optional[str],
+        subtasks_list: List[Dict[str, Any]],
+    ) -> Tuple[Optional[str], List[Dict[str, Any]]]:
+        """
+        Hydrate uncompleted subtasks for explicit dispatch_subtasks calls strictly from
+        this thread's linear_tickets_context (never from a channel-wide fallback).
+        """
+        if not thread_ref:
+            return parent_key, subtasks_list
+
+        tickets_ctx: Optional[List[Dict[str, Any]]] = None
+        cached = _THREAD_PLAN_CACHE.get(thread_ref)
+        if cached and isinstance(cached, dict) and cached.get("linear_tickets_context"):
+            tickets_ctx = cached.get("linear_tickets_context")
+        elif hasattr(self, "router") and self.router:
+            if hasattr(self.router, "get_recorded_session"):
+                rec = self.router.get_recorded_session(thread_ref)
+                if rec and isinstance(rec, dict) and rec.get("linear_tickets_context"):
+                    tickets_ctx = rec.get("linear_tickets_context")
+            if not tickets_ctx and hasattr(self.router, "_registry"):
+                reg_item = self.router._registry.get(thread_ref)
+                if reg_item and isinstance(reg_item, dict) and reg_item.get("linear_tickets_context"):
+                    tickets_ctx = reg_item.get("linear_tickets_context")
+
+        if not tickets_ctx or not isinstance(tickets_ctx, list):
+            return parent_key, subtasks_list
+
+        existing_keys = {str(st.get("issue_key")).strip() for st in subtasks_list if st.get("issue_key")}
+
+        for st_item in subtasks_list:
+            if not st_item.get("parent_key"):
+                s_key = str(st_item.get("issue_key") or "").strip()
+                for pt in tickets_ctx:
+                    pt_ident = str(pt.get("identifier") or "").strip()
+                    for c_st in pt.get("subtasks", []):
+                        if str(c_st.get("identifier") or "").strip() == s_key:
+                            st_item["parent_key"] = pt_ident
+                            break
+
+        matching_pt = None
+        if parent_key:
+            pk_clean = str(parent_key).strip().lower()
+            for pt in tickets_ctx:
+                if str(pt.get("identifier") or "").strip().lower() == pk_clean:
+                    matching_pt = pt
+                    break
+        elif len(tickets_ctx) == 1:
+            matching_pt = tickets_ctx[0]
+
+        if matching_pt:
+            p_ident = matching_pt.get("identifier")
+            for c_st in matching_pt.get("subtasks", []):
+                if not c_st.get("settled"):
+                    c_ident = c_st.get("identifier")
+                    if c_ident and c_ident not in existing_keys:
+                        subtasks_list.append({
+                            "issue_key": c_ident,
+                            "parent_key": p_ident,
+                            "role_name": c_st.get("title") or "",
+                            "task_brief": c_st.get("description") or c_st.get("title") or "",
+                            "read_only": False,
+                            "target_node": "localhost",
+                        })
+                        existing_keys.add(c_ident)
+            if not parent_key:
+                parent_key = p_ident
+
+        return parent_key, subtasks_list
 
     def _record_hand_result_to_linear(self, task_desc: str, target_node: str, result: Any) -> None:
         """Detached: append a dispatched hand's result to this thread's Linear issue (Golem's cross-turn memory)."""
@@ -3723,10 +4586,21 @@ class IngressGateway:
 
         async def _record() -> None:
             try:
-                issue = await bridge.ensure_thread_issue(
-                    thread_ref, title=f"[Hand] {str(task_desc)[:60]}", description=f"Node: {target_node}"
-                )
-                await bridge.add_comment(issue["id"], body)
+                plan_entry = _THREAD_PLAN_CACHE.get(thread_ref) if isinstance(_THREAD_PLAN_CACHE, dict) else None
+                parent_info = plan_entry.get("parent") if isinstance(plan_entry, dict) else None
+                parent_id = None
+                if isinstance(parent_info, dict):
+                    parent_id = parent_info.get("id") or parent_info.get("identifier")
+
+                if parent_id:
+                    await bridge.add_comment(parent_id, body)
+                else:
+                    issue = await bridge.ensure_thread_issue(
+                        thread_ref, title=f"[Hand] {str(task_desc)[:60]}", description=f"Node: {target_node}"
+                    )
+                    await bridge.add_comment(issue["id"], body)
+                    if str(issue.get("title") or "").startswith("[Hand]"):
+                        await bridge.settle_hand_issue(issue["id"], status=status, thread_ref=thread_ref)
             except Exception as exc:
                 logger.warning(f"Could not record hand result to Linear for {thread_ref}: {exc}")
 
@@ -4058,7 +4932,31 @@ class IngressGateway:
             if thread_ref:
                 parent_desc = f"Thread: {thread_ref}\n{parent_desc}"
             subtasks = tool_args.get("subtasks") or []
-            plan = await bridge.create_plan_with_subtasks(parent_title, parent_desc, subtasks)
+            parent_key = (tool_args.get("parent_key") or "").strip()
+            related_issue_key = (tool_args.get("related_issue_key") or "").strip()
+            if not related_issue_key and not parent_key:
+                prior_cached = (
+                    (getattr(session, "linear_plan_cache", None) if session else None)
+                    or (_THREAD_PLAN_CACHE.get(thread_ref) if thread_ref else None)
+                )
+                prior_parent_key = (
+                    (prior_cached.get("parent", {}).get("identifier") if isinstance(prior_cached, dict) else None)
+                    or (getattr(session, "active_linear_parent_key", None) if session else None)
+                    or (getattr(session, "linear_issue_key", None) if session else None)
+                )
+                if prior_parent_key and str(prior_parent_key).strip():
+                    related_issue_key = str(prior_parent_key).strip()
+            plan_kwargs: Dict[str, Any] = {}
+            if parent_key:
+                plan_kwargs["parent_key"] = parent_key
+            if related_issue_key:
+                plan_kwargs["related_issue_key"] = related_issue_key
+            plan = await bridge.create_plan_with_subtasks(
+                parent_title,
+                parent_desc,
+                subtasks,
+                **plan_kwargs,
+            )
             cached_plan = {
                 "parent": plan.get("parent", {}),
                 "subtasks": plan.get("subtasks", []),
@@ -4066,18 +4964,22 @@ class IngressGateway:
             }
             if session is not None:
                 session.linear_plan_cache = cached_plan
+                session.active_linear_parent_key = plan.get("parent", {}).get("identifier", "")
                 session.pending_subtasks = [
                     st.get("identifier") or st.get("id") or str(idx)
                     for idx, st in enumerate(plan.get("subtasks", []))
                 ]
             if thread_ref:
                 _THREAD_PLAN_CACHE[thread_ref] = cached_plan
-            return {
+            res_payload: Dict[str, Any] = {
                 "status": "PLAN_CREATED",
                 "parent_key": plan.get("parent", {}).get("identifier", ""),
                 "parent_url": plan.get("parent", {}).get("url", ""),
                 "subtasks": plan.get("subtasks", []),
             }
+            if plan.get("parent", {}).get("related_issue_key") or related_issue_key:
+                res_payload["related_issue_key"] = plan.get("parent", {}).get("related_issue_key") or related_issue_key
+            return res_payload
         elif tool_name == "check_linear_task_status":
             from golem.linear_bridge import LinearBridge
             bridge = self._get_linear_bridge()
@@ -4132,6 +5034,12 @@ class IngressGateway:
                 parent_key = cached.get("parent", {}).get("identifier")
             mode = tool_args.get("execution_mode", "parallel")
             subtasks_list = tool_args.get("subtasks", [])
+            parent_key, subtasks_list = self._hydrate_subtasks_from_linear_context(
+                thread_ref=thread_ref,
+                channel=channel or "",
+                parent_key=parent_key,
+                subtasks_list=subtasks_list,
+            )
             cached_subs = cached.get("subtasks", []) if cached else []
             for idx, st_item in enumerate(subtasks_list):
                 st_key = st_item.get("issue_key")
@@ -4188,12 +5096,18 @@ class IngressGateway:
         is_imessage: bool,
     ) -> None:
         """
-        Run one Mouth turn scoped to its conversation thread. Linear is Golem's memory across turns: key the turn
-        to its thread, restore what earlier turns recorded, then run the turn pipeline.
+        Run one Mouth turn scoped to its conversation thread. Always ensures recent thread history
+        for the active Slack thread_ts is passed alongside thread-scoped Linear context.
         """
         thread_ref = f"{channel}:{thread_ts}" if (channel and thread_ts) else ""
         token = _THREAD_REF.set(thread_ref)
         try:
+            if thread_ts and thread_ts != ts and "[Previous " not in (prompt or ""):
+                thread_ctx = await self._fetch_thread_context(
+                    client, channel, thread_ts, exclude_ts=ts, is_imessage=is_imessage
+                )
+                if thread_ctx:
+                    prompt = f"{thread_ctx}\n\n{prompt}" if prompt else thread_ctx
             if thread_ref:
                 notes_block = await self._load_linear_notes_block(thread_ref)
                 if notes_block:
@@ -4222,7 +5136,8 @@ class IngressGateway:
           6. Deliver clean briefing to Slack, upload directive files, and swap reactions.
         """
         api_key = get_gemini_api_key()
-        model = get_mouth_model()
+        raw_configured_model = getattr(self, "mouth_model", None) or get_mouth_model()
+        model = route_mouth_turn_model(prompt, explicit_model=raw_configured_model)
 
         _orig_add_reaction = globals()["add_reaction"]
         _orig_remove_reaction = globals()["remove_reaction"]
@@ -4266,10 +5181,52 @@ class IngressGateway:
 
         thread_ref = _THREAD_REF.get() or (f"{channel}:{thread_ts}" if channel and thread_ts else "direct")
         self._broadcast_mouth_log(f"[TURN START] Thread {thread_ref} · waking {model}...", model=model)
+        clean_p = " ".join(str(prompt).splitlines()).strip()
+        if len(clean_p) > 200:
+            clean_p = clean_p[:197] + "..."
+        self._broadcast_mouth_log(f"[PROMPT] {clean_p}", model=model)
 
         # Step 1: Initial call to Mouth LLM
         self._broadcast_mouth_log(f"[HOP 1/{MAX_TOOL_CHAIN_HOPS}] Reasoning with {model}...", model=model)
         initial_resp = await self._call_gemini_api(payload=payload, model=model, api_key=api_key)
+        
+        should_retry = False
+        if not initial_resp:
+            should_retry = True
+        elif candidate_is_empty(initial_resp):
+            should_retry = True
+        elif initial_resp.get("_error"):
+            err_code = initial_resp.get("code") or initial_resp.get("status") or 500
+            if isinstance(err_code, int) and err_code >= 500:
+                should_retry = True
+            elif not isinstance(err_code, int):
+                should_retry = True
+
+        if should_retry and model != get_architect_model():
+            self._broadcast_mouth_log(
+                f"[STRIKE 1] Call to {model} failed or returned empty; retrying on {model}...",
+                model=model,
+            )
+            initial_resp = await self._call_gemini_api(payload=payload, model=model, api_key=api_key)
+            strike2_retry = False
+            if not initial_resp or candidate_is_empty(initial_resp):
+                strike2_retry = True
+            elif initial_resp.get("_error"):
+                err_code = initial_resp.get("code") or initial_resp.get("status") or 500
+                if isinstance(err_code, int) and err_code >= 500:
+                    strike2_retry = True
+                elif not isinstance(err_code, int):
+                    strike2_retry = True
+
+            if strike2_retry:
+                old_model = model
+                model = get_architect_model()
+                self._broadcast_mouth_log(
+                    f"[ESCALATION] 2 strikes on {old_model} -> auto-escalating to {model} (Tier 1 Architect)...",
+                    model=model,
+                )
+                initial_resp = await self._call_gemini_api(payload=payload, model=model, api_key=api_key)
+
         if not initial_resp or not initial_resp.get("candidates"):
             # Fallback to direct adapter execution if Gemini API fails
             logger.warning("Gemini Mouth initial call failed; falling back to direct adapter execution.")
@@ -4333,6 +5290,7 @@ class IngressGateway:
                             await swap_reaction(client, channel, ts, "gear", "warning")
                         return
                     clean_reply, _ = extract_and_strip_file_directives(reply_text)
+                    self._broadcast_mouth_log(f"[REPLY] {clean_reply}", model=model)
                     await self._post_response(client, channel, thread_ts, clean_reply, is_imessage)
                     await self._broadcast_mouth_briefing(clean_reply, model)
                     if ts:
@@ -4343,6 +5301,7 @@ class IngressGateway:
                     reply_text = "".join(text_parts).strip()
                     if reply_text:
                         clean_briefing, file_targets = extract_and_strip_file_directives(reply_text)
+                        self._broadcast_mouth_log(f"[SYNTHESIS] {clean_briefing}", model=model)
                         target_reaction = "white_check_mark"
                         if last_fn_name == "read_project_file":
                             if current_hop > 1 and last_tool_result.get("status") == "NOT_FOUND":
@@ -4416,8 +5375,27 @@ class IngressGateway:
                 if isinstance(p, dict) and "functionCall" in p and isinstance(p["functionCall"], dict)
             ]
             tools_summary = ", ".join(tool_names) if tool_names else fn_name
+
+            def _format_args_safe(args: Dict[str, Any], max_len: int = 60) -> str:
+                if not args or not isinstance(args, dict):
+                    return ""
+                parts_str = []
+                for k, v in args.items():
+                    k_lower = str(k).lower()
+                    if any(sec in k_lower for sec in ("key", "secret", "token", "password", "auth", "credential")):
+                        parts_str.append(f"{k}=***")
+                        continue
+                    v_str = str(v).replace("\n", " ").strip()
+                    if len(v_str) > 25:
+                        v_str = v_str[:22] + "..."
+                    parts_str.append(f"{k}={v_str}")
+                res = ", ".join(parts_str)
+                if len(res) > max_len:
+                    res = res[:max_len - 3] + "..."
+                return res
+
             self._broadcast_mouth_log(
-                f"[TOOL CALL] Hop {current_hop}/{MAX_TOOL_CHAIN_HOPS} -> {tools_summary}",
+                f"[HOP {current_hop}] Calling tool {fn_name}({_format_args_safe(fn_args)})",
                 model=model,
             )
 
@@ -4475,9 +5453,33 @@ class IngressGateway:
                     parent_desc = fn_args.get("parent_description") or ""
                     thread_ref = _THREAD_REF.get() or (f"{channel}:{thread_ts}" if channel and thread_ts else "")
                     if thread_ref:
-                        parent_desc = f"Thread: {thread_ref}\n{parent_desc}"
+                        parent_desc = f"Thread: `{thread_ref}`\n{parent_desc}"
                     subtasks = fn_args.get("subtasks") or []
-                    plan = await bridge.create_plan_with_subtasks(parent_title, parent_desc, subtasks)
+                    parent_key = (fn_args.get("parent_key") or "").strip()
+                    related_issue_key = (fn_args.get("related_issue_key") or "").strip()
+                    if not related_issue_key and not parent_key:
+                        prior_cached = (
+                            (getattr(session, "linear_plan_cache", None) if session else None)
+                            or (_THREAD_PLAN_CACHE.get(thread_ref) if thread_ref else None)
+                        )
+                        prior_parent_key = (
+                            (prior_cached.get("parent", {}).get("identifier") if isinstance(prior_cached, dict) else None)
+                            or (getattr(session, "active_linear_parent_key", None) if session else None)
+                            or (getattr(session, "linear_issue_key", None) if session else None)
+                        )
+                        if prior_parent_key and str(prior_parent_key).strip():
+                            related_issue_key = str(prior_parent_key).strip()
+                    plan_kwargs: Dict[str, Any] = {}
+                    if parent_key:
+                        plan_kwargs["parent_key"] = parent_key
+                    if related_issue_key:
+                        plan_kwargs["related_issue_key"] = related_issue_key
+                    plan = await bridge.create_plan_with_subtasks(
+                        parent_title,
+                        parent_desc,
+                        subtasks,
+                        **plan_kwargs,
+                    )
                     subtasks_data = plan.get("subtasks", [])
                     pending_subtasks = [
                         st.get("identifier") or st.get("id") or str(idx)
@@ -4490,15 +5492,22 @@ class IngressGateway:
                     }
                     if session is not None:
                         session.linear_plan_cache = cached_plan
+                        session.active_linear_parent_key = plan.get("parent", {}).get("identifier", "")
                         session.pending_subtasks = list(pending_subtasks)
                     if thread_ref:
                         _THREAD_PLAN_CACHE[thread_ref] = cached_plan
+                        from golem.linear_bridge import _THREAD_ISSUE_CACHE
+                        parent_val = plan.get("parent")
+                        if isinstance(parent_val, dict) and (parent_val.get("id") or parent_val.get("identifier")):
+                            _THREAD_ISSUE_CACHE[thread_ref] = parent_val
                     tool_result = {
                         "status": "PLAN_CREATED",
                         "parent_key": plan.get("parent", {}).get("identifier", ""),
                         "parent_url": plan.get("parent", {}).get("url", ""),
                         "subtasks": subtasks_data,
                     }
+                    if plan.get("parent", {}).get("related_issue_key") or related_issue_key:
+                        tool_result["related_issue_key"] = plan.get("parent", {}).get("related_issue_key") or related_issue_key
                 elif fn_name == "check_linear_task_status":
                     from golem.linear_bridge import LinearBridge
                     bridge = self._get_linear_bridge()
@@ -4514,6 +5523,7 @@ class IngressGateway:
                             "title": parent.get("title", ""),
                             "state": parent.get("state", {}).get("name", "Unknown"),
                             "subtasks": subtasks_status,
+                            "runtime_telemetry": self._build_ticket_runtime_telemetry(parent),
                         })
                     tool_result = {"status": "SUCCESS", "tasks": formatted}
                 elif fn_name == "approve_linear_task":
@@ -4553,6 +5563,12 @@ class IngressGateway:
                         parent_key = cached.get("parent", {}).get("identifier")
                     mode = fn_args.get("execution_mode", "parallel")
                     subtasks_list = fn_args.get("subtasks", [])
+                    parent_key, subtasks_list = self._hydrate_subtasks_from_linear_context(
+                        thread_ref=thread_ref,
+                        channel=channel or "",
+                        parent_key=parent_key,
+                        subtasks_list=subtasks_list,
+                    )
                     cached_subs = cached.get("subtasks", []) if cached else []
                     for idx, st_item in enumerate(subtasks_list):
                         st_key = st_item.get("issue_key")
@@ -4597,13 +5613,13 @@ class IngressGateway:
                     if session is not None and hasattr(session, "pending_subtasks"):
                         session.pending_subtasks = list(pending_subtasks)
 
+                    natural_ack = "\n".join(text_parts).strip()
                     logger.info(
                         f"Mouth dispatched task to backstage: '{task_desc[:60]}' "
                         f"(worker={worker}, target={target_node}, cwd={target_cwd}, precedent={precedent_status}, subtask={subtask_issue_id})"
                     )
 
                     # Execute backstage silently with 3.0s yield
-                    natural_ack = "\n".join(text_parts).strip()
                     accumulator = await self._execute_backstage_task(
                         task_desc,
                         target_node,
@@ -4692,6 +5708,32 @@ class IngressGateway:
 
             last_tool_result = tool_result
 
+            def _format_result_safe(res: Any, max_len: int = 80) -> str:
+                if isinstance(res, dict):
+                    for k in ("summary", "status", "state", "verdict", "error", "message"):
+                        if k in res and res[k]:
+                            v = str(res[k]).replace("\n", " ").strip()
+                            if len(v) > max_len:
+                                v = v[:max_len - 3] + "..."
+                            return f"{k}={v}"
+                    if "output" in res and res["output"]:
+                        out_line = " ".join(str(res["output"]).splitlines()).strip()
+                        if len(out_line) > max_len:
+                            out_line = out_line[:max_len - 3] + "..."
+                        return f"output={out_line}"
+                    res_str = json.dumps(res)
+                else:
+                    res_str = str(res)
+                res_str = " ".join(res_str.splitlines()).strip()
+                if len(res_str) > max_len:
+                    res_str = res_str[:max_len - 3] + "..."
+                return res_str
+
+            self._broadcast_mouth_log(
+                f"[HOP {current_hop}] Result from {fn_name}: {_format_result_safe(tool_result)}",
+                model=model,
+            )
+
             # Retain executed functionCall part preserving thoughtSignature and other metadata
             raw_parts = extract_candidate_parts(candidate)
             thought_parts = [p for p in raw_parts if isinstance(p, dict) and "text" in p and p.get("text")]
@@ -4706,7 +5748,8 @@ class IngressGateway:
                 matched_call_part = {"functionCall": fn_call or {"name": fn_name, "args": fn_args}}
             model_parts = thought_parts + [matched_call_part]
 
-            tool_result_payload = dict(tool_result) if isinstance(tool_result, dict) else {"result": tool_result}
+            compacted_tool_res = compact_tool_output(fn_name, tool_result)
+            tool_result_payload = dict(compacted_tool_res) if isinstance(compacted_tool_res, dict) else {"result": compacted_tool_res}
             fn_resp_part = {
                 "functionResponse": {
                     "name": fn_name,
@@ -4809,6 +5852,7 @@ class IngressGateway:
             if hop_budget_exhausted:
                 step2_extra["budget_note"] = build_hop_budget_note(MAX_TOOL_CHAIN_HOPS, list(pending_subtasks))
 
+            self._broadcast_mouth_log(f"[SYNTHESIS] Synthesizing executive briefing with {model}...", model=model)
             briefing_text, error_info = await self._execute_step2_synthesis(
                 sys_prompt=sys_prompt,
                 prompt=prompt,
@@ -4900,6 +5944,7 @@ class IngressGateway:
         interim_ts = accumulator.get("interim_message_ts") if isinstance(accumulator, dict) else (getattr(accumulator, "interim_message_ts", None) if "accumulator" in locals() and accumulator else None)
         await self._post_response(client, channel, thread_ts, clean_briefing, is_imessage, update_ts=interim_ts)
         await self._broadcast_mouth_briefing(clean_briefing, model)
+        self._broadcast_mouth_log(f"[BRIEFING] {clean_briefing}", model=model)
 
         # Handle file directives
         if file_targets:
@@ -4963,8 +6008,9 @@ class IngressGateway:
         sanitized_model_turn = sanitize_model_turn_for_history({"parts": model_parts})
         sanitized_model_parts = sanitized_model_turn.get("parts", model_parts)
 
-        synthesis_sys_prompt = (
-            sys_prompt + "\n\n"
+        synthesis_directive = (
+            "EXECUTION COMPLETE. Synthesize the verified executive briefing for Carl based on the tool outputs above. "
+            "Do not call additional tools.\n\n"
             "CRITICAL INSTRUCTION FOR SYNTHESIS:\n"
             "1. Always directly address and answer Carl's original prompt/question in your briefing.\n"
             "2. If Carl asked a conversational or factual question (e.g. asking which machine is which), "
@@ -4975,22 +6021,34 @@ class IngressGateway:
             "5. NO TOOL CALLS DURING SYNTHESIS: You are in the final executive briefing stage. "
             "Under NO circumstances should you call tools or functions (including `dispatch_task`, `check_eyes`, etc.). "
             "Do NOT attempt to retry failed tasks or call further tools. "
-            "If a task encountered an error or failed, explain the diagnosis and next steps directly to Carl in clean Slack mrkdwn text."
+            "If a task encountered an error or failed, explain the diagnosis and next steps directly to Carl in clean Slack mrkdwn text.\n"
+            "6. THE IRON LAW OF EXTERNAL INTEGRATIONS (NO SILENT MOCKS): Never claim an external integration action "
+            "is 'Staged', 'Deployed', or 'Sent' unless the tool output proves the external target system confirmed the state change "
+            "via a verified network response—never a local cache write or synthetic fallback pretending to be remote state."
         )
         if budget_note:
-            synthesis_sys_prompt += "\n\n" + budget_note
+            synthesis_directive += "\n\n" + budget_note
 
         tools_decl = tools if tools else get_mouth_tools_declaration()
 
-        tool_result_payload = dict(tool_result) if isinstance(tool_result, dict) else {"result": tool_result}
+        compacted_res = compact_tool_output(fn_name, tool_result)
+        tool_result_payload = dict(compacted_res) if isinstance(compacted_res, dict) else {"result": compacted_res}
 
         if contents:
             sanitized_contents = []
             for item in contents:
                 if isinstance(item, dict) and item.get("role") == "model":
                     sanitized_contents.append(sanitize_model_turn_for_history(item))
+                elif isinstance(item, dict):
+                    item_copy = dict(item)
+                    item_copy["parts"] = list(item.get("parts", []))
+                    sanitized_contents.append(item_copy)
                 else:
                     sanitized_contents.append(item)
+            if sanitized_contents and sanitized_contents[-1].get("role") == "user":
+                sanitized_contents[-1]["parts"].append({"text": synthesis_directive})
+            else:
+                sanitized_contents.append({"role": "user", "parts": [{"text": synthesis_directive}]})
             briefing_contents = sanitized_contents
         else:
             briefing_contents = [
@@ -5013,13 +6071,14 @@ class IngressGateway:
                                     "content": tool_result_payload,
                                 },
                             }
-                        }
+                        },
+                        {"text": synthesis_directive},
                     ],
                 },
             ]
 
         briefing_payload = {
-            "systemInstruction": {"parts": [{"text": synthesis_sys_prompt}]},
+            "systemInstruction": {"parts": [{"text": sys_prompt}]},
             "contents": briefing_contents,
             "tools": tools_decl,
             "toolConfig": {
@@ -5031,15 +6090,28 @@ class IngressGateway:
         }
 
         try:
-            briefing_resp = await self._call_gemini_api(payload=briefing_payload, model=model, api_key=api_key)
+            try:
+                briefing_resp = await self._call_gemini_api(
+                    payload=briefing_payload,
+                    model=model,
+                    api_key=api_key,
+                    timeout_seconds=60.0,
+                )
+            except TypeError:
+                briefing_resp = await self._call_gemini_api(
+                    payload=briefing_payload,
+                    model=model,
+                    api_key=api_key,
+                )
         except Exception as e:
             err_ref = generate_error_reference("ERR")
+            err_msg = f"Gemini API call timed out after 60.0s" if isinstance(e, asyncio.TimeoutError) else str(e)
             return "", {
                 "status": 500,
                 "code": 500,
                 "error_type": type(e).__name__,
-                "raw_error": str(e),
-                "message": str(e),
+                "raw_error": err_msg,
+                "message": err_msg,
                 "error_reference": err_ref,
             }
 
@@ -5117,7 +6189,7 @@ class IngressGateway:
             if budget_note:
                 direct_prompt += "\n\n" + budget_note
             direct_payload = {
-                "systemInstruction": {"parts": [{"text": synthesis_sys_prompt}]},
+                "systemInstruction": {"parts": [{"text": sys_prompt}]},
                 "contents": [
                     {
                         "role": "user",
@@ -5165,12 +6237,49 @@ class IngressGateway:
         payload: Dict[str, Any],
         model: Optional[str] = None,
         api_key: Optional[str] = None,
+        timeout_seconds: float = 60.0,
     ) -> Optional[Dict[str, Any]]:
-        """Call Gemini REST API for Mouth turn processing."""
+        """Call Gemini REST API for Mouth turn processing with telemetry & turn cost tracking."""
+        t0 = time.monotonic()
         try:
-            return await call_gemini_api(payload=payload, model=model, api_key=api_key)
+            resp = await call_gemini_api(
+                payload=payload,
+                model=model,
+                api_key=api_key,
+                timeout_seconds=timeout_seconds,
+            )
         except (StopIteration, StopAsyncIteration):
             return None
+        latency = round(time.monotonic() - t0, 2)
+        if resp and isinstance(resp, dict):
+            usage = resp.get("usageMetadata")
+            if isinstance(usage, dict):
+                p_tok = usage.get("promptTokenCount", 0) or 0
+                c_tok = usage.get("candidatesTokenCount", 0) or 0
+                cached_tok = usage.get("cachedContentTokenCount", 0) or 0
+                th_tok = usage.get("thoughtsTokenCount", 0) or 0
+                cache_hit_rate = (cached_tok / p_tok * 100.0) if p_tok > 0 else 0.0
+                eff_model = model or getattr(self, "mouth_model", None) or get_mouth_model()
+                cost = calculate_token_cost(
+                    model=eff_model,
+                    prompt_tokens=p_tok,
+                    cached_tokens=cached_tok,
+                    candidates_tokens=c_tok,
+                )
+                self._broadcast_mouth_log(
+                    f"[TOKENS] {eff_model} | Prompt: {p_tok} (Cache: {cache_hit_rate:.1f}% hit) | Out: {c_tok} | Cost: ${cost:.4f}",
+                    model=eff_model,
+                )
+            cands = resp.get("candidates")
+            if isinstance(cands, list) and cands and isinstance(cands[0], dict):
+                parts = extract_candidate_parts(cands[0])
+                for p in parts:
+                    if isinstance(p, dict) and p.get("thought") and p.get("text"):
+                        th_text = " ".join(str(p["text"]).splitlines()).strip()
+                        if len(th_text) > 120:
+                            th_text = th_text[:117] + "..."
+                        self._broadcast_mouth_log(f"[THOUGHT] {th_text}", model=model)
+        return resp
 
     async def _fallback_direct_adapter_turn(
         self,
@@ -5659,6 +6768,9 @@ __all__ = [
     "CHAINABLE_TOOLS",
     "READ_ONLY_INSPECTION_TOOLS",
     "MAX_TOOL_CHAIN_HOPS",
+    "compact_tool_output",
+    "route_mouth_turn_model",
+    "is_high_complexity_turn",
 ]
 
 

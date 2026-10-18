@@ -17,10 +17,17 @@ import os
 import re
 import json
 import logging
+import inspect
 import asyncio
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Tuple
 
-from golem.config import get_mouth_model as _config_get_mouth_model, get_llm_base_url
+from golem.config import (
+    get_mouth_model as _config_get_mouth_model,
+    get_llm_base_url,
+    get_architect_model,
+    get_workhorse_model,
+    get_sentinel_model,
+)
 
 logger = logging.getLogger("Golem.Agent.Mouth")
 
@@ -253,6 +260,17 @@ PLAN_TASK_WITH_SUBTASKS_DECLARATION: Dict[str, Any] = {
                 "items": {"type": "STRING"},
                 "description": "Ordered list of discrete subtask milestones to execute sequentially.",
             },
+            "parent_key": {
+                "type": "STRING",
+                "description": "Optional existing Linear issue key (e.g. 'ENG-123') to attach subtasks to and transition to In Progress instead of creating a duplicate parent ticket.",
+            },
+            "related_issue_key": {
+                "type": "STRING",
+                "description": (
+                    "Optional upstream/original Linear issue key (e.g. 'ENG-101') when creating a follow-up "
+                    "remediation or phase-2 ticket so Golem links the new follow-up issue to the original task in Linear."
+                ),
+            },
         },
         "required": ["parent_title", "parent_description", "subtasks"],
     },
@@ -416,6 +434,21 @@ If `check_eyes` reports an idle runner whose only content is a shell prompt, tha
 A Hand is a capable agent, not a shell. Give `dispatch_task` the complete objective in `task_description` (goal, success criteria, known facts, where credentials live, what to report back) so it can work through many steps itself and verify its own result. Do not chop work into one-line probes, and do not repeat discovery that Linear notes or earlier results already contain.
 16. REPORT ONLY WHAT TOOLS CONFIRMED:
 Never say a credential, tunnel, route, or policy is "verified", "configured", or "live" unless a tool result in this conversation shows it. If something was not checked, say it was not checked. If you need something from Carl (for example a credential's location), ask for that one thing plainly.
+17. THREAD SOVEREIGN PRINCIPLE:
+A Slack thread (`channel:thread_ts`) is a dedicated, sovereign workspace for the specific topic, incident, or Linear ticket established in that thread's conversation history. Pronouns, short replies, and conversational follow-ups ("yes plz", "this project", "let's continue", "did we complete this project?") MUST be resolved strictly against the immediate conversation in the current thread—never cross-matched against unrelated tickets sitting in the global Linear queue. If Carl is discussing `ENG-101` (or an ad-hoc request like whitelisting a phone number), refuse to pull in or trigger unrelated tickets (such as `ENG-202`) unless Carl explicitly asks to switch topics or check the global backlog.
+18. NUDGE HYGIENE & IN-FLIGHT AWARENESS:
+When evaluating Linear tickets or proactive sentinel nudges, always inspect live runtime telemetry (`[LIVE RUNTIME & RUNNER TELEMETRY]`) to evaluate whether a ticket is genuinely stalled/abandoned (no active worker, not queued in an active batch execution, and no recent human/agent interaction) versus actively in-flight or newly queued. If a ticket was just triggered minutes ago, has an active background runner, or is waiting its turn in an active background batch run, silently suppress the nudge rather than nagging Carl. When formulating a prompt for a genuinely stalled ticket, never emit robotic static boilerplate ("Would you like me to start, continue, retry, or cancel this ticket?"); instead, tailor the call-to-action naturally to the actual ticket and subtask state:
+- If `0/N` subtasks are settled and all are `Todo`/`Planned` (even if the parent ticket was prematurely marked `In Progress`), ask if Carl is ready to kick off Phase 1.
+- If some subtasks are settled or a runner paused mid-stream, ask if Carl wants to pick back up where we left off on Subtask X.
+- If the last run threw an error or failed verification, mention what broke and ask if Carl wants to retry.
+19. THE IRON LAW OF EXTERNAL INTEGRATIONS (NO SILENT MOCKS):
+- Never Hallucinate Fallbacks for Live APIs: When building or executing tools that interact with external services (H-E-B, Slack, iMessage, GitHub, APIs), NEVER implement "synthetic fallbacks," "mock IDs," or "offline heuristic stubs" to make an end-to-end test pass when blocked by auth, 2FA, or WAF/Cloudflare/Imperva challenges.
+- Fail Loudly at the Boundary: If an external API blocks you or requires interactive human authentication (like 2FA or a browser captcha), STOP at that exact step, leave downstream state untouched, and report the exact blocker so Carl can authenticate or intervene.
+- Never Redefine Deliverables: "Staged," "Deployed," or "Sent" means the external target system confirmed the state change via a verified network response—never a local cache write pretending to be remote state.
+20. LINEAR FOLLOW-UP ISSUE LINKING:
+When creating a new follow-up, remediation, or phase-2 ticket via `plan_task_with_subtasks` that stems from an original Linear issue discussed in the thread (e.g. creating `ENG-303` as a follow-up to `ENG-101`), ALWAYS pass `related_issue_key` with the original issue identifier so Golem formally links the follow-up ticket to the original task in Linear.
+21. INTERNAL [Hand] TICKET HYGIENE:
+Tickets starting with `[Hand]` are internal, ephemeral execution steps dispatched by backstage runners—never top-level user projects. Never surface `[Hand]` tickets to Carl as standalone project deliverables or prompt him to start, retry, or review them. If orphaned `[Hand]` tickets with no active local process are encountered, treat them as internal background artifacts to be auto-reconciled or ignored rather than surfaced in user nudges.
 """
 
 BASE_SYSTEM_INSTRUCTION: str = BASE_CHIEF_OF_STAFF_INSTRUCTION
@@ -562,6 +595,17 @@ async def generate_mouth_response(
     elif blocker and blocker.get("type") == "prompt":
         content = blocker.get("content") or blocker.get("prompt")
         return f"⚠️ *Confirmation Required:* Runner is waiting for input:\n> `{content}`"
+
+    try:
+        from golem.webui import get_active_webui_server
+        webui = get_active_webui_server()
+        if webui is not None:
+            clean_p = " ".join(prompt.splitlines()).strip()
+            if len(clean_p) > 200:
+                clean_p = clean_p[:197] + "..."
+            webui.append_organ_log("mouth", f"[INBOUND] {clean_p}")
+    except Exception:
+        pass
 
     # Auto-resolve sensory statuses if omitted
     if eyes_status is None and session is not None and hasattr(session, "get_eyes_status"):
@@ -714,14 +758,27 @@ async def generate_mouth_response(
                     if isinstance(data, dict):
                         usage = data.get("usageMetadata")
                         if isinstance(usage, dict):
+                            p_tok = usage.get("promptTokenCount", 0) or 0
+                            c_tok = usage.get("candidatesTokenCount", 0) or 0
+                            th_tok = usage.get("thoughtsTokenCount", 0) or 0
                             logger.info(
                                 "Gemini usageMetadata (%s): promptTokenCount=%s, cachedContentTokenCount=%s, thoughtsTokenCount=%s, candidatesTokenCount=%s",
                                 model_name,
-                                usage.get("promptTokenCount"),
+                                p_tok,
                                 usage.get("cachedContentTokenCount"),
-                                usage.get("thoughtsTokenCount"),
-                                usage.get("candidatesTokenCount"),
+                                th_tok,
+                                c_tok,
                             )
+                            try:
+                                from golem.webui import get_active_webui_server
+                                webui = get_active_webui_server()
+                                if webui is not None:
+                                    webui.append_organ_log(
+                                        "mouth",
+                                        f"[TOKENS] prompt={p_tok} candidates={c_tok} thoughts={th_tok} model={model_name}",
+                                    )
+                            except Exception:
+                                pass
                     candidates = data.get("candidates") if isinstance(data, dict) else None
                     if candidates and isinstance(candidates, list):
                         cand = candidates[0] if isinstance(candidates[0], dict) else {}
@@ -732,12 +789,34 @@ async def generate_mouth_response(
                         parts = (content.get("parts") if isinstance(content, dict) else None) or []
                         if not isinstance(parts, list):
                             parts = []
+                        for p in parts:
+                            if isinstance(p, dict) and p.get("thought") and p.get("text"):
+                                th_text = " ".join(str(p["text"]).splitlines()).strip()
+                                if len(th_text) > 120:
+                                    th_text = th_text[:117] + "..."
+                                try:
+                                    from golem.webui import get_active_webui_server
+                                    webui = get_active_webui_server()
+                                    if webui is not None:
+                                        webui.append_organ_log("mouth", f"[THOUGHT] {th_text}")
+                                except Exception:
+                                    pass
                         text_chunks = [
                             str(p["text"]) for p in parts
                             if isinstance(p, dict) and "text" in p and p.get("text")
                         ]
                         resp_text = "".join(text_chunks).strip()
                         if resp_text:
+                            try:
+                                from golem.webui import get_active_webui_server
+                                webui = get_active_webui_server()
+                                if webui is not None:
+                                    clean_rep = " ".join(resp_text.splitlines()).strip()
+                                    if len(clean_rep) > 200:
+                                        clean_rep = clean_rep[:197] + "..."
+                                    webui.append_organ_log("mouth", f"[REPLY] {clean_rep}")
+                            except Exception:
+                                pass
                             return resp_text
                         return f"⚠️ *Mouth Generation Error:* Gemini API returned empty candidate text (finishReason={finish_reason})."
                     return "⚠️ *Mouth Generation Error:* Gemini API returned no candidates."
@@ -769,11 +848,49 @@ def get_mouth_fallback_models() -> List[str]:
     return ["gemini-3.8-flash"]
 
 
+def calculate_token_cost(
+    model: str,
+    prompt_tokens: int = 0,
+    cached_tokens: int = 0,
+    candidates_tokens: int = 0,
+) -> float:
+    """
+    Calculate estimated turn cost in USD based on model pricing per 1M tokens.
+    Tier 1 (Architect: gemini-4-argon): $2.50 input, $0.625 cached, $10.00 output
+    Tier 2 (Workhorse: gemini-3.8-flash): $0.10 input, $0.025 cached, $0.40 output
+    Tier 3 (Sentinel: gemini-3.5-flash-lite): $0.075 input, $0.01875 cached, $0.30 output
+    """
+    m = (model or "").lower()
+    if "argon" in m or "gemini-4" in m or "pro" in m:
+        rate_uncached = 2.50 / 1_000_000.0
+        rate_cached = 0.625 / 1_000_000.0
+        rate_output = 10.00 / 1_000_000.0
+    elif "lite" in m or "3.5-flash" in m:
+        rate_uncached = 0.075 / 1_000_000.0
+        rate_cached = 0.01875 / 1_000_000.0
+        rate_output = 0.30 / 1_000_000.0
+    else:
+        # Default / Workhorse (gemini-3.8-flash)
+        rate_uncached = 0.10 / 1_000_000.0
+        rate_cached = 0.025 / 1_000_000.0
+        rate_output = 0.40 / 1_000_000.0
+
+    uncached_tokens = max(0, prompt_tokens - cached_tokens)
+    cost = (uncached_tokens * rate_uncached) + (cached_tokens * rate_cached) + (candidates_tokens * rate_output)
+    return round(cost, 6)
+
+
+def get_mouth_tools_declaration() -> List[Dict[str, Any]]:
+    """Return standard Google Gemini REST API tools declaration with deterministically sorted functionDeclarations."""
+    sorted_tools = sorted(MOUTH_TOOLS, key=lambda d: d.get("name", ""))
+    return [{"functionDeclarations": sorted_tools}]
+
+
 async def call_gemini_api(
     payload: Optional[Dict[str, Any]] = None,
     model: Optional[str] = None,
     api_key: Optional[str] = None,
-    timeout_seconds: float = 30.0,
+    timeout_seconds: float = 60.0,
     **kwargs: Any,
 ) -> Optional[Dict[str, Any]]:
     """Execute REST API POST call to Google Gemini endpoint or configured MOUTH_BACKEND with automatic failover and usage logging."""
@@ -855,13 +972,26 @@ async def call_gemini_api(
                         if isinstance(data, dict):
                             usage = data.get("usageMetadata")
                             if isinstance(usage, dict):
+                                p_tok = usage.get("promptTokenCount", 0) or 0
+                                c_tok = usage.get("candidatesTokenCount", 0) or 0
+                                cached_tok = usage.get("cachedContentTokenCount", 0) or 0
+                                th_tok = usage.get("thoughtsTokenCount", 0) or 0
+                                cache_hit_rate = (cached_tok / p_tok * 100.0) if p_tok > 0 else 0.0
+                                cost = calculate_token_cost(
+                                    model=current_model,
+                                    prompt_tokens=p_tok,
+                                    cached_tokens=cached_tok,
+                                    candidates_tokens=c_tok,
+                                )
                                 logger.info(
-                                    "Gemini usageMetadata (%s): promptTokenCount=%s, cachedContentTokenCount=%s, thoughtsTokenCount=%s, candidatesTokenCount=%s",
+                                    "Gemini usageMetadata (%s): promptTokenCount=%s, cachedContentTokenCount=%s (Cache: %.1f%% hit), thoughtsTokenCount=%s, candidatesTokenCount=%s, cost=$%.4f",
                                     current_model,
-                                    usage.get("promptTokenCount"),
-                                    usage.get("cachedContentTokenCount"),
-                                    usage.get("thoughtsTokenCount"),
-                                    usage.get("candidatesTokenCount"),
+                                    p_tok,
+                                    cached_tok,
+                                    cache_hit_rate,
+                                    th_tok,
+                                    c_tok,
+                                    cost,
                                 )
                         return data
                     else:
@@ -886,17 +1016,21 @@ async def call_gemini_api(
                             continue
                         return last_error_res
         except (asyncio.TimeoutError, aiohttp.ClientError, Exception) as e:
-            logger.warning(f"Gemini API call ({current_model}) failed: {e}")
+            if isinstance(e, asyncio.TimeoutError):
+                err_msg = f"Gemini API call timed out after {timeout_seconds}s"
+            else:
+                err_msg = str(e) or type(e).__name__
+            logger.warning(f"Gemini API call ({current_model}) failed: {err_msg}")
             last_error_res = {
                 "_error": True,
                 "status": 500,
                 "code": 500,
                 "error_type": type(e).__name__,
-                "raw_error": str(e),
-                "message": str(e),
+                "raw_error": err_msg,
+                "message": err_msg,
             }
             if attempt_idx < len(models_to_try) - 1:
-                logger.info(f"Retrying Gemini call with fallback model '{models_to_try[attempt_idx + 1]}' after error: {e}")
+                logger.info(f"Retrying Gemini call with fallback model '{models_to_try[attempt_idx + 1]}' after error: {err_msg}")
                 continue
             return last_error_res
 
@@ -1424,7 +1558,11 @@ async def synthesize_email_briefing(
             ],
             "generationConfig": {"temperature": 0.2},
         }
-        resp = await call_gemini_api(payload=payload, timeout_seconds=15.0)
+        resp = await call_gemini_api(
+            payload=payload,
+            model=get_workhorse_model(),
+            timeout_seconds=60.0,
+        )
         if resp and isinstance(resp, dict):
             candidates = resp.get("candidates") or []
             if candidates and isinstance(candidates, list):
@@ -1438,4 +1576,237 @@ async def synthesize_email_briefing(
         logger.debug(f"LLM email briefing synthesis failed: {le}")
 
     return _build_fallback(), suggested_action
+
+
+def _is_ticket_suppressed_by_telemetry(
+    ticket: Dict[str, Any],
+    runtime_telemetry: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """
+    Evaluate whether live runtime telemetry indicates this ticket is actively in-flight,
+    queued in an active batch execution, or had recent human/agent interaction.
+    """
+    if not isinstance(ticket, dict):
+        return False
+
+    if str(ticket.get("title") or "").strip().startswith("[Hand]"):
+        return True
+
+    if not runtime_telemetry or not isinstance(runtime_telemetry, dict):
+        return False
+
+    ident = str(ticket.get("identifier") or ticket.get("id") or "").strip()
+    if runtime_telemetry.get("is_in_flight") or runtime_telemetry.get("is_queued_in_batch"):
+        return True
+
+    in_flight_keys = {str(k) for k in (runtime_telemetry.get("in_flight_keys") or []) if k}
+    queued_keys = {str(k) for k in (runtime_telemetry.get("queued_keys") or []) if k}
+    related_keys = {ident} if ident else set()
+    for st in (ticket.get("subtasks") or []):
+        if isinstance(st, dict) and st.get("identifier"):
+            related_keys.add(str(st["identifier"]))
+
+    if related_keys.intersection(in_flight_keys) or related_keys.intersection(queued_keys):
+        return True
+
+    sec_since = runtime_telemetry.get("seconds_since_last_interaction")
+    if isinstance(sec_since, (int, float)) and 0.0 <= float(sec_since) <= 900.0:
+        return True
+
+    return False
+
+
+def _build_natural_ticket_cta(
+    ticket: Dict[str, Any],
+    runtime_telemetry: Optional[Dict[str, Any]] = None,
+) -> str:
+    """
+    Formulate a natural, context-aware call-to-action based on actual ticket,
+    subtask roadmap, and error state (never static start/continue/retry/cancel boilerplate).
+    """
+    key = ticket.get("identifier", "CHO-???")
+    subtasks = ticket.get("subtasks") or []
+    last_error = (
+        ticket.get("last_error")
+        or (runtime_telemetry.get("last_error") if isinstance(runtime_telemetry, dict) else None)
+    )
+
+    uncompleted = [st for st in subtasks if isinstance(st, dict) and not st.get("settled")]
+    total_st = len(subtasks)
+    settled_st = total_st - len(uncompleted)
+
+    if last_error:
+        target_st = uncompleted[0] if uncompleted else None
+        target_label = (
+            f"*{target_st.get('identifier')}* ({target_st.get('title')})"
+            if (target_st and target_st.get("identifier"))
+            else f"*{key}*"
+        )
+        return (
+            f"The last run hit an error (`{str(last_error)[:160]}`). "
+            f"Would you like me to *retry* {target_label}?"
+        )
+
+    if subtasks:
+        all_todo = all(
+            (
+                (st.get("state", {}).get("name") if isinstance(st.get("state"), dict) else str(st.get("state") or "Planned"))
+                .strip()
+                .lower()
+                in ("todo", "planned", "backlog", "unstarted", "triage")
+            )
+            for st in uncompleted
+        )
+        if settled_st == 0 and all_todo:
+            first_st = uncompleted[0] if uncompleted else subtasks[0]
+            st_key = first_st.get("identifier") or ""
+            st_title = first_st.get("title") or "Phase 1"
+            first_label = f"*{st_key}* ({st_title})" if st_key else f"*{st_title}*"
+            return f"0/{total_st} subtasks have started—ready for me to *kick off Phase 1* ({first_label})?"
+
+        if uncompleted:
+            next_st = uncompleted[0]
+            st_key = next_st.get("identifier") or ""
+            st_title = next_st.get("title") or "the next subtask"
+            if st_key:
+                return f"{settled_st}/{total_st} subtasks are settled—want me to *pick back up where we left off on {st_key}* ({st_title})?"
+            return f"{settled_st}/{total_st} subtasks are settled—want me to *pick back up where we left off on {st_title}*?"
+
+    return f"Ready for me to *kick off Phase 1* on *{key}*?"
+
+
+def synthesize_assigned_tickets_prompt(
+    tickets: List[Dict[str, Any]],
+    runtime_telemetry: Optional[Dict[str, Any]] = None,
+) -> str:
+    """
+    Format a natural, context-aware Chief of Staff nudge for stalled Linear ticket(s).
+    Evaluates in-flight/queued telemetry to suppress active work and tailors the
+    call-to-action to the actual subtask state (kick off Phase 1, pick back up on Subtask X, or retry).
+    """
+    if not tickets:
+        return ""
+
+    stalled_tickets = [
+        t for t in tickets
+        if not _is_ticket_suppressed_by_telemetry(t, runtime_telemetry)
+    ]
+    if not stalled_tickets:
+        return ""
+
+    count = len(stalled_tickets)
+    if count == 1:
+        t0 = stalled_tickets[0]
+        k0 = t0.get("identifier", "CHO-???")
+        header = f"📋 *Linear Attention Required ({k0}):*"
+    else:
+        header = f"📋 *Linear Attention Required:* You have {count} stalled tickets awaiting direction:"
+
+    items = []
+    ctas = []
+    for t in stalled_tickets:
+        key = t.get("identifier", "CHO-???")
+        title = t.get("title", "Untitled")
+        state = t.get("state")
+        state_str = state.get("name", "Unknown") if isinstance(state, dict) else str(state or "Unknown")
+        project = t.get("project", "")
+        url = t.get("url", "")
+        proj_str = f" [{project}]" if project and project != "No Project" else ""
+        link_str = f"<{url}|{key}>" if url else f"*{key}*"
+
+        subtasks = t.get("subtasks") or []
+        subtask_lines = []
+        if subtasks:
+            total_st = len(subtasks)
+            settled_st = sum(1 for st in subtasks if st.get("settled"))
+            subtask_lines.append(f"  └ *Roadmap:* {settled_st}/{total_st} milestones settled")
+            for st in subtasks:
+                if not st.get("settled"):
+                    st_key = st.get("identifier") or ""
+                    st_title = st.get("title") or "Untitled"
+                    st_state = (st.get("state") or {}).get("name") if isinstance(st.get("state"), dict) else str(st.get("state") or "Planned")
+                    key_prefix = f"[{st_key}] " if st_key else ""
+                    subtask_lines.append(f"    • {key_prefix}{st_title} (`{st_state}`)")
+
+        item_text = f"• {link_str}: *{title}* (Status: `{state_str}`){proj_str}"
+        if subtask_lines:
+            item_text += "\n" + "\n".join(subtask_lines)
+        items.append(item_text)
+        ctas.append(_build_natural_ticket_cta(t, runtime_telemetry))
+
+    items_block = "\n".join(items)
+    question = ctas[0] if len(ctas) == 1 else "\n".join(f"• {c}" for c in ctas)
+    return f"{header}\n\n{items_block}\n\n{question}"
+
+
+async def synthesize_linear_ticket_nudge(
+    ticket: Dict[str, Any],
+    runtime_telemetry: Optional[Dict[str, Any]] = None,
+) -> str:
+    """
+    Pass a single Linear sentinel ticket + live runtime telemetry through the Mouth LLM
+    to evaluate whether it is genuinely stalled vs. in-flight/queued, and formulate a
+    natural, context-aware prompt (or suppress silently).
+    """
+    if not ticket or not isinstance(ticket, dict):
+        return ""
+
+    if _is_ticket_suppressed_by_telemetry(ticket, runtime_telemetry):
+        return ""
+
+    fallback_text = synthesize_assigned_tickets_prompt([ticket], runtime_telemetry=runtime_telemetry)
+    if not fallback_text:
+        return ""
+
+    is_test_env = os.environ.get("FIRSTMATE_TEST_MODE") == "1" or os.environ.get("GOLEM_TEST_MODE") == "1"
+    key = get_gemini_api_key()
+    if is_test_env or not key:
+        return fallback_text
+
+    try:
+        sys_prompt = (
+            "You are Golem, Carl's Chief of Staff in Slack.\n"
+            "The Linear sentinel surfaced a single ticket that may need Carl's attention.\n"
+            "First, evaluate Nudge Hygiene using the provided Live Runtime Telemetry:\n"
+            "- If this ticket or any of its subtasks has an active background worker, is queued in an active batch execution, "
+            "or had user/agent interaction within the last 15 minutes, output ONLY the exact token: SUPPRESS_NUDGE\n"
+            "- Otherwise, the ticket is genuinely stalled/idle. Formulate a concise Slack mrkdwn nudge for this single ticket:\n"
+            "  1. Include the ticket link (<URL|KEY>), bold title, status, and remaining subtask roadmap.\n"
+            "  2. NEVER use the robotic phrase 'Would you like me to start, continue, retry, or cancel this ticket?'.\n"
+            "  3. Formulate a natural call-to-action based on actual subtask state:\n"
+            "     • If 0/N subtasks are done and all are Todo/Planned (even if parent was marked In Progress), ask if Carl is ready for you to kick off Phase 1.\n"
+            "     • If some subtasks are settled or a runner paused mid-stream, ask if Carl wants to pick back up where we left off on Subtask X.\n"
+            "     • If the last run threw an error or failed verification, mention what broke and ask if Carl wants to retry.\n"
+            "Formatting: Slack mrkdwn (*bold*, `code`, <URL|Label>). No markdown headers (#)."
+        )
+        user_prompt = (
+            f"Ticket Metadata:\n{json.dumps(ticket, indent=2, default=str)}\n\n"
+            f"Live Runtime Telemetry:\n{json.dumps(runtime_telemetry or {}, indent=2, default=str)}\n"
+        )
+        payload = {
+            "systemInstruction": {"parts": [{"text": sys_prompt}]},
+            "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
+            "generationConfig": {"temperature": 0.2},
+        }
+        resp = await call_gemini_api(
+            payload=payload,
+            model=get_workhorse_model(),
+            timeout_seconds=60.0,
+        )
+        if resp and isinstance(resp, dict):
+            candidates = resp.get("candidates") or []
+            if candidates and isinstance(candidates, list):
+                content = candidates[0].get("content") or {}
+                parts = content.get("parts") or []
+                text_chunks = [p.get("text", "") for p in parts if isinstance(p, dict)]
+                llm_text = "".join(text_chunks).strip()
+                if "SUPPRESS_NUDGE" in llm_text:
+                    return ""
+                if llm_text:
+                    return llm_text
+    except Exception as exc:
+        logger.debug(f"LLM linear nudge synthesis fallback: {exc}")
+
+    return fallback_text
+
 

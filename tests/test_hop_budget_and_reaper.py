@@ -70,8 +70,18 @@ class TestStep2BudgetNoteInjection(unittest.IsolatedAsyncioTestCase):
         text, err = await self._run(budget_note=note)
         self.assertEqual(text, "briefing")
         self.assertIsNone(err)
-        sys_text = self.captured[0]["systemInstruction"]["parts"][0]["text"]
-        self.assertIn("TOOL BUDGET EXHAUSTED", sys_text)
+        captured_payload = self.captured[0]
+        sys_text = captured_payload["systemInstruction"]["parts"][0]["text"]
+        contents_text = " ".join(
+            p.get("text", "")
+            for turn in captured_payload.get("contents", [])
+            for p in turn.get("parts", [])
+            if isinstance(p, dict)
+        )
+        self.assertTrue(
+            "TOOL BUDGET EXHAUSTED" in sys_text or "TOOL BUDGET EXHAUSTED" in contents_text,
+            "TOOL BUDGET EXHAUSTED note must be injected into payload",
+        )
 
     async def test_no_note_by_default(self):
         await self._run()
