@@ -42,6 +42,69 @@ async def test_create_plan_with_subtasks(bridge):
 
 
 @pytest.mark.asyncio
+async def test_create_plan_with_subtasks_reuses_existing_parent_and_sets_assignee(bridge):
+    mock_states = {"in progress": "st-in-prog", "planned": "st-planned"}
+    bridge._project_id_cache = "proj-1"
+    bridge._team_id_cache = "team-1"
+    bridge._state_cache = mock_states
+    bridge._viewer_id_cache = "hermes-viewer-123"
+
+    existing_issue_resp = {
+        "issue": {
+            "id": "p-existing",
+            "identifier": "CHO-207",
+            "url": "http://p/cho-207",
+            "title": "Existing Deliverable",
+            "description": "Original description",
+        }
+    }
+    update_resp = {
+        "issueUpdate": {
+            "success": True,
+            "issue": {
+                "id": "p-existing",
+                "identifier": "CHO-207",
+                "url": "http://p/cho-207",
+                "title": "Existing Deliverable",
+            },
+        }
+    }
+    child_resp_1 = {"issueCreate": {"issue": {"id": "c-1", "identifier": "CHO-208", "url": "http://c1", "title": "Milestone 1"}}}
+    child_resp_2 = {"issueCreate": {"issue": {"id": "c-2", "identifier": "CHO-209", "url": "http://c2", "title": "Milestone 2"}}}
+
+    mock_exec = AsyncMock(side_effect=[existing_issue_resp, update_resp, child_resp_1, child_resp_2])
+    with patch.object(bridge, "execute_query", mock_exec):
+        res = await bridge.create_plan_with_subtasks(
+            parent_title="Existing Deliverable",
+            parent_description="Updated scope with details",
+            subtasks=["Subtask 1", "Subtask 2"],
+            parent_key="CHO-207",
+        )
+        assert res["parent"]["identifier"] == "CHO-207"
+        assert res["parent"]["id"] == "p-existing"
+        assert len(res["subtasks"]) == 2
+        assert res["subtasks"][0]["identifier"] == "CHO-208"
+
+        assert mock_exec.call_count == 4
+        call1 = mock_exec.call_args_list[0]
+        assert "GetExistingParent" in call1[0][0]
+        assert call1[0][1] == {"key": "CHO-207"}
+
+        call2 = mock_exec.call_args_list[1]
+        assert "UpdateParent" in call2[0][0]
+        assert call2[0][1]["id"] == "p-existing"
+        update_input = call2[0][1]["input"]
+        assert update_input["stateId"] == "st-in-prog"
+        assert update_input["assigneeId"] == "hermes-viewer-123"
+        assert update_input["description"] == "Updated scope with details"
+
+        call3 = mock_exec.call_args_list[2]
+        assert "CreateSubtask" in call3[0][0]
+        assert call3[0][1]["input"]["parentId"] == "p-existing"
+        assert call3[0][1]["input"]["assigneeId"] == "hermes-viewer-123"
+
+
+@pytest.mark.asyncio
 async def test_settle_subtask_transitions_parent_when_all_done(bridge):
     mock_states = {"claimed fixed": "st-cf", "in progress": "st-prog"}
     bridge._project_id_cache = "proj-1"
@@ -245,7 +308,7 @@ async def test_ingress_plan_task_with_subtasks_tool_call():
 
         mock_create.assert_called_once_with(
             "Build Podcast",
-            "Thread: C123:100.1\nPodcast curriculum",
+            "Thread: `C123:100.1`\nPodcast curriculum",
             ["Episode 1", "Episode 2"]
         )
 
@@ -625,3 +688,525 @@ async def test_linear_bridge_http_session_reuse():
     await b.close()
     assert session1.closed
     assert b._http_session is None
+
+
+@pytest.mark.asyncio
+async def test_settle_subtask_with_kwargs_and_exit_code_zero(bridge):
+    mock_states = {"claimed fixed": "st-cf", "in progress": "st-prog"}
+    bridge._project_id_cache = "proj-1"
+    bridge._team_id_cache = "team-1"
+    bridge._state_cache = mock_states
+
+    tree_resp = {
+        "issue": {
+            "parent": {
+                "id": "p-1",
+                "identifier": "CHO-100",
+                "title": "Podcast",
+                "children": {
+                    "nodes": [
+                        {"id": "c-1", "identifier": "CHO-101", "state": {"name": "Claimed Fixed"}},
+                    ]
+                },
+            }
+        }
+    }
+
+    mock_exec = AsyncMock(side_effect=[
+        {"commentCreate": {"success": True}},  # Subtask comment receipt
+        {"issueUpdate": {"success": True}},    # Subtask transition
+        tree_resp,                             # Query tree
+        {"commentCreate": {"success": True}},  # Parent comment
+        {"issueUpdate": {"success": True}},    # Parent transition
+    ])
+    with patch.object(bridge, "execute_query", mock_exec):
+        res = await bridge.settle_subtask_and_evaluate_parent(
+            subtask_issue_id="c-1",
+            exit_code=0,
+            output_tail="Success tail logs",
+            pane_coordinate="hand_CHO-101",
+        )
+        assert res["parent_settled"] is True
+        assert res["parent_key"] == "CHO-100"
+        assert mock_exec.call_count == 5
+        # Verify receipt payload in commentCreate
+        comment_call = mock_exec.call_args_list[0]
+        body = comment_call[0][1]["input"]["body"]
+        assert "hand_CHO-101" in body
+        assert "Success tail logs" in body
+
+
+@pytest.mark.asyncio
+async def test_settle_subtask_short_circuits_on_nonzero_exit_code(bridge):
+    mock_exec = AsyncMock()
+    with patch.object(bridge, "execute_query", mock_exec):
+        res = await bridge.settle_subtask_and_evaluate_parent(
+            subtask_issue_id="c-1",
+            exit_code=1,
+            output_tail="Error: command timed out",
+            pane_coordinate="hand_c1",
+        )
+        assert res["subtask_settled"] is False
+        assert res["parent_claimed_fixed"] is False
+        assert res["exit_code"] == 1
+        assert mock_exec.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_get_assigned_issues_excludes_claimed_fixed_and_attaches_sorted_subtasks(bridge):
+    bridge._viewer_id_cache = "viewer-hermes"
+
+    mock_resp = {
+        "issues": {
+            "nodes": [
+                {
+                    "id": "p-1",
+                    "identifier": "CHO-214",
+                    "title": "Validate audiobookshelf podcasts",
+                    "description": "Project scope",
+                    "url": "http://linear/cho-214",
+                    "state": {"id": "s-1", "name": "In Progress", "type": "started"},
+                    "project": {"id": "prj-1", "name": "Golem Brain"},
+                    "team": {"id": "tm-1", "key": "CHO", "name": "Core"},
+                    "assignee": {"id": "viewer-hermes", "name": "Hermes", "email": "hermes.horned@gmail.com"},
+                    "children": {
+                        "nodes": [
+                            {
+                                "id": "c-2",
+                                "identifier": "CHO-216",
+                                "title": "[2/2] Extract episode durations",
+                                "description": "Extract runtimes",
+                                "state": {"id": "s-un", "name": "Planned", "type": "unstarted"},
+                            },
+                            {
+                                "id": "c-1",
+                                "identifier": "CHO-215",
+                                "title": "[1/2] Inventory podcast series",
+                                "description": "Query ABS API",
+                                "state": {"id": "s-cf", "name": "Claimed Fixed", "type": "started"},
+                            },
+                        ]
+                    },
+                },
+                {
+                    "id": "p-2",
+                    "identifier": "CHO-200",
+                    "title": "Old Finished Project",
+                    "description": "Already completed",
+                    "url": "http://linear/cho-200",
+                    "state": {"id": "s-2", "name": "Claimed Fixed", "type": "started"},
+                    "project": {"id": "prj-1", "name": "Golem Brain"},
+                    "team": {"id": "tm-1", "key": "CHO", "name": "Core"},
+                    "assignee": {"id": "viewer-hermes", "name": "Hermes", "email": "hermes.horned@gmail.com"},
+                    "children": {"nodes": []},
+                },
+            ]
+        }
+    }
+
+    with patch.object(bridge, "execute_query", AsyncMock(return_value=mock_resp)):
+        issues = await bridge.get_assigned_issues(non_done_only=True)
+        # CHO-200 in Claimed Fixed must be excluded
+        assert len(issues) == 1
+        assert issues[0]["identifier"] == "CHO-214"
+
+        # Subtasks must be sorted by [k/N] title tag: [1/2] then [2/2]
+        subs = issues[0]["subtasks"]
+        assert len(subs) == 2
+        assert subs[0]["identifier"] == "CHO-215"
+        assert subs[0]["settled"] is True
+        assert subs[1]["identifier"] == "CHO-216"
+        assert subs[1]["settled"] is False
+
+
+@pytest.mark.asyncio
+async def test_create_plan_with_subtasks_links_related_issue_key(bridge):
+    """Verify follow-up tickets (e.g. CHO-229) are formally linked to the original task (e.g. CHO-197) via issueRelationCreate."""
+    mock_states = {"in progress": "st-in-prog", "planned": "st-planned"}
+    bridge._project_id_cache = "proj-1"
+    bridge._team_id_cache = "team-1"
+    bridge._state_cache = mock_states
+
+    parent_resp = {
+        "issueCreate": {
+            "issue": {
+                "id": "31122e99-d94a-4fb0-a302-4007847d0506",
+                "identifier": "CHO-229",
+                "url": "https://linear.app/chorned/issue/CHO-229",
+                "title": "TikTok-2-HEB: Purge Synthetic SKU Fallback",
+            }
+        }
+    }
+    child_resp_1 = {
+        "issueCreate": {
+            "issue": {
+                "id": "c-230",
+                "identifier": "CHO-230",
+                "url": "https://linear.app/chorned/issue/CHO-230",
+                "title": "[1/1] Purge synthetic SKU fallback",
+            }
+        }
+    }
+    resolve_orig_resp = {
+        "issue": {
+            "id": "127d6835-06ed-49d4-b866-3ed941b57a4a",
+        }
+    }
+    relation_resp = {
+        "issueRelationCreate": {
+            "success": True,
+            "issueRelation": {"id": "rel-1", "type": "related"},
+        }
+    }
+
+    mock_exec = AsyncMock(side_effect=[parent_resp, child_resp_1, resolve_orig_resp, relation_resp])
+    with patch.object(bridge, "execute_query", mock_exec):
+        res = await bridge.create_plan_with_subtasks(
+            parent_title="TikTok-2-HEB: Purge Synthetic SKU Fallback",
+            parent_description="Remove synthetic fallback and wire live GraphQL",
+            subtasks=["Purge synthetic SKU fallback"],
+            related_issue_key="CHO-197",
+        )
+        assert res["parent"]["identifier"] == "CHO-229"
+        assert res["parent"]["related_issue_key"] == "CHO-197"
+        assert len(res["subtasks"]) == 1
+
+        # Verify CreateParent included Follow-up to: CHO-197
+        create_parent_call = mock_exec.call_args_list[0]
+        assert "Follow-up to: CHO-197" in create_parent_call[0][1]["input"]["description"]
+
+        # Verify LinkIssues mutation was executed with CHO-229 UUID and CHO-197 UUID
+        link_call = mock_exec.call_args_list[3]
+        assert "issueRelationCreate" in link_call[0][0]
+        assert link_call[0][1]["input"] == {
+            "issueId": "31122e99-d94a-4fb0-a302-4007847d0506",
+            "relatedIssueId": "127d6835-06ed-49d4-b866-3ed941b57a4a",
+            "type": "related",
+        }
+
+
+@pytest.mark.asyncio
+async def test_ingress_plan_task_with_subtasks_auto_links_prior_thread_issue():
+    """Verify that creating a new follow-up plan in a thread already bound to CHO-197 automatically passes related_issue_key='CHO-197'."""
+    from golem.ingress import _THREAD_PLAN_CACHE
+    gateway = IngressGateway()
+    client = MagicMock()
+    client.post_chat_message = AsyncMock()
+    client.add_reaction = AsyncMock()
+
+    thread_ref = "C_HEB:200.1"
+    _THREAD_PLAN_CACHE[thread_ref] = {
+        "parent": {
+            "id": "127d6835-06ed-49d4-b866-3ed941b57a4a",
+            "identifier": "CHO-197",
+            "title": "TikTok-2-HEB Skill",
+            "state": "Claimed Fixed",
+        },
+        "subtasks": [],
+        "comments": [],
+    }
+
+    mock_plan = {
+        "parent": {
+            "id": "31122e99-d94a-4fb0-a302-4007847d0506",
+            "identifier": "CHO-229",
+            "url": "https://linear.app/chorned/issue/CHO-229",
+            "title": "TikTok-2-HEB: Purge Synthetic SKU Fallback",
+            "related_issue_key": "CHO-197",
+        },
+        "subtasks": [
+            {
+                "id": "c-230",
+                "identifier": "CHO-230",
+                "title": "[1/1] Purge synthetic SKU fallback",
+                "url": "https://linear.app/chorned/issue/CHO-230",
+            }
+        ],
+    }
+
+    gemini_turn1 = {
+        "candidates": [
+            {
+                "content": {
+                    "parts": [
+                        {
+                            "functionCall": {
+                                "name": "plan_task_with_subtasks",
+                                "args": {
+                                    "parent_title": "TikTok-2-HEB: Purge Synthetic SKU Fallback",
+                                    "parent_description": "Wire live H-E-B GraphQL",
+                                    "subtasks": ["Purge synthetic SKU fallback"],
+                                },
+                            }
+                        }
+                    ]
+                }
+            }
+        ]
+    }
+    gemini_turn2 = {
+        "candidates": [
+            {
+                "content": {
+                    "parts": [
+                        {
+                            "text": "*Follow-Up Plan Created:* Linked `CHO-229` to `CHO-197`."
+                        }
+                    ]
+                }
+            }
+        ]
+    }
+
+    try:
+        with patch("golem.gateway.ingress.call_gemini_api", new_callable=AsyncMock) as mock_gemini, \
+             patch("golem.linear_bridge.LinearBridge.create_plan_with_subtasks", new_callable=AsyncMock) as mock_create:
+            mock_gemini.side_effect = [gemini_turn1, gemini_turn2]
+            mock_create.return_value = mock_plan
+
+            event = {"channel": "C_HEB", "ts": "200.5", "thread_ts": "200.1", "text": "Create a follow-up plan to purge the synthetic SKU fallback"}
+            await gateway.handle_message(event, client)
+
+            mock_create.assert_called_once_with(
+                "TikTok-2-HEB: Purge Synthetic SKU Fallback",
+                "Thread: `C_HEB:200.1`\nWire live H-E-B GraphQL",
+                ["Purge synthetic SKU fallback"],
+                related_issue_key="CHO-197",
+            )
+    finally:
+        _THREAD_PLAN_CACHE.pop(thread_ref, None)
+
+
+def test_iron_law_of_external_integrations_and_related_issue_declaration():
+    """Verify The Iron Law of External Integrations and related_issue_key are enforced in Mouth and Hand declarations."""
+    assert "related_issue_key" in PLAN_TASK_WITH_SUBTASKS_DECLARATION["parameters"]["properties"]
+    assert "THE IRON LAW OF EXTERNAL INTEGRATIONS (NO SILENT MOCKS)" in BASE_SYSTEM_INSTRUCTION
+    assert "Never Hallucinate Fallbacks for Live APIs" in BASE_SYSTEM_INSTRUCTION
+    assert "Fail Loudly at the Boundary" in BASE_SYSTEM_INSTRUCTION
+    assert "Never Redefine Deliverables" in BASE_SYSTEM_INSTRUCTION
+    assert "LINEAR FOLLOW-UP ISSUE LINKING" in BASE_SYSTEM_INSTRUCTION
+
+
+@pytest.mark.asyncio
+async def test_ensure_thread_issue_backticks_and_find_thread_fallback(bridge):
+    """Verify ensure_thread_issue writes Thread: `{thread_ref}` inside backticks and find_thread_issue falls back for legacy linkified refs."""
+    from golem.linear_bridge import _THREAD_ISSUE_CACHE
+    _THREAD_ISSUE_CACHE.clear()
+    bridge._project_id_cache = "proj-1"
+    bridge._team_id_cache = "team-1"
+    bridge._state_cache = {"in progress": "st-ip"}
+
+    # 1. ensure_thread_issue writes Thread: `{thread_ref}` inside backticks
+    mock_create = AsyncMock(return_value={"id": "iss-1", "identifier": "CHO-1", "title": "Task"})
+    with patch.object(bridge, "find_thread_issue", AsyncMock(return_value=None)), \
+         patch.object(bridge, "create_task_issue", mock_create):
+        res = await bridge.ensure_thread_issue("iMessage;-;k.horned@gmail.com:iMessage;-;k.horned@gmail.com", "Task", "Description")
+        assert res["identifier"] == "CHO-1"
+        created_body = mock_create.call_args[0][1]
+        assert created_body.startswith("Thread: `iMessage;-;k.horned@gmail.com:iMessage;-;k.horned@gmail.com`")
+
+    # 2. find_thread_issue falls back for legacy linkified refs
+    _THREAD_ISSUE_CACHE.clear()
+    linkified_node = {
+        "id": "iss-legacy",
+        "identifier": "CHO-LEGACY",
+        "title": "Legacy Project",
+        "state": {"name": "In Progress", "type": "started"},
+    }
+
+    async def mock_exec(query_str, vars_dict):
+        ref_arg = vars_dict.get("ref", "")
+        if "mailto:" in ref_arg:
+            return {"project": {"issues": {"nodes": [linkified_node]}}}
+        return {"project": {"issues": {"nodes": []}}}
+
+    with patch.object(bridge, "execute_query", side_effect=mock_exec):
+        found = await bridge.find_thread_issue("iMessage;-;k.horned@gmail.com:iMessage;-;k.horned@gmail.com")
+        assert found is not None
+        assert found["identifier"] == "CHO-LEGACY"
+
+
+@pytest.mark.asyncio
+async def test_thread_issue_cache_excludes_closed_hand_tickets(bridge):
+    """Verify closed [Hand] tickets never pollute _THREAD_ISSUE_CACHE, while true parent tickets are cached."""
+    from golem.linear_bridge import _THREAD_ISSUE_CACHE
+    _THREAD_ISSUE_CACHE.clear()
+    bridge._project_id_cache = "proj-1"
+    bridge._team_id_cache = "team-1"
+    bridge._state_cache = {"in progress": "st-ip"}
+
+    thread_ref = "C_TEST:123.456"
+
+    # 1. Closed/canceled [Hand] ticket is never returned or cached
+    closed_hand_node = {
+        "id": "hand-1",
+        "identifier": "CHO-HAND1",
+        "title": "[Hand] pytest tests",
+        "state": {"name": "Done", "type": "completed"},
+    }
+    with patch.object(bridge, "execute_query", AsyncMock(return_value={"project": {"issues": {"nodes": [closed_hand_node]}}})):
+        found = await bridge.find_thread_issue(thread_ref)
+        assert found is None
+        assert thread_ref not in _THREAD_ISSUE_CACHE
+
+    # 2. True parent ticket is cached
+    parent_node = {
+        "id": "parent-1",
+        "identifier": "CHO-PARENT",
+        "title": "Deliverable Alpha",
+        "state": {"name": "In Progress", "type": "started"},
+    }
+    with patch.object(bridge, "execute_query", AsyncMock(return_value={"project": {"issues": {"nodes": [parent_node]}}})):
+        found_parent = await bridge.find_thread_issue(thread_ref)
+        assert found_parent is not None
+        assert found_parent["identifier"] == "CHO-PARENT"
+        assert _THREAD_ISSUE_CACHE.get(thread_ref) == parent_node
+
+    # 3. ensure_thread_issue with [Hand] title never caches in _THREAD_ISSUE_CACHE
+    _THREAD_ISSUE_CACHE.clear()
+    with patch.object(bridge, "find_thread_issue", AsyncMock(return_value=None)), \
+         patch.object(bridge, "find_open_hand_issue", AsyncMock(return_value=None)), \
+         patch.object(bridge, "create_task_issue", AsyncMock(return_value={"id": "hand-2", "identifier": "CHO-HAND2", "title": "[Hand] run"})):
+        await bridge.ensure_thread_issue("C_HAND:1.1", "[Hand] run", "Desc")
+        assert "C_HAND:1.1" not in _THREAD_ISSUE_CACHE
+
+
+@pytest.mark.asyncio
+async def test_get_assigned_issues_filters_out_hand_tickets(bridge):
+    """Verify get_assigned_issues filters out [Hand] tickets even when assigned to Hermes."""
+    bridge._viewer_id_cache = "hermes-123"
+
+    mock_nodes = [
+        {
+            "id": "h-1",
+            "identifier": "CHO-225",
+            "title": "[Hand] python scripts/test.py",
+            "state": {"name": "In Progress", "type": "started"},
+            "assignee": {"id": "hermes-123", "name": "Hermes", "email": "hermes.horned@gmail.com"},
+        },
+        {
+            "id": "p-1",
+            "identifier": "CHO-197",
+            "title": "TikTok-2-HEB Integration",
+            "state": {"name": "In Progress", "type": "started"},
+            "assignee": {"id": "hermes-123", "name": "Hermes", "email": "hermes.horned@gmail.com"},
+        },
+    ]
+
+    with patch.object(bridge, "execute_query", AsyncMock(return_value={"issues": {"nodes": mock_nodes}})):
+        assigned = await bridge.get_assigned_issues()
+        idents = [i["identifier"] for i in assigned]
+        assert "CHO-197" in idents
+        assert "CHO-225" not in idents
+
+
+@pytest.mark.asyncio
+async def test_settle_hand_issue_transitions_completed_and_canceled(bridge):
+    """Verify settle_hand_issue transitions [Hand] tickets to completed on SUCCESS and canceled on failure/blocker."""
+    from golem.linear_bridge import _THREAD_ISSUE_CACHE
+    _THREAD_ISSUE_CACHE.clear()
+
+    thread_ref = "C_SETTLE:1.1"
+    _THREAD_ISSUE_CACHE[thread_ref] = {
+        "id": "hand-settle-1",
+        "identifier": "CHO-S1",
+        "title": "[Hand] test task",
+    }
+
+    # SUCCESS -> completed
+    with patch.object(bridge, "update_issue_state", AsyncMock(return_value=True)) as mock_update:
+        res = await bridge.settle_hand_issue("hand-settle-1", status="SUCCESS", thread_ref=thread_ref)
+        assert res is True
+        mock_update.assert_awaited_once_with("hand-settle-1", "completed")
+        # Ensure evicted from cache
+        assert thread_ref not in _THREAD_ISSUE_CACHE
+
+    # Failure / CANCELED -> canceled
+    _THREAD_ISSUE_CACHE[thread_ref] = {
+        "id": "hand-settle-2",
+        "identifier": "CHO-S2",
+        "title": "[Hand] failing task",
+    }
+    with patch.object(bridge, "update_issue_state", AsyncMock(return_value=True)) as mock_update:
+        res2 = await bridge.settle_hand_issue("hand-settle-2", status="FAILED", thread_ref=thread_ref)
+        assert res2 is True
+        mock_update.assert_awaited_once_with("hand-settle-2", "canceled")
+        assert thread_ref not in _THREAD_ISSUE_CACHE
+
+
+@pytest.mark.asyncio
+async def test_get_project_task_tree_discovers_golem_projects_and_augments_active_children(bridge):
+    """Verify get_project_task_tree discovers projects named Golem and surfaces active child issues under settled parents."""
+    bridge._project_id_cache = "proj-brain"
+    bridge._team_id_cache = "team-cho"
+    bridge._state_cache = {"started": "state-started", "completed": "state-completed"}
+
+    async def mock_query(query_str, variables=None):
+        if "ListProjects" in query_str:
+            return {
+                "projects": {
+                    "nodes": [
+                        {"id": "proj-brain", "name": "Golem_Brain", "slugId": "golem-brain-slug"},
+                        {"id": "proj-golem", "name": "Golem", "slugId": "golem-main-slug"},
+                    ]
+                }
+            }
+        if "GetTree" in query_str:
+            pid = (variables or {}).get("projectId")
+            if pid == "proj-brain":
+                return {
+                    "project": {
+                        "issues": {
+                            "nodes": [
+                                {
+                                    "id": "h-1",
+                                    "identifier": "CHO-H1",
+                                    "title": "[Hand] Internal task",
+                                    "state": {"name": "Canceled", "type": "canceled"},
+                                    "children": {"nodes": []},
+                                }
+                            ]
+                        }
+                    }
+                }
+            elif pid == "proj-golem":
+                return {
+                    "project": {
+                        "issues": {
+                            "nodes": [
+                                {
+                                    "id": "p-207",
+                                    "identifier": "CHO-207",
+                                    "title": "Project GOAT-GOTY",
+                                    "state": {"name": "Claimed Fixed", "type": "started"},
+                                    "children": {
+                                        "nodes": [
+                                            {
+                                                "id": "c-233",
+                                                "identifier": "CHO-233",
+                                                "title": "Issue when running Oni",
+                                                "state": {"name": "In Progress", "type": "started"},
+                                            }
+                                        ]
+                                    },
+                                }
+                            ]
+                        }
+                    }
+                }
+        return {}
+
+    with patch.object(bridge, "execute_query", AsyncMock(side_effect=mock_query)), \
+         patch.object(bridge, "get_assigned_issues", AsyncMock(return_value=[])):
+        trees = await bridge.get_project_task_tree(limit=10)
+        idents = [t["identifier"] for t in trees]
+        assert "CHO-207" in idents
+        assert idents[0] == "CHO-207"
+
+        cho_207 = next(t for t in trees if t["identifier"] == "CHO-207")
+        children = [c["identifier"] for c in cho_207["children"]["nodes"]]
+        assert "CHO-233" in children
+
+
+
+
