@@ -813,8 +813,8 @@ class TestAgentLoop(unittest.IsolatedAsyncioTestCase):
                     return line.encode("utf-8") + b"\n"
                 if not hasattr(self, "_llm_spoken"):
                     self._llm_spoken = True
-                    # LLM takes 1.5s to formulate its response after tool finishes
-                    await asyncio.sleep(1.5)
+                    # LLM takes short time to formulate response
+                    await asyncio.sleep(0.02)
                     return agent_msg.encode("utf-8") + b"\n"
                 await asyncio.sleep(10.0)
                 return b""
@@ -1015,7 +1015,7 @@ class TestAgentLoop(unittest.IsolatedAsyncioTestCase):
                 if self._lines:
                     line = self._lines.pop(0)
                     if "kopia repository status" in line:
-                        await asyncio.sleep(1.5)
+                        await asyncio.sleep(0.02)
                     return line.encode("utf-8") + b"\n"
                 await asyncio.sleep(5.0)
                 return b""
@@ -1117,13 +1117,14 @@ class TestIngressLifecycleStateMachine(unittest.IsolatedAsyncioTestCase):
             return 0, "", ""
 
         with patch.object(app.herdr_client, "run_cli", side_effect=mock_run_cli):
-            task = asyncio.create_task(app.monitor_agent_lifecycle(session, client))
-            await asyncio.sleep(3.5)
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
+            with patch.dict(os.environ, {"GOLEM_LIFECYCLE_POLL_INTERVAL": "0.02"}):
+                task = asyncio.create_task(app.monitor_agent_lifecycle(session, client))
+                await asyncio.sleep(0.06)
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
 
         # Verification:
         # 1. State invariant preserved: session NEVER transitioned to 'done'
@@ -1184,31 +1185,32 @@ class TestIngressLifecycleStateMachine(unittest.IsolatedAsyncioTestCase):
             return 0, "", ""
 
         with patch.object(app.herdr_client, "run_cli", side_effect=mock_run_cli):
-            task = asyncio.create_task(app.monitor_agent_lifecycle(session, client, trigger_ts="T200"))
+            with patch.dict(os.environ, {"GOLEM_LIFECYCLE_POLL_INTERVAL": "0.02"}):
+                task = asyncio.create_task(app.monitor_agent_lifecycle(session, client, trigger_ts="T200"))
 
-            # Tick 0: Working
-            await asyncio.sleep(1.6)
-            self.assertTrue(session.has_worked)
-            self.assertEqual(session.status, "working")
+                # Tick 0: Working
+                await asyncio.sleep(0.05)
+                self.assertTrue(session.has_worked)
+                self.assertEqual(session.status, "working")
 
-            # Tick 1: Blocked (Ask Mode)
-            tick = 1
-            await asyncio.sleep(1.6)
-            self.assertEqual(session.status, "blocked")
-            # Verify approval card was posted
-            client.chat_postMessage.assert_called()
-            self.assertIn("Approval required", client.chat_postMessage.call_args_list[0][1]["text"])
+                # Tick 1: Blocked (Ask Mode)
+                tick = 1
+                await asyncio.sleep(0.05)
+                self.assertEqual(session.status, "blocked")
+                # Verify approval card was posted
+                client.chat_postMessage.assert_called()
+                self.assertIn("Approval required", client.chat_postMessage.call_args_list[0][1]["text"])
 
-            # User approves: transition back to working
-            tick = 2
-            session.status = "working"
-            await asyncio.sleep(1.6)
-            self.assertEqual(session.status, "working")
+                # User approves: transition back to working
+                tick = 2
+                session.status = "working"
+                await asyncio.sleep(0.05)
+                self.assertEqual(session.status, "working")
 
-            # Tick 3: Done
-            tick = 3
-            await asyncio.sleep(3.2)
-            self.assertEqual(session.status, "done")
+                # Tick 3: Done
+                tick = 3
+                await asyncio.sleep(0.08)
+                self.assertEqual(session.status, "done")
 
             # Verify final completion briefing was posted with clean output and live URL banner
             final_call = client.chat_postMessage.call_args_list[-1]

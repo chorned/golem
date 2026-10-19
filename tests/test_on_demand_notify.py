@@ -50,7 +50,7 @@ class TestOnDemandNotify(unittest.IsolatedAsyncioTestCase):
                 "SLACK_BOT_TOKEN": "xoxb-test-token",
                 "FIRSTMATE_SESSIONS_REGISTRY_PATH": self.registry_path,
             }):
-                res = await send_slack_message("Needs attention: server high memory")
+                res = await send_slack_message("Needs attention: server high memory", allow_live_in_test=True)
 
                 self.assertTrue(res["ok"])
                 self.assertEqual(res["platform"], "slack")
@@ -80,6 +80,7 @@ class TestOnDemandNotify(unittest.IsolatedAsyncioTestCase):
                     text="Follow up on previous query",
                     channel="C_CUSTOM",
                     thread_ts="1740000000.123456",
+                    allow_live_in_test=True,
                 )
 
                 self.assertTrue(res["ok"])
@@ -89,14 +90,27 @@ class TestOnDemandNotify(unittest.IsolatedAsyncioTestCase):
                     thread_ts="1740000000.123456",
                 )
 
+    async def test_send_slack_message_test_mode_safeguard(self):
+        """Verify test mode prevents live Slack dispatch and returns safe mock response."""
+        with patch.dict(os.environ, {"GOLEM_TEST_MODE": "1", "SLACK_BOT_TOKEN": "xoxb-real-token"}):
+            with patch("slack_sdk.web.async_client.AsyncWebClient") as mock_client:
+                res = await send_slack_message("Needs attention: server high memory")
+
+                self.assertTrue(res["ok"])
+                self.assertTrue(res.get("mock"))
+                self.assertEqual(res["platform"], "slack")
+                self.assertEqual(res["ts"], "123.456")
+                self.assertEqual(res["channel"], DEFAULT_SLACK_CHANNEL)
+                mock_client.assert_not_called()
+
     async def test_send_slack_message_validation_and_errors(self):
         """Verify empty text or missing token fails cleanly."""
         res_empty = await send_slack_message("")
         self.assertFalse(res_empty["ok"])
         self.assertIn("empty", res_empty["error"])
 
-        with patch.dict(os.environ, {"SLACK_BOT_TOKEN": ""}, clear=True):
-            res_no_tok = await send_slack_message("hello", token="")
+        with patch.dict(os.environ, {"SLACK_BOT_TOKEN": "", "GOLEM_TEST_MODE": "0", "FIRSTMATE_TEST_MODE": "0"}, clear=True):
+            res_no_tok = await send_slack_message("hello", token="", allow_live_in_test=True)
             self.assertFalse(res_no_tok["ok"])
             self.assertIn("Missing SLACK_BOT_TOKEN", res_no_tok["error"])
 
@@ -119,6 +133,7 @@ class TestOnDemandNotify(unittest.IsolatedAsyncioTestCase):
                     res = await send_imessage(
                         text="Urgent: fleet node unreachable",
                         chat_guid=DEFAULT_IMESSAGE_CHAT_GUID,
+                        allow_live_in_test=True,
                     )
 
                     self.assertTrue(res["ok"])
@@ -132,6 +147,19 @@ class TestOnDemandNotify(unittest.IsolatedAsyncioTestCase):
                         reply_to_guid=None,
                         new_thread=True,
                     )
+
+    async def test_send_imessage_test_mode_safeguard(self):
+        """Verify test mode prevents live BlueBubbles dispatch and returns safe mock response."""
+        with patch.dict(os.environ, {"GOLEM_TEST_MODE": "1"}):
+            with patch("bluebubbles_transport.BlueBubblesTransport") as mock_transport:
+                res = await send_imessage("Urgent: fleet node unreachable")
+
+                self.assertTrue(res["ok"])
+                self.assertTrue(res.get("mock"))
+                self.assertEqual(res["platform"], "imessage")
+                self.assertEqual(res["guid"], "mock-imessage-guid-123.456")
+                self.assertEqual(res["chat_guid"], DEFAULT_IMESSAGE_CHAT_GUID)
+                mock_transport.assert_not_called()
 
     async def test_send_on_demand_message_dual_concurrent(self):
         """Verify send_on_demand_message dispatches to both platforms concurrently."""

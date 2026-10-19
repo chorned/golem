@@ -142,6 +142,14 @@ class SessionRouter:
         elif session_key in self._registry and "email_context" in self._registry[session_key]:
             rec["email_context"] = self._registry[session_key]["email_context"]
 
+        for lin_field in ("linear_tickets_context", "active_linear_parent_key", "linear_plan_cache"):
+            if lin_field in kwargs and kwargs[lin_field] is not None:
+                rec[lin_field] = kwargs[lin_field]
+            elif session_key in self.sessions and getattr(self.sessions[session_key], lin_field, None):
+                rec[lin_field] = getattr(self.sessions[session_key], lin_field)
+            elif session_key in self._registry and lin_field in self._registry[session_key]:
+                rec[lin_field] = self._registry[session_key][lin_field]
+
         self._registry[session_key] = rec
         self._save_registry()
 
@@ -306,6 +314,12 @@ class SessionRouter:
             saved_email_ctx = recorded.get("email_context")
             if saved_email_ctx and isinstance(saved_email_ctx, dict):
                 session.email_context = saved_email_ctx
+            if recorded.get("linear_tickets_context"):
+                setattr(session, "linear_tickets_context", recorded["linear_tickets_context"])
+            if recorded.get("active_linear_parent_key"):
+                setattr(session, "active_linear_parent_key", recorded["active_linear_parent_key"])
+            if recorded.get("linear_plan_cache"):
+                setattr(session, "linear_plan_cache", recorded["linear_plan_cache"])
             session.state = SessionState.IDLE
             self.sessions[key] = session
             logger.info(f"Initialized new warm session '{key}' in cwd '{cwd}'")

@@ -94,6 +94,7 @@ async def send_slack_message(
     thread_ts: Optional[str] = None,
     token: Optional[str] = None,
     email_context: Optional[Dict[str, Any]] = None,
+    allow_live_in_test: bool = False,
 ) -> Dict[str, Any]:
     """
     Send an on-demand message to Carl in Slack.
@@ -104,12 +105,29 @@ async def send_slack_message(
         thread_ts: Optional parent message timestamp to reply in an existing thread.
         token: Optional Slack bot token (defaults to SLACK_BOT_TOKEN env).
         email_context: Optional email metadata and analysis to attach for thread continuity.
+        allow_live_in_test: If True, allows network calls in test mode (for mocked client tests).
         
     Returns:
         Dict containing ok, channel, ts, and raw response.
     """
     if not text or not text.strip():
         return {"ok": False, "error": "Message text cannot be empty"}
+
+    # Test-mode safeguard: prevent live network dispatch during test runs
+    is_test_mode = os.environ.get("GOLEM_TEST_MODE") == "1" or os.environ.get("FIRSTMATE_TEST_MODE") == "1"
+    if is_test_mode and not allow_live_in_test:
+        target_channel = channel or os.environ.get("GOLEM_DEFAULT_CHANNEL") or os.environ.get("DEFAULT_SLACK_CHANNEL") or get_default_slack_channel()
+        logger.debug(f"[TEST MODE] Suppressing live Slack dispatch to {target_channel}: {text[:60]}")
+        mock_ts = "123.456"
+        return {
+            "ok": True,
+            "platform": "slack",
+            "channel": target_channel,
+            "ts": mock_ts,
+            "thread_ts": thread_ts or mock_ts,
+            "text": text.strip(),
+            "mock": True,
+        }
 
     bot_token = (token or os.environ.get("SLACK_BOT_TOKEN") or "").strip()
     if not bot_token:
@@ -159,6 +177,7 @@ async def send_imessage(
     reply_to_guid: Optional[str] = None,
     server_url: Optional[str] = None,
     password: Optional[str] = None,
+    allow_live_in_test: bool = False,
 ) -> Dict[str, Any]:
     """
     Send an on-demand message to Carl in iMessage via BlueBubbles.
@@ -169,12 +188,29 @@ async def send_imessage(
         reply_to_guid: Optional message GUID to reply directly to an existing message.
         server_url: Optional BlueBubbles server URL.
         password: Optional BlueBubbles password.
+        allow_live_in_test: If True, allows network calls in test mode (for mocked transport tests).
         
     Returns:
         Dict containing ok, chat_guid, guid, and raw response.
     """
     if not text or not text.strip():
         return {"ok": False, "error": "Message text cannot be empty"}
+
+    # Test-mode safeguard: prevent live network dispatch during test runs
+    is_test_mode = os.environ.get("GOLEM_TEST_MODE") == "1" or os.environ.get("FIRSTMATE_TEST_MODE") == "1"
+    if is_test_mode and not allow_live_in_test:
+        target_chat = chat_guid or os.environ.get("BLUEBUBBLES_DEFAULT_CHAT_GUID") or DEFAULT_IMESSAGE_CHAT_GUID
+        logger.debug(f"[TEST MODE] Suppressing live iMessage dispatch to {target_chat}: {text[:60]}")
+        mock_guid = "mock-imessage-guid-123.456"
+        return {
+            "ok": True,
+            "platform": "imessage",
+            "chat_guid": target_chat,
+            "guid": mock_guid,
+            "reply_to_guid": reply_to_guid,
+            "text": text.strip(),
+            "mock": True,
+        }
 
     target_chat = chat_guid or os.environ.get("BLUEBUBBLES_DEFAULT_CHAT_GUID") or DEFAULT_IMESSAGE_CHAT_GUID
 
@@ -229,6 +265,7 @@ async def send_on_demand_message(
     slack_thread_ts: Optional[str] = None,
     imessage_chat_guid: Optional[str] = None,
     imessage_reply_to_guid: Optional[str] = None,
+    allow_live_in_test: bool = False,
 ) -> Dict[str, Any]:
     """
     Send an on-demand message to Carl on Slack, iMessage, or both concurrently.
@@ -240,6 +277,7 @@ async def send_on_demand_message(
         slack_thread_ts: Optional custom Slack thread_ts.
         imessage_chat_guid: Optional custom iMessage chat GUID.
         imessage_reply_to_guid: Optional custom iMessage reply_to_guid.
+        allow_live_in_test: If True, allows network calls in test mode (for mocked client tests).
         
     Returns:
         Dict summarizing results: {"ok": bool, "slack": {...}, "imessage": {...}}
@@ -249,10 +287,20 @@ async def send_on_demand_message(
     tasks = []
 
     if target_clean in ("slack", "both"):
-        tasks.append(("slack", send_slack_message(text=text, channel=slack_channel, thread_ts=slack_thread_ts)))
+        tasks.append(("slack", send_slack_message(
+            text=text,
+            channel=slack_channel,
+            thread_ts=slack_thread_ts,
+            allow_live_in_test=allow_live_in_test,
+        )))
 
     if target_clean in ("imessage", "both"):
-        tasks.append(("imessage", send_imessage(text=text, chat_guid=imessage_chat_guid, reply_to_guid=imessage_reply_to_guid)))
+        tasks.append(("imessage", send_imessage(
+            text=text,
+            chat_guid=imessage_chat_guid,
+            reply_to_guid=imessage_reply_to_guid,
+            allow_live_in_test=allow_live_in_test,
+        )))
 
     if not tasks:
         return {"ok": False, "error": f"Invalid target '{target}'. Must be 'slack', 'imessage', or 'both'."}
@@ -279,14 +327,24 @@ async def send_on_demand_message(
 # Synchronous Convenience Wrappers
 # ------------------------------------------------------------------------------
 
-def send_slack_message_sync(text: str, channel: Optional[str] = None, thread_ts: Optional[str] = None) -> Dict[str, Any]:
+def send_slack_message_sync(
+    text: str,
+    channel: Optional[str] = None,
+    thread_ts: Optional[str] = None,
+    allow_live_in_test: bool = False,
+) -> Dict[str, Any]:
     """Synchronous wrapper for send_slack_message."""
-    return asyncio.run(send_slack_message(text=text, channel=channel, thread_ts=thread_ts))
+    return asyncio.run(send_slack_message(text=text, channel=channel, thread_ts=thread_ts, allow_live_in_test=allow_live_in_test))
 
 
-def send_imessage_sync(text: str, chat_guid: Optional[str] = None, reply_to_guid: Optional[str] = None) -> Dict[str, Any]:
+def send_imessage_sync(
+    text: str,
+    chat_guid: Optional[str] = None,
+    reply_to_guid: Optional[str] = None,
+    allow_live_in_test: bool = False,
+) -> Dict[str, Any]:
     """Synchronous wrapper for send_imessage."""
-    return asyncio.run(send_imessage(text=text, chat_guid=chat_guid, reply_to_guid=reply_to_guid))
+    return asyncio.run(send_imessage(text=text, chat_guid=chat_guid, reply_to_guid=reply_to_guid, allow_live_in_test=allow_live_in_test))
 
 
 def send_on_demand_message_sync(
@@ -294,6 +352,7 @@ def send_on_demand_message_sync(
     target: str = "both",
     slack_channel: Optional[str] = None,
     imessage_chat_guid: Optional[str] = None,
+    allow_live_in_test: bool = False,
 ) -> Dict[str, Any]:
     """Synchronous wrapper for send_on_demand_message."""
     return asyncio.run(
@@ -302,5 +361,6 @@ def send_on_demand_message_sync(
             target=target,
             slack_channel=slack_channel,
             imessage_chat_guid=imessage_chat_guid,
+            allow_live_in_test=allow_live_in_test,
         )
     )

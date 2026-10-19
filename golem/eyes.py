@@ -30,6 +30,7 @@ from golem.normalizer import strip_ansi
 from golem.bus import ShoulderTapAlert, ShoulderTapEventBus, get_default_event_bus
 from golem.mouth import get_gemini_api_key
 from golem.config import get_eyes_model as _config_get_eyes_model, get_llm_base_url
+from golem.buffer import RunnerBufferObserver
 
 logger = logging.getLogger("Golem.Sensory.Eyes")
 
@@ -165,6 +166,14 @@ class EyesTaskObserver:
         self._last_line_count: int = 0
         self._attached_announced: bool = False
 
+        # Explicit buffer and task log bindings
+        self.bound_buffer: Optional[Any] = None
+        self.bound_task_log: Optional[str] = None
+        self._last_clean_buffer: str = ""
+        self._last_active_command: Optional[str] = None
+        self._last_read_source: Optional[str] = None
+        self._last_read_sources: Dict[str, Optional[str]] = {}
+
         # Buffer hashing & deduplication state
         self._last_buffer_hash: Optional[str] = None
         self._last_buffer_hashes: Dict[str, str] = {}
@@ -186,6 +195,14 @@ class EyesTaskObserver:
     def is_monitoring(self) -> bool:
         """Alias for is_running."""
         return self.is_running
+
+    def bind_runner_buffer(self, buffer_source: Any) -> None:
+        """Bind a custom runner buffer source (callable, string, or object with read_buffer/get_buffer)."""
+        self.bound_buffer = buffer_source
+
+    def bind_task_log(self, log_path: str) -> None:
+        """Bind a specific active task log file path in /tmp/herdr_tasks/ or filesystem."""
+        self.bound_task_log = log_path
 
     def _publish_eye_event(self, alert_type: str, summary: str, data: Dict[str, Any]) -> None:
         """Publish a typed Eye observation event on the Shoulder Tap bus (never raises)."""
@@ -255,19 +272,107 @@ class EyesTaskObserver:
         return False
 
     async def read_buffer(self, pane: Optional[str] = None, lines: Optional[int] = None) -> str:
-        """Fetch latest buffer text from buffer_observer or herdr client."""
+        """
+        Fetch latest buffer text from bound source, buffer_observer,
+        /tmp/herdr_tasks/ active task log, or webui_server active hands buffer.
+        """
         target_pane = pane or self.pane
         target_lines = lines or self.buffer_lines
+
+        # 1. Check explicitly bound buffer source
+        if self.bound_buffer is not None:
+            try:
+                res = None
+                if callable(self.bound_buffer):
+                    call_res = self.bound_buffer()
+                    res = await call_res if inspect.isawaitable(call_res) else str(call_res)
+                elif hasattr(self.bound_buffer, "read_buffer"):
+                    call_res = self.bound_buffer.read_buffer(target_pane, lines=target_lines)
+                    res = await call_res if inspect.isawaitable(call_res) else str(call_res)
+                elif hasattr(self.bound_buffer, "get_buffer"):
+                    call_res = self.bound_buffer.get_buffer()
+                    res = await call_res if inspect.isawaitable(call_res) else str(call_res)
+                elif isinstance(self.bound_buffer, str):
+                    res = self.bound_buffer
+                if res and str(res).strip():
+                    self._last_read_source = "bound_buffer"
+                    self._last_read_sources[target_pane] = "bound_buffer"
+                    return str(res)
+            except Exception as e:
+                logger.debug(f"Error reading from bound_buffer: {e}")
+
+        # 2. Check explicitly bound task log
+        if self.bound_task_log and os.path.isfile(self.bound_task_log):
+            try:
+                out = RunnerBufferObserver.read_task_log(self.bound_task_log, lines=target_lines)
+                if out and out.strip():
+                    self._last_read_source = "bound_task_log"
+                    self._last_read_sources[target_pane] = "bound_task_log"
+                    return out
+            except Exception as e:
+                logger.debug(f"Error reading bound_task_log ({self.bound_task_log}): {e}")
+
+        # 3. Read from buffer_observer (herdr client / runner observer)
         if self.buffer_observer is not None:
             if hasattr(self.buffer_observer, "read_buffer"):
                 try:
                     res = self.buffer_observer.read_buffer(target_pane, lines=target_lines)
                     if inspect.isawaitable(res):
-                        return await res
-                    return str(res)
+                        out = await res
+                    else:
+                        out = str(res)
+                    if out and "No terminal output recorded" not in out and "Error reading" not in out:
+                        self._last_read_source = "buffer_observer"
+                        self._last_read_sources[target_pane] = "buffer_observer"
+                        return out
                 except Exception as e:
                     logger.warning(f"Error reading buffer from observer for pane '{target_pane}': {e}")
-                    return ""
+
+        # 4. Check active task logs in /tmp/herdr_tasks/ or /tmp/golem_tasks/
+        try:
+            active_log = RunnerBufferObserver.get_active_task_log(target_pane)
+            if active_log:
+                out = RunnerBufferObserver.read_task_log(active_log, lines=target_lines)
+                if out and out.strip():
+                    self._last_read_source = "task_log"
+                    self._last_read_sources[target_pane] = "task_log"
+                    return out
+        except Exception as e:
+            logger.debug(f"Error reading active task log in /tmp/herdr_tasks: {e}")
+
+        # 5. Check WebUI server active hands buffer tail
+        server = self.webui_server
+        if server is None:
+            try:
+                from golem.webui.server import get_active_webui_server
+                server = get_active_webui_server()
+            except Exception:
+                server = None
+
+        if server is not None and getattr(server, "_active_hands", None):
+            try:
+                hand = None
+                key = server._resolve_hand_key(target_pane) if hasattr(server, "_resolve_hand_key") else None
+                if key and key in server._active_hands:
+                    hand = server._active_hands[key]
+                elif target_pane in server._active_hands:
+                    hand = server._active_hands[target_pane]
+                elif hasattr(server, "get_executing_hands"):
+                    executing = server.get_executing_hands()
+                    if executing:
+                        hand = list(executing.values())[0]
+
+                if hand and hand.get("buffer_tail"):
+                    self._last_read_source = "webui_hands"
+                    self._last_read_sources[target_pane] = "webui_hands"
+                    tail = hand["buffer_tail"]
+                    lines_list = tail.splitlines(keepends=True)
+                    return "".join(lines_list[-target_lines:])
+            except Exception as e:
+                logger.debug(f"Error reading hand buffer from webui server: {e}")
+
+        self._last_read_source = None
+        self._last_read_sources[target_pane] = None
         return ""
 
     async def classify_buffer(self, clean_buffer: str, pane: Optional[str] = None) -> Dict[str, Any]:
@@ -555,17 +660,144 @@ class EyesTaskObserver:
         blocker_url = classification.get("blocker_url")
         blocker_prompt = classification.get("blocker_prompt")
         pattern_id = str(classification.get("pattern_id") or blocker_type or "prompt")
-        if self.webui_server is not None and hasattr(self.webui_server, "update_hand_buffer"):
-            try:
-                self.webui_server.update_hand_buffer(target_pane, clean_buffer)
-            except Exception as e:
-                logger.debug(f"EyesTaskObserver: Failed to update webui hand buffer: {e}")
         lines = [l for l in clean_buffer.splitlines() if l.strip()]
         buffer_tail = "\n".join(lines[-10:]) if lines else ""
 
-        # Structured inspection event: only reached when the buffer actually changed.
+        # Compute line diff
+        old_lines = [l for l in self._last_clean_buffer.splitlines() if l.strip()]
+        new_lines = [l for l in clean_buffer.splitlines() if l.strip()]
+        self._last_clean_buffer = clean_buffer
+
+        diff_lines = []
+        if len(new_lines) >= len(old_lines) and new_lines[:len(old_lines)] == old_lines:
+            diff_lines = new_lines[len(old_lines):]
+        else:
+            diff_lines = new_lines[-5:] if new_lines else []
+
         delta_lines = len(lines) - self._last_line_count
         self._last_line_count = len(lines)
+
+        # Mirror external runner buffer to WebUI without exponential self-duplication:
+        # Do NOT call update_hand_buffer if target_pane is an agy hand or if the buffer was read from webui_server._active_hands.
+        # Only append diff_lines rather than appending full clean_buffer.
+        is_agy_hand = str(target_pane).startswith("agy-")
+        if not is_agy_hand and self.webui_server is not None and getattr(self.webui_server, "_active_hands", None):
+            try:
+                k = self.webui_server._resolve_hand_key(target_pane) if hasattr(self.webui_server, "_resolve_hand_key") else target_pane
+                hand_obj = self.webui_server._active_hands.get(k) or self.webui_server._active_hands.get(target_pane)
+                if hand_obj and hand_obj.get("worker") == "agy":
+                    is_agy_hand = True
+            except Exception:
+                pass
+
+        pane_read_src = getattr(self, "_last_read_sources", {}).get(target_pane, getattr(self, "_last_read_source", None))
+        read_from_webui = (pane_read_src == "webui_hands")
+
+        if not is_agy_hand and not read_from_webui and diff_lines:
+            if self.webui_server is not None and hasattr(self.webui_server, "update_hand_buffer"):
+                try:
+                    delta_text = "\n".join(diff_lines) + "\n"
+                    self.webui_server.update_hand_buffer(target_pane, delta=delta_text)
+                except Exception as e:
+                    logger.debug(f"EyesTaskObserver: Failed to update webui hand buffer: {e}")
+
+        # 1. Stream live buffer diffs to Eyes WebUI terminal
+        if diff_lines:
+            diff_preview = " | ".join(diff_lines[:3])
+            if len(diff_preview) > 160:
+                diff_preview = diff_preview[:157] + "..."
+            diff_msg = f"[DIFF] +{len(diff_lines)} lines: {diff_preview}"
+            if self.task or self.webui_server is not None:
+                self._publish_eye_event(
+                    "eye_log",
+                    diff_msg,
+                    {
+                        "pane_id": target_pane,
+                        "message": diff_msg,
+                        "state": state,
+                        "delta_lines": len(diff_lines),
+                        "buffer_diff": "\n".join(diff_lines),
+                    }
+                )
+            if self.webui_server is not None and hasattr(self.webui_server, "append_organ_log"):
+                try:
+                    self.webui_server.append_organ_log("eyes", diff_msg)
+                except Exception as e:
+                    logger.debug(f"EyesTaskObserver: Failed to append diff to webui: {e}")
+
+        # 2. Resolve and stream active command telemetry
+        active_cmd = ""
+        active_pid = None
+        server = self.webui_server
+        if server is None:
+            try:
+                from golem.webui.server import get_active_webui_server
+                server = get_active_webui_server()
+            except Exception:
+                server = None
+
+        if server is not None and getattr(server, "_active_hands", None):
+            try:
+                hand = None
+                if hasattr(server, "_resolve_hand_key"):
+                    k = server._resolve_hand_key(target_pane)
+                    if k and k in server._active_hands:
+                        hand = server._active_hands[k]
+                if hand is None and target_pane in server._active_hands:
+                    hand = server._active_hands[target_pane]
+                elif hand is None and hasattr(server, "get_executing_hands"):
+                    executing = server.get_executing_hands()
+                    if executing:
+                        hand = list(executing.values())[0]
+                if hand:
+                    active_cmd = hand.get("command", "") or ""
+                    active_pid = hand.get("pid")
+            except Exception:
+                pass
+
+        if not active_cmd and self.task:
+            active_cmd = self.task
+
+        if active_cmd and active_cmd != getattr(self, "_last_active_command", None):
+            self._last_active_command = active_cmd
+            cmd_line = f"[COMMAND] {active_cmd}" + (f" (PID {active_pid})" if active_pid else "")
+            if self.task or self.webui_server is not None:
+                self._publish_eye_event(
+                    "eye_log",
+                    cmd_line,
+                    {
+                        "pane_id": target_pane,
+                        "message": cmd_line,
+                        "state": state,
+                        "active_command": active_cmd,
+                        "pid": active_pid,
+                    }
+                )
+            if self.webui_server is not None and hasattr(self.webui_server, "append_organ_log"):
+                try:
+                    self.webui_server.append_organ_log("eyes", cmd_line)
+                except Exception as e:
+                    logger.debug(f"EyesTaskObserver: Failed to append command to webui: {e}")
+
+        # Broadcast active telemetry payload
+        telemetry_payload = {
+            "state": state,
+            "command": active_cmd,
+            "active_command": active_cmd,
+            "pid": active_pid,
+            "delta_lines": len(diff_lines),
+            "buffer_diff": "\n".join(diff_lines),
+            "timestamp": time.time(),
+        }
+        if server is not None and hasattr(server, "broadcast"):
+            try:
+                server.broadcast("eye_telemetry", telemetry_payload)
+            except Exception as e:
+                logger.debug(f"EyesTaskObserver: Failed to broadcast eye_telemetry: {e}")
+        if self.task or self.webui_server is not None:
+            self._publish_eye_event("eye_telemetry", f"State: {state}, Command: {active_cmd}", telemetry_payload)
+
+        # Standard inspection event
         if self.task or self.webui_server is not None:
             self._publish_eye_event(
                 "eye_inspection",
@@ -578,7 +810,7 @@ class EyesTaskObserver:
                 },
             )
 
-        # Handle BLOCKER
+        # 3. Handle BLOCKER
         if state == "BLOCKER":
             prompt_content = (blocker_url or blocker_prompt or "").strip()
             prompt_hash = hashlib.sha256(prompt_content.encode("utf-8")).hexdigest()[:12]
@@ -594,16 +826,23 @@ class EyesTaskObserver:
             self._last_emitted_state = "BLOCKER"
 
             kind = self._eye_blocker_kind(blocker_type)
+            blocker_detail = blocker_url or blocker_prompt or ""
+            blocker_log = f"[BLOCKER] {kind}: {blocker_detail}"
             self._publish_eye_event(
                 "eye_blocker",
                 summary or f"{kind} blocker detected",
                 {
                     "pane_id": target_pane,
                     "blocker_type": kind,
-                    "detail": blocker_url or blocker_prompt or "",
+                    "detail": blocker_detail,
                     "pattern_id": pattern_id,
                 },
             )
+            if self.webui_server is not None and hasattr(self.webui_server, "append_organ_log"):
+                try:
+                    self.webui_server.append_organ_log("eyes", blocker_log)
+                except Exception as e:
+                    logger.debug(f"EyesTaskObserver: Failed to append blocker log to webui: {e}")
 
             card_summary = summary or "Interactive blocker encountered in runner pane"
             if not card_summary.startswith(":warning:"):
@@ -632,13 +871,20 @@ class EyesTaskObserver:
             self.event_bus.publish(alert)
             return alert
 
-        # Handle COMPLETION or ERROR
+        # 4. Handle COMPLETION or ERROR
         elif state in ("COMPLETED", "ERROR"):
             self._active_taps = {t for t in self._active_taps if t[0] != target_pane}
             if self._last_emitted_state == state:
                 return None
 
             self._last_emitted_state = state
+            comp_log = f"[COMPLETED] {summary or 'Task completed in runner pane'}" if state == "COMPLETED" else f"[ERROR] {summary or 'Task encountered error in runner pane'}"
+            if self.webui_server is not None and hasattr(self.webui_server, "append_organ_log"):
+                try:
+                    self.webui_server.append_organ_log("eyes", comp_log)
+                except Exception as e:
+                    logger.debug(f"EyesTaskObserver: Failed to append completion log to webui: {e}")
+
             alert = ShoulderTapAlert(
                 alert_type="completion",
                 source="eyes",
@@ -658,7 +904,17 @@ class EyesTaskObserver:
             self.event_bus.publish(alert)
             return alert
 
-        # RUNNING state
+        # 5. RUNNING state
+        if self._last_emitted_state != "RUNNING":
+            run_log = f"[STATE] RUNNING — {summary or 'Command actively executing in runner pane'}"
+            if self.webui_server is not None and hasattr(self.webui_server, "append_organ_log"):
+                try:
+                    self.webui_server.append_organ_log("eyes", run_log)
+                except Exception as e:
+                    logger.debug(f"EyesTaskObserver: Failed to append running log to webui: {e}")
+            if self.task or self.webui_server is not None:
+                self._publish_eye_event("eye_log", run_log, {"pane_id": target_pane, "message": run_log, "state": "RUNNING"})
+
         self._last_emitted_state = "RUNNING"
         self._last_blocker_signature = None
         self._active_taps = {t for t in self._active_taps if t[0] != target_pane}
@@ -667,6 +923,17 @@ class EyesTaskObserver:
     async def tick(self) -> Optional[ShoulderTapAlert]:
         """Execute one observation cycle using read_buffer and evaluate_buffer_content."""
         raw_buffer = await self.read_buffer(self.pane)
+        if not raw_buffer or not raw_buffer.strip():
+            if self._last_emitted_state in ("RUNNING", "COMPLETED"):
+                self._last_emitted_state = "IDLE"
+                idle_msg = "[STATE] IDLE — Terminal buffer quiescent."
+                self._publish_eye_event("eye_log", idle_msg, {"pane_id": self.pane, "message": idle_msg, "state": "IDLE"})
+                if self.webui_server is not None and hasattr(self.webui_server, "append_organ_log"):
+                    try:
+                        self.webui_server.append_organ_log("eyes", idle_msg)
+                    except Exception:
+                        pass
+            return None
         return await self.evaluate_buffer_content(
             buffer_text=raw_buffer,
             session_id=self.session_id,
@@ -766,3 +1033,11 @@ class EyesTaskObserver:
     async def stop(self) -> None:
         """Alias for stop_monitoring."""
         await self.stop_monitoring()
+
+
+__all__ = [
+    "EyesTaskObserver",
+    "RunnerBufferObserver",
+    "get_eyes_model",
+    "unwrap_terminal_buffer",
+]

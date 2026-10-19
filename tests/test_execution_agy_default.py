@@ -510,7 +510,7 @@ class TestDualPaneIsolationAndYieldSemantics(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ws["status"], "active")
 
     async def test_runner_executor_3s_yield_preservation(self):
-        """Commands taking > 3.0s yield non-blocking ExecutionHandle(status='running')."""
+        """Commands taking > yield_timeout yield non-blocking ExecutionHandle(status='running')."""
         executor = RunnerExecutor(herdr_bin="/usr/local/bin/herdr")
         try:
             with patch("asyncio.create_subprocess_exec") as mock_exec:
@@ -519,19 +519,19 @@ class TestDualPaneIsolationAndYieldSemantics(unittest.IsolatedAsyncioTestCase):
                 mock_proc.kill = MagicMock()
 
                 async def slow_cmd():
-                    await asyncio.sleep(3.5)
+                    await asyncio.sleep(0.15)
                     return b"Done\n", b""
 
                 mock_proc.communicate.side_effect = slow_cmd
                 mock_exec.return_value = mock_proc
 
                 start_t = time.time()
-                handle = await executor.run_command(pane="runner", command="sleep 10", yield_timeout=3.0)
+                handle = await executor.run_command(pane="runner", command="sleep 10", yield_timeout=0.05)
                 elapsed = time.time() - start_t
 
                 self.assertEqual(handle.status, "running")
                 self.assertEqual(handle.pid, 98765)
-                self.assertLessEqual(elapsed, 3.2, "Yield must occur within ~3.0s ceiling")
+                self.assertLessEqual(elapsed, 0.2, "Yield must occur within ~0.05s ceiling")
         finally:
             await executor.async_close()
 

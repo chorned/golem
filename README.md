@@ -11,7 +11,23 @@
   <img src="docs/assets/golem_architecture.png" alt="Golem Architecture Diagram: Powered by Herdr Distributed PTY Mesh" width="100%">
 </p>
 
-**Golem** is an open-source coordinator and personal Chief of Staff designed to run across multiple machines. It pairs a conversational liaison (accessible via Slack and BlueBubbles) with a headless, distributed pseudo-terminal (PTY) execution grid that spans local machines, homelab servers, GPU workstations, and cloud VPS instances.
+### Resist Grokbot, Use Open Source Instead
+
+Proprietary AI assistants and corporate walled gardens (such as Grokbot or commercial subscription bots) trap your personal data, terminal workflows, and codebases inside locked corporate silos. You cannot inspect their prompts, you cannot audit their execution, and you cannot run them on your own hardware.
+
+**This project combines the power of multiple open-source projects into a Golem—an always-on, ultra-capable digital Chief of Staff with infinite hiring powers.** Built on top of open-source foundations (**Herdr** distributed PTY multiplexer, **BlueBubbles** iMessage bridge, **OpenCode**, **Hermes Agent**, and a git-backed **Markdown Wiki**), Golem runs on your machines, lives inside your daily chat tools, and coordinates an elastic fleet of specialist worker agents across local Macs, homelab servers, GPU workstations, and cloud VPS instances.
+
+---
+
+## What You Need to Get Started
+
+You only need three things to get started:
+
+1. **A host machine** — macOS (Mac mini, MacBook, Studio), Linux, or Windows WSL2 running Python 3.11+ (Python 3.11, 3.12, or 3.13).
+2. **A chat client you already live in** — Native **Slack** (via Socket Mode) or native **iMessage** (via BlueBubbles with Private API tapbacks, typing indicators, rapid-fire coalescing, and group chat speaker attribution).
+3. **An LLM API key** — Optimized out of the box for Google's $100 AI Ultra plan (Gemini 2.5 / 3.8 Flash & Pro with 1M–2M token context windows, sub-second latency, and high quotas), yet architecturally portable to *any* LLM (OpenAI, Anthropic, local models via Ollama/vLLM, or proxy daemons like FrugaLLM).
+
+No complex cloud stacks, no locked SaaS subscriptions, and zero proprietary lock-in.
 
 ---
 
@@ -100,6 +116,52 @@ To solve these constraints, Golem separates high-level conversational flow from 
 3. **Sensory Plane (The Eyes & The Nose):**
    - **The Eyes (`EyesTaskObserver`):** Checks running terminal buffers on a 15–30 second interval. It uses SHA-256 delta hashing to skip LLM calls entirely if output is unchanged, pinging the Mouth only when user action is required (such as an auth prompt) or when a task finishes.
    - **The Nose (`NoseSentinel`):** A lightweight background check that runs every 15 minutes to review error logs, container status, and machine reachability, alerting the Mouth via the `ShoulderTapEventBus` if an anomaly is detected.
+
+---
+
+## Infinite Hiring Powers: Dynamic Crewmate Orchestration
+
+As your Digital Chief of Staff, Golem holds **infinite hiring powers**—the ability to dynamically provision, allocate, and orchestrate an endless bench of specialized worker subagents across the distributed PTY mesh without human overhead:
+
+- **The General Contractor:** You speak only to Golem. Golem assesses the job, scopes the architecture, and "hires" the exact specialists needed for the task.
+- **Dedicated Specialist Crewmates:**
+  - `opencode`: An isolated subagent running in a detached Git worktree for deep refactors, test authoring, and risky code experiments without polluting your active workspace.
+  - `hermes`: A dedicated homelab operations specialist managing Docker containers, ZFS storage pools, system backups, and home automation daemons on localhost.
+  - `agy`: The default lightning-fast CLI execution engine for building, running tests, and executing deterministic terminal commands.
+  - Remote Node Workers: Remote subagents dispatched over Tailscale to Windows CUDA workstations (`compute-grid`) or cloud infrastructure (`cloud-ops`).
+- **Zero Human Overhead:** Crewmates execute in background Herdr PTY panes, stream progress to the Sensory Plane, and report results to Golem. Golem synthesizes raw logs and tool outputs into concise executive briefings for you.
+
+---
+
+## Dual Transport Ingress: Slack & Native iMessage
+
+Golem meets you wherever you communicate, featuring dual first-class transport layers engineered for zero lag:
+
+### 1. Slack Transport (Socket Mode)
+- **Non-Verbal Acknowledgment (<200ms):** Immediate `:gear:` or `:eyes:` reacji feedback confirms receipt within 200ms—zero canned greeting announcements or bot spam.
+- **Thread Session Routing:** Warm thread continuity keeps multi-turn project discussions isolated from casual top-level inquiries.
+- **Interactive Review Cards:** Memory crystallization (`/learn`) and Linear approval cards post directly into thread context.
+
+### 2. BlueBubbles iMessage Transport (Private API)
+- **Native Apple Tapbacks & Typing:** Real-time feedback via Apple tapback reactions (emphasize `!!` on receive, like `👍` on completion, question `?` on blockers) and native typing indicators while synthesizing.
+- **Multi-Speaker Attribution in Group Chats:** Group chats (`iMessage;+;...`) automatically resolve sender handles against `IMESSAGE_SPEAKER_MAP` and attribute prompts (e.g. `[iMessage Speaker: Carl (in Group Chat)]`), eliminating speaker blindness.
+- **Rapid-Fire Message Coalescing:** Split messages (such as share-sheet links followed by text captions) are coalesced into a single coherent turn within a 10s debounce window. If a different speaker speaks in the same chat, the previous speaker's buffer is immediately flushed to prevent crosstalk.
+- **Automated Boundary-Aware Chunking:** Messages exceeding iMessage's 3,500-character boundary are intelligently chunked across natural paragraph or sentence breaks.
+
+---
+
+## Model Strategy: Google $100 AI Ultra Plan & FrugaLLM Portability
+
+Golem is architected for maximum intelligence and extreme economic efficiency:
+
+- **Optimized for Google $100 AI Ultra Plan:**
+  - **Mouth Liaison:** Powered by Gemini 3.8 / 2.5 Flash for sub-second conversational synthesis and executive briefings.
+  - **Sensory Plane (Eyes & Nose):** Powered by Gemini Flash-Lite with SHA-256 buffer delta caching (0 tokens when quiescent).
+  - **Massive Context & Zero Starvation:** 1M–2M token context windows allow whole codebases and multi-hour execution logs to fit effortlessly without context loss.
+- **True Open-Source Portability (FrugaLLM & Local Models):**
+  - Golem is never locked into any single provider.
+  - Fully compatible with **FrugaLLM** (the desktop proxy daemon that intelligently routes and caches prompts to slash API costs).
+  - Pluggable across OpenAI, Anthropic Claude, open weights via Ollama / vLLM, or local CLI drivers.
 
 ---
 

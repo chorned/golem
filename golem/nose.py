@@ -218,34 +218,80 @@ class FleetSnapshot:
 @dataclass
 class StatusDelta:
     """Represents a state transition detected between two consecutive FleetSnapshots."""
-    category: str
-    target: str
-    description: str
-    previous_value: Any
-    current_value: Any
+    category: str = ""
+    target: str = ""
+    description: str = ""
+    previous_value: Any = None
+    current_value: Any = None
     benign: bool = False
     severity: Literal["info", "warning", "critical"] = "info"
+    component: Optional[str] = None
+    previous: Optional[Any] = None
+    current: Optional[Any] = None
+
+    def __post_init__(self) -> None:
+        if self.component and not self.target:
+            self.target = self.component
+        if self.previous is not None and self.previous_value is None:
+            self.previous_value = self.previous
+        if self.current is not None and self.current_value is None:
+            self.current_value = self.current
+        if not self.category and self.target:
+            self.category = self.target.split(":")[0] if ":" in self.target else "hand_stalled"
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
 
+    def __getattr__(self, name: str) -> Any:
+        if name == "component":
+            return self.target
+        if name == "previous":
+            return self.previous_value
+        if name == "current":
+            return self.current_value
+        raise AttributeError(f"'StatusDelta' object has no attribute '{name}'")
+
     def __getitem__(self, key: str) -> Any:
+        if key == "component":
+            return self.target
+        if key == "previous":
+            return self.previous_value
+        if key == "current":
+            return self.current_value
         return getattr(self, key)
 
     def __setitem__(self, key: str, value: Any) -> None:
-        setattr(self, key, value)
+        if key == "component":
+            self.target = value
+            self.component = value
+        elif key == "previous":
+            self.previous_value = value
+            self.previous = value
+        elif key == "current":
+            self.current_value = value
+            self.current = value
+        else:
+            setattr(self, key, value)
 
     def __contains__(self, key: str) -> bool:
+        if key in ("component", "previous", "current"):
+            return True
         return hasattr(self, key)
 
     def get(self, key: str, default: Any = None) -> Any:
+        if key == "component":
+            return self.target
+        if key == "previous":
+            return self.previous_value
+        if key == "current":
+            return self.current_value
         return getattr(self, key, default)
 
     def keys(self):
-        return ("category", "target", "description", "previous_value", "current_value", "benign", "severity")
+        return ("category", "target", "description", "previous_value", "current_value", "benign", "severity", "component", "previous", "current")
 
     def items(self):
-        return ((k, getattr(self, k)) for k in self.keys())
+        return ((k, self.get(k)) for k in self.keys())
 
 
 @dataclass
@@ -399,10 +445,13 @@ class FleetSniffer:
             }
 
         try:
+            probe_env = dict(os.environ)
+            probe_env["TERM"] = probe_env.get("TERM") or "dumb"
             proc = await asyncio.create_subprocess_exec(
                 ts_bin, "status", "--json",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                env=probe_env,
             )
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
             if proc.returncode != 0:
@@ -1812,6 +1861,7 @@ class NoseSentinel:
         self.server = self.webui_server
         self._last_assigned_tickets: List[Dict[str, Any]] = []
         self._last_alerted_ticket_signatures: Set[str] = set()
+        self._alerted_stalled_hands: Set[str] = set()
         self._last_log_delta_bytes: int = 0
         self.last_sniff_receipt: Optional[Dict[str, Any]] = None
         self.last_sniff_receipt_str: str = ""
@@ -2082,6 +2132,8 @@ class NoseSentinel:
         """Resolve or instantiate LinearBridge singleton."""
         if self.linear_bridge is not None:
             return self.linear_bridge
+        if os.environ.get("GOLEM_TEST_MODE") == "1" or os.environ.get("FIRSTMATE_TEST_MODE") == "1":
+            return None
         try:
             from golem.linear_bridge import LinearBridge
             self.linear_bridge = LinearBridge()
@@ -2152,6 +2204,102 @@ class NoseSentinel:
         """Invokes evaluator, allowing test patch targeting self._call_gemini_evaluation."""
         return await self.evaluator._call_gemini_evaluation(error_logs, deltas)
 
+    def probe_stalled_hands(self, now: Optional[float] = None) -> List[StatusDelta]:
+        """
+        Inspect webui._active_hands for stalled backstage hands or hung sessions.
+        Emits non-benign StatusDelta when a hand is stuck waiting on heartbeats
+        past the stall threshold.
+        """
+        now_ts = now if now is not None else time.time()
+        stall_threshold = float(os.environ.get("GOLEM_HAND_STALL_SECONDS", "180"))
+        stalled_deltas: List[StatusDelta] = []
+
+        webui = getattr(self, "webui_server", None) or getattr(self, "server", None)
+        if webui is None:
+            try:
+                from golem.webui.server import get_active_webui_server
+                webui = get_active_webui_server()
+            except Exception:
+                webui = None
+
+        active_hands = getattr(webui, "_active_hands", None) if webui else None
+        if not isinstance(active_hands, dict):
+            return stalled_deltas
+
+        if not hasattr(self, "_alerted_stalled_hands"):
+            self._alerted_stalled_hands = set()
+
+        current_running_panes: Set[str] = set()
+
+        for pane_id, hand in active_hands.items():
+            if not isinstance(hand, dict):
+                continue
+
+            status_str = str(hand.get("status", "")).upper()
+            if status_str != "RUNNING":
+                continue
+
+            current_running_panes.add(pane_id)
+
+            started_at = float(hand.get("started_at") or now_ts)
+            elapsed = now_ts - started_at
+            last_real = float(hand.get("last_real_activity_at") or hand.get("started_at") or now_ts)
+            idle_seconds = now_ts - last_real
+
+            # Check whether hand is stuck waiting on heartbeats
+            buffer_tail = str(hand.get("buffer_tail", "") or "")
+            is_stuck = False
+
+            # Check 1: Heartbeat seconds in buffer tail >= stall_threshold
+            # Pattern: [HEARTBEAT +(\d+)s]
+            hb_matches = re.findall(r"\[HEARTBEAT\s*\+(\d+)s\]", buffer_tail)
+            max_hb_s = max([int(s) for s in hb_matches], default=0)
+
+            non_empty = [l.strip() for l in buffer_tail.splitlines() if l.strip()]
+            last_lines = non_empty[-3:] if non_empty else []
+
+            if hand.get("last_real_activity_at") is not None and idle_seconds >= stall_threshold:
+                is_stuck = True
+            elif max_hb_s >= stall_threshold:
+                is_stuck = True
+            elif elapsed >= stall_threshold and any("HEARTBEAT" in l for l in last_lines):
+                is_stuck = True
+
+            if is_stuck:
+                if pane_id not in self._alerted_stalled_hands:
+                    self._alerted_stalled_hands.add(pane_id)
+                    worker_name = hand.get("worker", "worker")
+                    node_name = hand.get("node", "local")
+                    cmd_snippet = str(hand.get("command", "") or "")[:120]
+                    stalled_duration = int(max(idle_seconds, elapsed))
+                    delta = StatusDelta(
+                        category="hand_stalled",
+                        target=f"hand:{pane_id}",
+                        component=f"hand:{pane_id}",
+                        description=(
+                            f"Backstage hand {pane_id} ({worker_name} on {node_name}) "
+                            f"has been stuck waiting on model/tool stream for {stalled_duration}s: {cmd_snippet}"
+                        ),
+                        previous="RUNNING",
+                        previous_value="RUNNING",
+                        current=f"STALLED ({stalled_duration}s)",
+                        current_value=f"STALLED ({stalled_duration}s)",
+                        benign=False,
+                        severity="warning",
+                    )
+                    stalled_deltas.append(delta)
+            else:
+                # Hand is no longer stalled
+                if pane_id in self._alerted_stalled_hands:
+                    self._alerted_stalled_hands.remove(pane_id)
+
+        # Clear alerted panes that are no longer RUNNING
+        stale_alerted = [p for p in self._alerted_stalled_hands if p not in current_running_panes]
+        for p in stale_alerted:
+            self._alerted_stalled_hands.remove(p)
+
+        return stalled_deltas
+
     async def tick(self) -> Optional[ShoulderTapAlert]:
         """
         Execute one complete sniff-and-evaluate cycle.
@@ -2182,6 +2330,9 @@ class NoseSentinel:
 
             # 3. Compute status deltas
             deltas = self.compute_status_deltas(self.last_snapshot, current_snapshot)
+            stalled_deltas = self.probe_stalled_hands()
+            if stalled_deltas:
+                deltas.extend(stalled_deltas)
             self.last_snapshot = current_snapshot
 
             # 4. Sniff email inbox

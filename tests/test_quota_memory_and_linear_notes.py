@@ -290,6 +290,8 @@ class MouthTurnLinearMemoryTests(unittest.IsolatedAsyncioTestCase):
 
 class LinearBridgeThreadTests(unittest.IsolatedAsyncioTestCase):
     def _bridge(self):
+        from golem.linear_bridge import _THREAD_ISSUE_CACHE
+        _THREAD_ISSUE_CACHE.clear()
         b = LinearBridge(api_key="test-key")
         b._project_id_cache, b._team_id_cache = "proj", "team"
         b._state_cache = {"in progress": "s-ip", "started": "s-ip"}
@@ -319,7 +321,7 @@ class LinearBridgeThreadTests(unittest.IsolatedAsyncioTestCase):
         second = await b.ensure_thread_issue("C1:1", "t", "d")
         self.assertEqual(first["identifier"], second["identifier"])
         b.create_task_issue.assert_awaited_once()
-        self.assertTrue(b.create_task_issue.call_args.args[1].startswith("Thread: C1:1"))
+        self.assertTrue(b.create_task_issue.call_args.args[1].startswith("Thread: `C1:1`"))
 
     async def test_get_thread_notes_none_when_untracked(self):
         b = self._bridge()

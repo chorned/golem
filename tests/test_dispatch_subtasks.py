@@ -315,5 +315,200 @@ class TestAudiobookshelfReadOnlyScope(unittest.TestCase):
         self.assertIn("oci-machine", BASE_CHIEF_OF_STAFF_INSTRUCTION)
 
 
+class TestSharedSessionHandStreamLock(unittest.IsolatedAsyncioTestCase):
+    """Verify shared-session _spawn_hand serializes _stream_backstage_events via _hand_stream_lock."""
+
+    async def test_shared_session_serializes_stream_backstage_events(self):
+        gateway = IngressGateway()
+        session = SessionHandle(session_id="shared_sess", channel="C_TEST", thread_ts="T_123")
+
+        concurrent_streams = 0
+        max_concurrent_streams = 0
+        recorded_prompts = []
+
+        async def fake_stream_backstage_events(sess, prompt):
+            nonlocal concurrent_streams, max_concurrent_streams
+            recorded_prompts.append(prompt)
+            concurrent_streams += 1
+            if concurrent_streams > max_concurrent_streams:
+                max_concurrent_streams = concurrent_streams
+            await asyncio.sleep(0.05)
+            concurrent_streams -= 1
+            from golem.events import FinishEvent
+            yield FinishEvent(status="SUCCESS", response=f"Finished {prompt[:20]}")
+
+        gateway._stream_backstage_events = fake_stream_backstage_events
+
+        task1 = {
+            "issue_key": "CHO-101",
+            "task_brief": "Task 1 command",
+            "target_node": "localhost",
+        }
+        task2 = {
+            "issue_key": "CHO-102",
+            "task_brief": "Task 2 command",
+            "target_node": "localhost",
+        }
+
+        with patch("golem.linear_bridge.LinearBridge.update_issue_state", new_callable=AsyncMock), \
+             patch("golem.linear_bridge.LinearBridge.settle_subtask_and_evaluate_parent", new_callable=AsyncMock), \
+             patch("golem.ingress.set_assistant_status", new_callable=AsyncMock) as mock_status:
+
+            results = await asyncio.gather(
+                gateway._spawn_hand(task1, session=session, client=MagicMock(), channel="C_TEST", thread_ts="T_123"),
+                gateway._spawn_hand(task2, session=session, client=MagicMock(), channel="C_TEST", thread_ts="T_123"),
+            )
+
+            # Both succeeded
+            self.assertEqual(results[0].turn_status, "SUCCESS")
+            self.assertEqual(results[1].turn_status, "SUCCESS")
+
+            # Max concurrent streams must be exactly 1 (serialized via _hand_stream_lock)
+            self.assertEqual(max_concurrent_streams, 1)
+
+            # Linear and Iron Law guardrails must be present in the task prompt sent to runner
+            self.assertEqual(len(recorded_prompts), 2)
+            self.assertIn("[LINEAR GUARDRAIL: NEVER call Linear GraphQL APIs", recorded_prompts[0])
+            self.assertIn("[LINEAR GUARDRAIL: NEVER call Linear GraphQL APIs", recorded_prompts[1])
+            self.assertIn("[IRON LAW OF EXTERNAL INTEGRATIONS — NO SILENT MOCKS", recorded_prompts[0])
+            self.assertIn("[IRON LAW OF EXTERNAL INTEGRATIONS — NO SILENT MOCKS", recorded_prompts[1])
+
+            # Slack assistant status was called for each hand
+            self.assertEqual(mock_status.call_count, 2)
+
+
+class TestLinearTicketsRoadmapAndHydration(unittest.IsolatedAsyncioTestCase):
+    """Verify thread-sovereign Linear roadmap prompt injection and explicit subtask hydration without cross-thread hijacking."""
+
+    def setUp(self):
+        self.gateway = IngressGateway()
+
+    async def test_load_linear_notes_block_surfaces_active_roadmap(self):
+        from golem.ingress import _THREAD_PLAN_CACHE
+        thread_ref = "C_CHAN_123:T_ALERT_456"
+
+        tickets = [
+            {
+                "identifier": "CHO-214",
+                "title": "Audiobookshelf podcasts audit",
+                "state": {"name": "In Progress"},
+                "subtasks": [
+                    {
+                        "identifier": "CHO-215",
+                        "title": "[1/2] Inventory podcast series",
+                        "description": "Inspect REST API",
+                        "settled": True,
+                    },
+                    {
+                        "identifier": "CHO-216",
+                        "title": "[2/2] Extract episode durations",
+                        "description": "Calculate media lengths",
+                        "settled": False,
+                    },
+                ],
+            }
+        ]
+
+        _THREAD_PLAN_CACHE[thread_ref] = {"linear_tickets_context": tickets}
+        try:
+            block = await self.gateway._load_linear_notes_block(thread_ref)
+            self.assertIn("[THREAD LINEAR PROJECT CONTEXT & RUNTIME TELEMETRY]", block)
+            self.assertIn("CHO-214", block)
+            self.assertIn("CHO-216", block)
+            # Settled subtask CHO-215 must not be listed under Uncompleted Subtasks
+            self.assertNotIn("CHO-215", block)
+            # Coercive CRITICAL DIRECTIVE must not be present
+            self.assertNotIn("CRITICAL DIRECTIVE:", block)
+        finally:
+            _THREAD_PLAN_CACHE.pop(thread_ref, None)
+
+    async def test_no_cross_thread_hijacking_from_unrelated_ticket_threads(self):
+        """
+        Regression test for Bug #1 (CHO-197 vs CHO-207):
+        An alert or context in thread T_207 (or legacy channel latest_linear_alert) must NEVER leak
+        into thread T_197 when loading Linear notes or hydrating subtasks.
+        """
+        from golem.ingress import _THREAD_PLAN_CACHE
+        heb_thread = "C_CHAN_123:T_HEB_197"
+        goat_thread = "C_CHAN_123:T_GOAT_207"
+        legacy_global_key = "C_CHAN_123:latest_linear_alert"
+
+        goat_tickets = [
+            {
+                "identifier": "CHO-207",
+                "title": "Project GOAT-GOTY",
+                "state": {"name": "In Progress"},
+                "subtasks": [
+                    {"identifier": "CHO-208", "title": "Subtask 1", "settled": False},
+                    {"identifier": "CHO-209", "title": "Subtask 2", "settled": False},
+                ],
+            }
+        ]
+        _THREAD_PLAN_CACHE[goat_thread] = {"linear_tickets_context": goat_tickets}
+        _THREAD_PLAN_CACHE[legacy_global_key] = {"linear_tickets_context": goat_tickets}
+        try:
+            # 1. Loading Linear notes in HEB thread must NOT pull in CHO-207
+            heb_block = await self.gateway._load_linear_notes_block(heb_thread)
+            self.assertNotIn("CHO-207", heb_block)
+            self.assertNotIn("CHO-208", heb_block)
+
+            # 2. Hydrating subtasks in HEB thread must NOT pull in CHO-207
+            parent_key, hydrated = self.gateway._hydrate_subtasks_from_linear_context(
+                thread_ref=heb_thread,
+                channel="C_CHAN_123",
+                parent_key=None,
+                subtasks_list=[],
+            )
+            self.assertIsNone(parent_key)
+            self.assertEqual(hydrated, [])
+        finally:
+            _THREAD_PLAN_CACHE.pop(goat_thread, None)
+            _THREAD_PLAN_CACHE.pop(legacy_global_key, None)
+
+    async def test_hydrate_subtasks_from_linear_context(self):
+        from golem.ingress import _THREAD_PLAN_CACHE
+        thread_ref = "C_CHAN_123:T_ALERT_789"
+
+        tickets = [
+            {
+                "identifier": "CHO-214",
+                "title": "Audiobookshelf audit",
+                "state": {"name": "In Progress"},
+                "subtasks": [
+                    {
+                        "identifier": "CHO-215",
+                        "title": "[1/2] Task A",
+                        "settled": True,
+                    },
+                    {
+                        "identifier": "CHO-216",
+                        "title": "[2/2] Task B",
+                        "description": "Extract lengths",
+                        "settled": False,
+                    },
+                ],
+            }
+        ]
+
+        _THREAD_PLAN_CACHE[thread_ref] = {"linear_tickets_context": tickets}
+        try:
+            # Model called dispatch_subtasks with empty subtasks list in the CHO-214 thread
+            parent_key, hydrated = self.gateway._hydrate_subtasks_from_linear_context(
+                thread_ref=thread_ref,
+                channel="C_CHAN_123",
+                parent_key="CHO-214",
+                subtasks_list=[],
+            )
+
+            self.assertEqual(parent_key, "CHO-214")
+            self.assertEqual(len(hydrated), 1)
+            self.assertEqual(hydrated[0]["issue_key"], "CHO-216")
+            self.assertEqual(hydrated[0]["parent_key"], "CHO-214")
+            self.assertEqual(hydrated[0]["task_brief"], "Extract lengths")
+        finally:
+            _THREAD_PLAN_CACHE.pop(thread_ref, None)
+
+
 if __name__ == "__main__":
     unittest.main()
+

@@ -93,8 +93,15 @@ class TestNoseSentinelLifecycle(unittest.IsolatedAsyncioTestCase):
         with open(self.bot_err_path, "w") as f:
             f.write("Initial log line\n")
         self.bus = ShoulderTapEventBus()
+        self._fleet_patcher = patch.object(
+            NoseSentinel,
+            "sniff_fleet",
+            new_callable=lambda: AsyncMock(return_value=FleetSnapshot()),
+        )
+        self._fleet_patcher.start()
 
     async def asyncTearDown(self) -> None:
+        self._fleet_patcher.stop()
         self.bus.clear()
         if os.path.exists(self.temp_dir):
             shutil.rmtree(self.temp_dir, ignore_errors=True)

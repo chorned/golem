@@ -171,10 +171,13 @@ class TestNoseSentinelEmailIntegration(unittest.IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self) -> None:
         self.bus = ShoulderTapEventBus()
+        mock_linear = MagicMock()
+        mock_linear.get_assigned_issues = AsyncMock(return_value=[])
         self.sentinel = NoseSentinel(
             bus=self.bus,
             bot_err_path="/tmp/nonexistent_bot_err_test.log",
             email_enabled=True,
+            linear_bridge=mock_linear,
         )
 
     async def asyncTearDown(self) -> None:
@@ -214,17 +217,18 @@ class TestNoseSentinelEmailIntegration(unittest.IsolatedAsyncioTestCase):
         received_alerts: list[ShoulderTapAlert] = []
         self.bus.subscribe(lambda a: received_alerts.append(a), alert_types=["email_received"])
 
-        with patch.object(self.sentinel, "sniff_bot_err", return_value=([], "")):
-            with patch.object(self.sentinel, "sniff_fleet", new_callable=AsyncMock) as mock_fleet:
-                mock_fleet.return_value = FleetSnapshot()
+        with patch.object(self.sentinel, "sniff_bot_err", return_value=([], "")), \
+             patch.object(self.sentinel, "sniff_fleet", new_callable=AsyncMock) as mock_fleet, \
+             patch.object(self.sentinel, "sniff_assigned_tickets", new_callable=AsyncMock, return_value=[]):
+            mock_fleet.return_value = FleetSnapshot()
 
-                result = await self.sentinel.tick()
+            result = await self.sentinel.tick()
 
-                self.assertIsNotNone(result)
-                self.assertEqual(result.alert_type, "email_received")
-                self.assertEqual(result.data["email_id"], "email_xyz")
-                self.assertEqual(len(received_alerts), 1)
-                self.assertEqual(received_alerts[0].data["urls"], ["https://instagram.com/reel/123"])
+            self.assertIsNotNone(result)
+            self.assertEqual(result.alert_type, "email_received")
+            self.assertEqual(result.data["email_id"], "email_xyz")
+            self.assertEqual(len(received_alerts), 1)
+            self.assertEqual(received_alerts[0].data["urls"], ["https://instagram.com/reel/123"])
 
 
 if __name__ == "__main__":

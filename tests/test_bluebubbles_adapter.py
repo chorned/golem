@@ -214,7 +214,8 @@ class TestBlueBubblesWebhookServer(AioHTTPTestCase):
             password="test_secret_password",
             webhook_path="/bluebubbles-webhook",
             allowed_handles="k.horned@gmail.com,carl@example.com",
-            message_handler=mock_handler
+            message_handler=mock_handler,
+            coalesce_seconds=0.0
         )
         self.transport.set_chat_read = AsyncMock(return_value=None)
         self.transport.send_reaction = AsyncMock(return_value=None)
@@ -391,6 +392,56 @@ class TestBlueBubblesWebhookServer(AioHTTPTestCase):
         dispatched = self.dispatched_messages[0]
         self.assertEqual(dispatched["chat_guid"], "iMessage;-;k.horned@gmail.com")
 
+    @unittest_run_loop
+    async def test_webhook_message_coalescing(self):
+        """Verify rapid-fire split share-sheet messages are coalesced into a single dispatch."""
+        self.transport.coalesce_seconds = 0.1
+
+        payload1 = {
+            "type": "new-message",
+            "data": {
+                "guid": "MSG-COALESCE-1",
+                "text": "Can you add this recipe to my HEB cart?",
+                "handle": {"address": "k.horned@gmail.com"},
+                "chats": [{"guid": "iMessage;-;k.horned@gmail.com"}]
+            }
+        }
+        payload2 = {
+            "type": "new-message",
+            "data": {
+                "guid": "MSG-COALESCE-2",
+                "text": "https://www.tiktok.com/t/ZPLSTvdrQ/",
+                "handle": {"address": "k.horned@gmail.com"},
+                "chats": [{"guid": "iMessage;-;k.horned@gmail.com"}]
+            }
+        }
+
+        resp1 = await self.client.post("/bluebubbles-webhook?password=test_secret_password", json=payload1)
+        self.assertEqual(resp1.status, 200)
+
+        # Within the 0.1s window, send second message
+        await asyncio.sleep(0.03)
+        self.assertEqual(len(self.dispatched_messages), 0)
+
+        resp2 = await self.client.post("/bluebubbles-webhook?password=test_secret_password", json=payload2)
+        self.assertEqual(resp2.status, 200)
+
+        # Still within the reset window
+        await asyncio.sleep(0.04)
+        self.assertEqual(len(self.dispatched_messages), 0)
+
+        # Wait for the debounced window to settle
+        await asyncio.sleep(0.12)
+        self.assertEqual(len(self.dispatched_messages), 1)
+
+        dispatched = self.dispatched_messages[0]
+        self.assertEqual(
+            dispatched["text"],
+            "Can you add this recipe to my HEB cart?\nhttps://www.tiktok.com/t/ZPLSTvdrQ/"
+        )
+        self.assertEqual(dispatched["chat_guid"], "iMessage;-;k.horned@gmail.com")
+
+
 
 class TestBlueBubblesOutboundAndBridge(unittest.IsolatedAsyncioTestCase):
     """Tests for outbound iMessage delivery, attachment sending, and end-to-end Chief of Staff alignment."""
@@ -522,13 +573,14 @@ class TestBlueBubblesOutboundAndBridge(unittest.IsolatedAsyncioTestCase):
             # Verified agent start launched cleanly without prompt arguments
             start_cmds = [c for c in cli_calls if c[0] == "agent" and c[1] == "start"]
             self.assertEqual(len(start_cmds), 1)
-            self.assertEqual(start_cmds[0][2], session.agent_name)
+            expected_agent = getattr(session, "liaison_agent", session.agent_name)
+            self.assertEqual(start_cmds[0][2], expected_agent)
             self.assertNotIn("--prompt-interactive", start_cmds[0])
 
             # Verified prompt dispatched via agent prompt after handshake
             prompt_cmds = [c for c in cli_calls if c[0] == "agent" and c[1] == "prompt"]
             self.assertEqual(len(prompt_cmds), 1)
-            self.assertEqual(prompt_cmds[0][2], session.agent_name)
+            self.assertEqual(prompt_cmds[0][2], expected_agent)
             self.assertTrue(any("build a quick html preview prototype" in arg for arg in prompt_cmds[0]))
 
 
@@ -1283,6 +1335,175 @@ class TestBlueBubblesPrivateAPILifecycle(unittest.IsolatedAsyncioTestCase):
         }
         await gateway.handle_message(reply_event, mock_client)
         gateway._fetch_thread_context.assert_called_once()
+
+    def test_normalize_handle(self):
+        """Verify _normalize_handle converts phone formats to E.164 and emails to lowercase."""
+        from bluebubbles_transport import _normalize_handle
+
+        self.assertEqual(_normalize_handle(""), "")
+        self.assertEqual(_normalize_handle(None), "")
+        self.assertEqual(_normalize_handle("  "), "")
+
+        # Emails
+        self.assertEqual(_normalize_handle("Alice@Example.COM"), "alice@example.com")
+        self.assertEqual(_normalize_handle("  bob.smith@domain.co.uk  "), "bob.smith@domain.co.uk")
+
+        # US 10-digit
+        self.assertEqual(_normalize_handle("5551234567"), "+15551234567")
+        self.assertEqual(_normalize_handle("(555) 123-4567"), "+15551234567")
+        self.assertEqual(_normalize_handle("555-123-4567"), "+15551234567")
+        self.assertEqual(_normalize_handle("555.123.4567"), "+15551234567")
+
+        # US 11-digit with leading 1
+        self.assertEqual(_normalize_handle("15551234567"), "+15551234567")
+        self.assertEqual(_normalize_handle("1-555-123-4567"), "+15551234567")
+
+        # Canonical E.164
+        self.assertEqual(_normalize_handle("+15551234567"), "+15551234567")
+        self.assertEqual(_normalize_handle("+1 (555) 123-4567"), "+15551234567")
+
+        # Protocol prefixes
+        self.assertEqual(_normalize_handle("iMessage;-;+15551234567"), "+15551234567")
+        self.assertEqual(_normalize_handle("SMS;-;(555) 123-4567"), "+15551234567")
+        self.assertEqual(_normalize_handle("iMessage;-;user@example.com"), "user@example.com")
+
+    def test_resolve_imessage_speaker_name(self):
+        """Verify resolve_imessage_speaker_name maps handles to friendly names."""
+        from bluebubbles_transport import resolve_imessage_speaker_name
+
+        speaker_map = "alice@example.com:Alice,+15551234567:Alice,5559876543:Bob"
+
+        self.assertEqual(resolve_imessage_speaker_name("alice@example.com", speaker_map), "Alice")
+        self.assertEqual(resolve_imessage_speaker_name("ALICE@EXAMPLE.COM", speaker_map), "Alice")
+        self.assertEqual(resolve_imessage_speaker_name("+15551234567", speaker_map), "Alice")
+        self.assertEqual(resolve_imessage_speaker_name("(555) 123-4567", speaker_map), "Alice")
+        self.assertEqual(resolve_imessage_speaker_name("5551234567", speaker_map), "Alice")
+        self.assertEqual(resolve_imessage_speaker_name("5559876543", speaker_map), "Bob")
+        self.assertEqual(resolve_imessage_speaker_name("+15559876543", speaker_map), "Bob")
+        self.assertEqual(resolve_imessage_speaker_name("unknown@example.com", speaker_map), "")
+        self.assertEqual(resolve_imessage_speaker_name("", speaker_map), "")
+
+    async def test_coalescer_multi_speaker_separation(self):
+        """Verify coalescer flushes previous speaker buffer immediately when a different speaker replies in same chat."""
+        dispatched = []
+
+        async def mock_handler(chat_guid, text, sender, payload):
+            dispatched.append({"chat_guid": chat_guid, "text": text, "sender": sender})
+
+        transport = BlueBubblesTransport(
+            server_url="http://127.0.0.1:1234",
+            password="test_secret_password",
+            message_handler=mock_handler,
+            coalesce_seconds=5.0,
+        )
+
+        chat_guid = "iMessage;+;chat12345"
+
+        # 1. Alice sends first message
+        transport._enqueue_coalesced(chat_guid, "Hello from Alice 1", "+15551111111", {"data": {"text": "Hello from Alice 1"}})
+        self.assertEqual(len(dispatched), 0)
+
+        # 2. Alice sends rapid second message -> coalesces with first
+        transport._enqueue_coalesced(chat_guid, "Hello from Alice 2", "+15551111111", {"data": {"text": "Hello from Alice 2"}})
+        self.assertEqual(len(dispatched), 0)
+
+        # 3. Bob sends a message in the same chat -> must immediately flush Alice's buffered messages!
+        transport._enqueue_coalesced(chat_guid, "Hey Alice, this is Bob", "+15552222222", {"data": {"text": "Hey Alice, this is Bob"}})
+
+        # Give event loop a micro-tick to execute the flushed task
+        await asyncio.sleep(0.01)
+
+        self.assertEqual(len(dispatched), 1)
+        self.assertEqual(dispatched[0]["sender"], "+15551111111")
+        self.assertEqual(dispatched[0]["text"], "Hello from Alice 1\nHello from Alice 2")
+
+        # 4. Flush Bob's message manually
+        buf = transport._coalesce_buffers.pop(chat_guid, None)
+        self.assertIsNotNone(buf)
+        transport._dispatch_buffered(buf)
+        await asyncio.sleep(0.01)
+
+        self.assertEqual(len(dispatched), 2)
+        self.assertEqual(dispatched[1]["sender"], "+15552222222")
+        self.assertEqual(dispatched[1]["text"], "Hey Alice, this is Bob")
+
+        await transport.stop()
+
+    async def test_imessage_speaker_tag_and_thread_context(self):
+        """Verify speaker tags are added to prompt_to_send and thread context resolves mapped names."""
+        from golem.gateway.ingress import IngressGateway
+
+        mock_router = MagicMock()
+        mock_session = MagicMock()
+        mock_session.is_busy = False
+        mock_session.is_executing = False
+        mock_session.runner_pane = None
+        mock_session.force_mouth = True
+        mock_session.get_last_artifact = MagicMock(return_value=None)
+        mock_session.pending_memory_proposal = None
+        mock_session.adapter = MagicMock()
+        mock_session.adapter.run_turn = AsyncMock(return_value={"status": "SUCCESS", "output_tail": "Done"})
+        mock_router.get_or_create = AsyncMock(return_value=(mock_session, True))
+
+        gateway = IngressGateway(router=mock_router)
+        dispatched_prompts = []
+
+        async def mock_handle_mouth_turn(session, prompt, client, channel, thread_ts, ts, is_imessage):
+            dispatched_prompts.append(prompt)
+            return "OK"
+
+        gateway._handle_mouth_turn = mock_handle_mouth_turn
+
+        mock_client = MagicMock()
+        mock_client.chat_postMessage = AsyncMock()
+
+        # Set test speaker map
+        test_env_map = "+15551111111:Alice,+15552222222:Bob"
+        with patch.dict(os.environ, {"IMESSAGE_SPEAKER_MAP": test_env_map}):
+            # 1. Test 1-on-1 mapped speaker
+            event_1on1 = {
+                "channel": "iMessage;-;+15551111111",
+                "user": "+15551111111",
+                "text": "What is our plan for today?",
+                "ts": "guid-001",
+                "thread_ts": "guid-001",
+                "is_imessage": True,
+            }
+            await gateway.handle_message(event_1on1, mock_client)
+            self.assertEqual(len(dispatched_prompts), 1)
+            self.assertIn("[iMessage Speaker: Alice]", dispatched_prompts[0])
+            self.assertIn("What is our plan for today?", dispatched_prompts[0])
+
+            # 2. Test group chat mapped speaker
+            event_group = {
+                "channel": "iMessage;+;chat999",
+                "user": "+15552222222",
+                "text": "Did the build pass?",
+                "ts": "guid-002",
+                "thread_ts": "guid-002",
+                "is_imessage": True,
+            }
+            await gateway.handle_message(event_group, mock_client)
+            self.assertEqual(len(dispatched_prompts), 2)
+            self.assertIn("[iMessage Speaker: Bob (in Group Chat)]", dispatched_prompts[1])
+            self.assertIn("Did the build pass?", dispatched_prompts[1])
+
+            # 3. Test _fetch_thread_context with mapped speakers
+            mock_client.conversations_replies = AsyncMock(return_value={
+                "ok": True,
+                "messages": [
+                    {"ts": "1.0", "user": "+15551111111", "text": "First question"},
+                    {"ts": "1.1", "bot_id": "B_AGY", "text": "First answer"},
+                    {"ts": "1.2", "user": "+15552222222", "text": "Follow-up question"},
+                ]
+            })
+            ctx = await gateway._fetch_thread_context(
+                mock_client, channel="iMessage;+;chat999", thread_ts="guid-002", is_imessage=True
+            )
+            self.assertIn("Alice: First question", ctx)
+            self.assertIn("Hermes: First answer", ctx)
+            self.assertIn("Bob: Follow-up question", ctx)
+
 
 
 

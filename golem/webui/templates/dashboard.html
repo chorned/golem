@@ -2720,13 +2720,30 @@
                     } catch (_) {}
                 });
 
+                eventSource.addEventListener('mouth_log', function(e) {
+                    try {
+                        const data = JSON.parse(e.data);
+                        const txt = data.message || data.text || data.briefing || JSON.stringify(data);
+                        if (typeof txt === 'string' && (txt.startsWith('[') || txt.includes('Golem.Agent.Mouth:'))) {
+                            appendAgentLog(document.getElementById('mouth-terminal-body'), txt.includes('Golem.Agent.Mouth:') ? txt : `[INFO] Golem.Agent.Mouth: ${txt}`);
+                        } else {
+                            appendAgentLog(document.getElementById('mouth-terminal-body'), `[INFO] Golem.Agent.Mouth: ${txt}`);
+                        }
+                    } catch (_) {
+                        appendAgentLog(document.getElementById('mouth-terminal-body'), `[INFO] Golem.Agent.Mouth: ${e.data}`);
+                    }
+                });
+
                 eventSource.addEventListener('mouth_briefing', function(e) {
-                    mouthTurns++;
-                    isMouthActive = false;
-                    if (mouthTurnsBadge) mouthTurnsBadge.textContent = `${mouthTurns} turns`;
                     try {
                         const data = JSON.parse(e.data);
                         const txt = data.briefing || data.text || JSON.stringify(data);
+                        if (typeof txt === 'string' && txt.startsWith('[')) {
+                            return;
+                        }
+                        mouthTurns++;
+                        isMouthActive = false;
+                        if (mouthTurnsBadge) mouthTurnsBadge.textContent = `${mouthTurns} turns`;
                         appendAgentLog(document.getElementById('mouth-terminal-body'), `[INFO] Golem.Agent.Mouth: Executive briefing: "${txt}"`);
                     } catch (_) {
                         appendAgentLog(document.getElementById('mouth-terminal-body'), `[INFO] Golem.Agent.Mouth: ${e.data}`);

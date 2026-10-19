@@ -136,11 +136,15 @@ class GolemWiki:
 
     _global_pending_updates: Dict[str, Any] = {}
     _test_hermetic_wiki_dir: Optional[str] = None
+    _session_template_wiki_dir: Optional[str] = None
 
     @classmethod
     def _get_or_create_test_wiki_dir(cls) -> str:
         if cls._test_hermetic_wiki_dir and os.path.exists(cls._test_hermetic_wiki_dir):
             return cls._test_hermetic_wiki_dir
+        if cls._session_template_wiki_dir and os.path.exists(cls._session_template_wiki_dir):
+            cls._test_hermetic_wiki_dir = cls._session_template_wiki_dir
+            return cls._session_template_wiki_dir
         import tempfile
         import shutil
         tmp_dir = tempfile.mkdtemp(prefix="golem_hermetic_wiki_")
@@ -234,45 +238,65 @@ class GolemWiki:
 
             git_dir = os.path.join(self.wiki_dir, ".git")
             if not os.path.exists(git_dir):
-                subprocess.run(
-                    ["git", "init", "-b", "main"],
-                    cwd=self.wiki_dir,
-                    check=True,
-                    capture_output=True,
-                )
-                readme_path = os.path.join(self.wiki_dir, "README.md")
-                if not os.path.exists(readme_path):
-                    with open(readme_path, "w", encoding="utf-8") as f:
-                        f.write("# Golem Operational Wiki\n\nGit-backed operational memory for Project Golem.\n")
+                template_dir = getattr(GolemWiki, "_session_template_wiki_dir", None)
+                if (
+                    template_dir
+                    and os.path.exists(os.path.join(template_dir, ".git"))
+                    and os.path.abspath(self.wiki_dir) != os.path.abspath(template_dir)
+                ):
+                    import shutil
+                    shutil.copytree(os.path.join(template_dir, ".git"), git_dir, symlinks=True)
+                    # Copy missing template files without overwriting any custom files already created
+                    for root, _, files in os.walk(template_dir):
+                        if ".git" in root.split(os.sep):
+                            continue
+                        rel = os.path.relpath(root, template_dir)
+                        target_dir = os.path.join(self.wiki_dir, rel) if rel != "." else self.wiki_dir
+                        os.makedirs(target_dir, exist_ok=True)
+                        for f in files:
+                            dst_f = os.path.join(target_dir, f)
+                            if not os.path.exists(dst_f):
+                                shutil.copy2(os.path.join(root, f), dst_f)
+                else:
+                    subprocess.run(
+                        ["git", "init", "-b", "main"],
+                        cwd=self.wiki_dir,
+                        check=True,
+                        capture_output=True,
+                    )
+                    readme_path = os.path.join(self.wiki_dir, "README.md")
+                    if not os.path.exists(readme_path):
+                        with open(readme_path, "w", encoding="utf-8") as f:
+                            f.write("# Golem Operational Wiki\n\nGit-backed operational memory for Project Golem.\n")
 
-                ignore_path = os.path.join(self.wiki_dir, ".gitignore")
-                if not os.path.exists(ignore_path):
-                    with open(ignore_path, "w", encoding="utf-8") as f:
-                        f.write(".wiki.lock\n*.tmp\n")
+                    ignore_path = os.path.join(self.wiki_dir, ".gitignore")
+                    if not os.path.exists(ignore_path):
+                        with open(ignore_path, "w", encoding="utf-8") as f:
+                            f.write(".wiki.lock\n*.tmp\n")
 
-                cap_path = os.path.join(self.wiki_dir, "context", "capabilities.md")
-                if not os.path.exists(cap_path):
-                    with open(cap_path, "w", encoding="utf-8") as f:
-                        f.write(DEFAULT_CAPABILITIES_TEMPLATE)
+                    cap_path = os.path.join(self.wiki_dir, "context", "capabilities.md")
+                    if not os.path.exists(cap_path):
+                        with open(cap_path, "w", encoding="utf-8") as f:
+                            f.write(DEFAULT_CAPABILITIES_TEMPLATE)
 
-                topo_path = os.path.join(self.wiki_dir, "context", "topology.md")
-                if not os.path.exists(topo_path):
-                    with open(topo_path, "w", encoding="utf-8") as f:
-                        f.write(DEFAULT_TOPOLOGY_TEMPLATE)
+                    topo_path = os.path.join(self.wiki_dir, "context", "topology.md")
+                    if not os.path.exists(topo_path):
+                        with open(topo_path, "w", encoding="utf-8") as f:
+                            f.write(DEFAULT_TOPOLOGY_TEMPLATE)
 
-                subprocess.run(["git", "add", "-A"], cwd=self.wiki_dir, check=True, capture_output=True)
-                subprocess.run(
-                    [
-                        "git",
-                        "-c", "user.name=Golem",
-                        "-c", "user.email=golem@fleet.local",
-                        "commit",
-                        "-m", "chore(wiki): initialize operational memory wiki",
-                    ],
-                    cwd=self.wiki_dir,
-                    check=True,
-                    capture_output=True,
-                )
+                    subprocess.run(["git", "add", "-A"], cwd=self.wiki_dir, check=True, capture_output=True)
+                    subprocess.run(
+                        [
+                            "git",
+                            "-c", "user.name=Golem",
+                            "-c", "user.email=golem@fleet.local",
+                            "commit",
+                            "-m", "chore(wiki): initialize operational memory wiki",
+                        ],
+                        cwd=self.wiki_dir,
+                        check=True,
+                        capture_output=True,
+                    )
             else:
                 created_any = False
                 cap_path = os.path.join(self.wiki_dir, "context", "capabilities.md")

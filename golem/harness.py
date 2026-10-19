@@ -8,6 +8,8 @@ Manages the lifecycle of a Dual-Pane Workspace (Pane 1 Liaison + Pane 2 Runner):
 Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh.
 """
 
+import os
+import asyncio
 import json
 import logging
 import time
@@ -495,15 +497,21 @@ class DualPaneHarness:
                 logger.debug(f"Failed to update subtask {subtask_id} to in progress: {e}")
 
         # Run Linear creation as a detached task
-        if os.getenv("LINEAR_API_KEY"):
+        hand_issue_holder: Dict[str, Optional[str]] = {"id": None}
+        create_task_ref = None
+        hand_title = f"[Hand] {task_description[:60]}"
+        if not subtask_id and os.getenv("LINEAR_API_KEY"):
             async def _safe_linear_create():
                 try:
                     from golem.linear_bridge import LinearBridge
                     linear_bridge = LinearBridge()
-                    issue = await linear_bridge.create_task_issue(
-                        title=f"[Hand] {task_description[:60]}",
+                    existing_hand = await linear_bridge.find_open_hand_issue(hand_title)
+                    issue = existing_hand or await linear_bridge.create_task_issue(
+                        title=hand_title,
                         description=f"Node: {target_node}\nCWD: {cwd}\nCommand: `{task_description}`"
                     )
+                    if isinstance(issue, dict) and issue.get("id"):
+                        hand_issue_holder["id"] = issue.get("id")
                     if hasattr(self, "router") and self.router and hasattr(self.router, "sessions"):
                         sess = self.router.sessions.get(session_id)
                         if sess:
@@ -512,18 +520,43 @@ class DualPaneHarness:
                 except Exception as e:
                     logger.warning(f"Linear background issue creation skipped: {e}")
 
-            asyncio.create_task(_safe_linear_create())
+            create_task_ref = asyncio.create_task(_safe_linear_create())
 
-        return await self.execute_command(
-            session_id=session_id,
-            command=effective_task,
-            yield_timeout=yield_timeout,
-            precedent_status=precedent_status,
-            precedent_source=precedent_source,
-            target_node=target_node,
-            task_description=task_description,
-            **kwargs,
-        )
+        res = None
+        try:
+            res = await self.execute_command(
+                session_id=session_id,
+                command=effective_task,
+                yield_timeout=yield_timeout,
+                precedent_status=precedent_status,
+                precedent_source=precedent_source,
+                target_node=target_node,
+                task_description=task_description,
+                **kwargs,
+            )
+            return res
+        finally:
+            if not subtask_id and os.getenv("LINEAR_API_KEY"):
+                async def _settle_hand():
+                    if create_task_ref and not create_task_ref.done():
+                        try:
+                            await asyncio.wait_for(asyncio.shield(create_task_ref), timeout=2.0)
+                        except Exception:
+                            pass
+                    hand_id = hand_issue_holder.get("id")
+                    if hand_id:
+                        try:
+                            from golem.linear_bridge import LinearBridge
+                            linear_bridge = LinearBridge()
+                            exit_c = getattr(res, "exit_code", None)
+                            if exit_c is None and isinstance(res, dict):
+                                exit_c = res.get("exit_code")
+                            settle_status = "SUCCESS" if exit_c == 0 else "CANCELED"
+                            await linear_bridge.settle_hand_issue(hand_id, status=settle_status)
+                        except Exception as e:
+                            logger.debug(f"Linear hand settlement skipped in harness: {e}")
+
+                asyncio.create_task(_settle_hand())
 
 
 def get_preflight_node_invariants(target_node: str = "localhost") -> str:

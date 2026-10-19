@@ -7,6 +7,7 @@ Golem is the open-source evolution of First Mate, powered by Herdr's distributed
 """
 
 import asyncio
+import copy
 import inspect
 import json
 import logging
@@ -666,6 +667,119 @@ def resolve_bluebubbles_url(server_url: Optional[str] = None, password: Optional
     return explicit or "http://127.0.0.1:1234"
 
 
+def _normalize_handle(handle: Optional[str]) -> str:
+    """Normalize phone numbers to canonical E.164 (+1XXXXXXXXXX) and emails to lowercase."""
+    if not handle:
+        return ""
+    h = str(handle).strip()
+    # Strip protocol prefix if passed e.g. iMessage;-;+1646... or SMS;-;...
+    for prefix in ("iMessage;-;", "SMS;-;", "iMessage;+;", "SMS;+;"):
+        if h.startswith(prefix):
+            h = h[len(prefix):].strip()
+            break
+    if "@" in h:
+        return h.lower()
+    digits = re.sub(r"\D", "", h)
+    if digits:
+        if len(digits) == 10:
+            return f"+1{digits}"
+        elif len(digits) == 11 and digits.startswith("1"):
+            return f"+{digits}"
+        elif h.startswith("+"):
+            return f"+{digits}"
+    return h.lower()
+
+
+def resolve_imessage_speaker_name(
+    sender: Optional[str],
+    speaker_map: Optional[Union[Dict[str, str], str]] = None,
+) -> str:
+    """Resolve an iMessage sender handle or phone number to a friendly speaker name (e.g. configured speaker mapping)."""
+    if not sender:
+        return ""
+
+    mapping: Dict[str, str] = {}
+
+    raw_map = speaker_map
+    if raw_map is None:
+        raw_map = os.environ.get("IMESSAGE_SPEAKER_MAP")
+
+    # Only inspect .env files on disk if not explicitly in test mode and no env var set
+    if not raw_map and not (os.environ.get("GOLEM_TEST_MODE") == "1" or os.environ.get("FIRSTMATE_TEST_MODE") == "1"):
+        env_candidates = [
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"),
+            "/Users/hermes/projects/first-mate/.env",
+            "/Users/hermes/projects/golem/.env",
+            os.path.expanduser("~/.hermes/.env"),
+        ]
+        for ep in env_candidates:
+            if os.path.isfile(ep):
+                try:
+                    with open(ep, "r", encoding="utf-8") as f:
+                        for line in f:
+                            line = line.strip()
+                            if line.startswith("IMESSAGE_SPEAKER_MAP="):
+                                raw_map = line.split("=", 1)[1].strip().strip("\"'")
+                                break
+                    if raw_map:
+                        break
+                except Exception:
+                    pass
+
+    if isinstance(raw_map, dict):
+        mapping = {k.strip().lower(): str(v).strip() for k, v in raw_map.items()}
+        for k, v in list(mapping.items()):
+            norm_k = _normalize_handle(k)
+            if norm_k:
+                mapping[norm_k] = v
+    elif isinstance(raw_map, str) and raw_map.strip():
+        val = raw_map.strip()
+        if val.startswith("{") and val.endswith("}"):
+            try:
+                parsed = json.loads(val)
+                if isinstance(parsed, dict):
+                    for k, v in parsed.items():
+                        mapping[k.strip().lower()] = str(v).strip()
+                        norm_k = _normalize_handle(k)
+                        if norm_k:
+                            mapping[norm_k] = str(v).strip()
+            except Exception:
+                pass
+        if not mapping:
+            # Format: handle:Name,handle2:Name2
+            for pair in val.split(","):
+                pair = pair.strip()
+                if ":" in pair:
+                    k, v = pair.split(":", 1)
+                    k_clean = k.strip().lower()
+                    v_clean = v.strip()
+                    mapping[k_clean] = v_clean
+                    norm_k = _normalize_handle(k_clean)
+                    if norm_k:
+                        mapping[norm_k] = v_clean
+
+    s_raw = str(sender).strip()
+    for prefix in ("iMessage;-;", "SMS;-;", "iMessage;+;", "SMS;+;"):
+        if s_raw.startswith(prefix):
+            s_raw = s_raw[len(prefix):].strip()
+            break
+
+    s_lower = s_raw.lower()
+    if s_lower in mapping:
+        return mapping[s_lower]
+
+    s_norm = _normalize_handle(s_raw)
+    if s_norm in mapping:
+        return mapping[s_norm]
+
+    # Also check full sender string if prefixes weren't stripped
+    s_full = str(sender).strip().lower()
+    if s_full in mapping:
+        return mapping[s_full]
+
+    return ""
+
+
 class BlueBubblesTransport:
     """
     Manages connection to local BlueBubbles macOS server, outbound iMessage REST calls,
@@ -680,7 +794,8 @@ class BlueBubblesTransport:
         webhook_port: Optional[int] = None,
         webhook_path: str = "/bluebubbles-webhook",
         allowed_handles: Optional[Union[str, Set[str]]] = None,
-        message_handler: Optional[Callable] = None
+        message_handler: Optional[Callable] = None,
+        coalesce_seconds: Optional[float] = None,
     ):
         self.password = password or resolve_bluebubbles_password()
         raw_url = resolve_bluebubbles_url(server_url=server_url, password=self.password)
@@ -693,19 +808,34 @@ class BlueBubblesTransport:
         self.webhook_path = webhook_path if webhook_path.startswith("/") else f"/{webhook_path}"
         self.message_handler = message_handler
 
+        # Coalescing / debouncing window for split messages (e.g. share sheet caption + url)
+        if coalesce_seconds is not None:
+            self.coalesce_seconds = float(coalesce_seconds)
+        else:
+            try:
+                self.coalesce_seconds = float(os.getenv("IMESSAGE_COALESCE_SECONDS", "10.0"))
+            except (ValueError, TypeError):
+                self.coalesce_seconds = 10.0
+        self._coalesce_buffers: Dict[str, Dict[str, Any]] = {}
+
         # Parse allowed handles whitelist
         if allowed_handles is None:
-            allowed_handles = os.getenv("BLUEBUBBLES_ALLOWED_HANDLES", "k.horned@gmail.com")
+            allowed_handles = os.getenv("BLUEBUBBLES_ALLOWED_HANDLES", "")
 
+        raw_set = set()
         if isinstance(allowed_handles, str):
-            self.allowed_handles = {
+            raw_set = {
                 h.strip().lower() for h in allowed_handles.split(",") if h.strip()
             }
         elif isinstance(allowed_handles, (set, list)):
-            self.allowed_handles = {str(h).strip().lower() for h in allowed_handles if str(h).strip()}
-        else:
-            self.allowed_handles = set()
+            raw_set = {str(h).strip().lower() for h in allowed_handles if str(h).strip()}
 
+        self.allowed_handles = set()
+        for h in raw_set:
+            self.allowed_handles.add(h)
+            norm = _normalize_handle(h)
+            if norm:
+                self.allowed_handles.add(norm)
 
         self._session: Optional[aiohttp.ClientSession] = None
         self._app_runner: Optional[web.AppRunner] = None
@@ -717,6 +847,18 @@ class BlueBubblesTransport:
 
     def _reload_allowed_handles_from_env(self) -> None:
         """Dynamically check .env on disk for newly added allowed handles."""
+        if os.environ.get("GOLEM_TEST_MODE") == "1" or os.environ.get("FIRSTMATE_TEST_MODE") == "1":
+            env_val = os.getenv("BLUEBUBBLES_ALLOWED_HANDLES", "")
+            if env_val:
+                for h in env_val.split(","):
+                    h_clean = h.strip().lower()
+                    if h_clean:
+                        self.allowed_handles.add(h_clean)
+                        norm = _normalize_handle(h_clean)
+                        if norm:
+                            self.allowed_handles.add(norm)
+            return
+
         env_candidates = [
             os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"),
             "/Users/hermes/projects/golem/.env",
@@ -732,8 +874,12 @@ class BlueBubblesTransport:
                             if line.startswith("BLUEBUBBLES_ALLOWED_HANDLES="):
                                 val = line.split("=", 1)[1].strip().strip("\"'")
                                 for h in val.split(","):
-                                    if h.strip():
-                                        self.allowed_handles.add(h.strip().lower())
+                                    h_clean = h.strip().lower()
+                                    if h_clean:
+                                        self.allowed_handles.add(h_clean)
+                                        norm = _normalize_handle(h_clean)
+                                        if norm:
+                                            self.allowed_handles.add(norm)
                                 return
                 except Exception:
                     pass
@@ -1314,9 +1460,10 @@ class BlueBubblesTransport:
         # 6. Whitelist verification
         if self.allowed_handles:
             sender_norm = sender.lower() if sender else ""
-            if not sender_norm or sender_norm not in self.allowed_handles:
+            sender_canonical = _normalize_handle(sender)
+            if not (sender_norm in self.allowed_handles or sender_canonical in self.allowed_handles):
                 self._reload_allowed_handles_from_env()
-                if not sender_norm or sender_norm not in self.allowed_handles:
+                if not (sender_norm in self.allowed_handles or sender_canonical in self.allowed_handles):
                     logger.warning(f"Unauthorized BlueBubbles sender '{sender}' rejected (allowed: {self.allowed_handles})")
                     return web.json_response({"status": "ignored", "reason": "unauthorized_sender"}, status=403)
 
@@ -1376,11 +1523,113 @@ class BlueBubblesTransport:
 
         # 9. Dispatch to message handler
         if self.message_handler:
-            task = asyncio.create_task(self.message_handler(chat_guid, text, sender, payload))
-            self._background_tasks.add(task)
-            task.add_done_callback(self._background_tasks.discard)
+            if self.coalesce_seconds > 0:
+                self._enqueue_coalesced(chat_guid, text, sender, payload)
+            else:
+                task = asyncio.create_task(self.message_handler(chat_guid, text, sender, payload))
+                self._background_tasks.add(task)
+                task.add_done_callback(self._background_tasks.discard)
 
         return web.json_response({"status": "ok"})
+
+    def _dispatch_buffered(self, buf: Dict[str, Any]) -> None:
+        """Immediately dispatch a buffered coalesced turn to message_handler."""
+        if not buf or getattr(self, "_closing", False) or not self.message_handler:
+            return
+
+        chat_guid = buf["chat_guid"]
+        sender = buf["sender"]
+        texts = buf["texts"]
+        payloads = buf["payloads"]
+
+        combined_text = "\n".join(texts)
+
+        # Merge attachments across all buffered payloads
+        all_attachments = []
+        seen_att_ids = set()
+        for p in payloads:
+            rec = p.get("data") if isinstance(p.get("data"), dict) else p
+            for att in (rec.get("attachments") or p.get("attachments") or []):
+                if isinstance(att, dict):
+                    att_id = att.get("guid") or att.get("name") or str(att)
+                    if att_id not in seen_att_ids:
+                        seen_att_ids.add(att_id)
+                        all_attachments.append(att)
+
+        final_payload = copy.deepcopy(payloads[-1]) if payloads else {}
+        rec = final_payload.get("data") if isinstance(final_payload.get("data"), dict) else final_payload
+        rec["text"] = combined_text
+        if all_attachments:
+            rec["attachments"] = all_attachments
+
+        logger.info(
+            f"[iMessage Coalescer] Dispatching {len(texts)} message(s) from {sender} in {chat_guid}"
+        )
+        task = asyncio.create_task(self.message_handler(chat_guid, combined_text, sender, final_payload))
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+
+    def _enqueue_coalesced(
+        self,
+        chat_guid: str,
+        text: str,
+        sender: str,
+        payload: Dict[str, Any]
+    ) -> None:
+        key = chat_guid
+        buf = self._coalesce_buffers.get(key)
+        if buf is not None:
+            # Check speaker: if different speaker in the same chat, flush the existing buffer immediately!
+            prev_sender = buf.get("sender", "")
+            if _normalize_handle(prev_sender) != _normalize_handle(sender):
+                logger.info(
+                    f"[iMessage Coalescer] Speaker change in {chat_guid} ({prev_sender} -> {sender}); flushing prior buffer immediately"
+                )
+                timer = buf.get("timer")
+                if timer and not timer.done():
+                    timer.cancel()
+                self._coalesce_buffers.pop(key, None)
+                self._dispatch_buffered(buf)
+                buf = None
+
+        if buf is not None:
+            timer = buf.get("timer")
+            if timer and not timer.done():
+                timer.cancel()
+            buf["texts"].append(text)
+            buf["payloads"].append(payload)
+            buf["sender"] = sender
+            logger.info(
+                f"[iMessage Coalescer] Appended message from {sender} in {chat_guid} (buffered={len(buf['texts'])}), resetting {self.coalesce_seconds}s timer"
+            )
+        else:
+            buf = {
+                "chat_guid": chat_guid,
+                "sender": sender,
+                "texts": [text],
+                "payloads": [payload],
+                "timer": None,
+            }
+            self._coalesce_buffers[key] = buf
+            logger.info(
+                f"[iMessage Coalescer] Buffered initial message from {sender} in {chat_guid}, starting {self.coalesce_seconds}s timer"
+            )
+
+        timer = asyncio.create_task(self._fire_coalesced(key, self.coalesce_seconds))
+        buf["timer"] = timer
+        self._background_tasks.add(timer)
+        timer.add_done_callback(self._background_tasks.discard)
+
+    async def _fire_coalesced(self, key: str, delay: float) -> None:
+        try:
+            await asyncio.sleep(delay)
+        except asyncio.CancelledError:
+            return
+
+        buf = self._coalesce_buffers.pop(key, None)
+        if not buf:
+            return
+        self._dispatch_buffered(buf)
 
     async def start(self) -> None:
         """Start the inbound aiohttp webhook server and register with BlueBubbles."""
@@ -1400,6 +1649,11 @@ class BlueBubblesTransport:
     async def stop(self) -> None:
         """Deregister webhook, shut down webhook server, and close HTTP session."""
         self._closing = True
+        for buf in list(self._coalesce_buffers.values()):
+            if buf.get("timer"):
+                buf["timer"].cancel()
+        self._coalesce_buffers.clear()
+
         for task in list(self._background_tasks):
             if not task.done():
                 task.cancel()

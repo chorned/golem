@@ -37,6 +37,8 @@ AlertType = Union[
         "nose_alert",
         "mouth_briefing",
         "email_received",
+        "linear_assigned_tickets",
+        "assigned_tickets",
     ],
     str,
 ]
@@ -105,6 +107,11 @@ class ShoulderTapAlert:
     def is_email_received(self) -> bool:
         """True if this alert signals an email received event."""
         return self.alert_type == "email_received"
+
+    @property
+    def is_linear_assigned_tickets(self) -> bool:
+        """True if this alert signals assigned Linear tickets awaiting attention."""
+        return self.alert_type in ("linear_assigned_tickets", "assigned_tickets")
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert alert to serializable dictionary."""
@@ -341,6 +348,22 @@ def reset_default_event_bus() -> None:
     _GLOBAL_BUS = None
 
 
+# Generic lifecycle/process documentation that should never act as automated blocker reflexes
+EXCLUDED_FLOW_FILES = {
+    "primary_user_journey.md",
+    "primary_user_journey",
+    "user_journey.md",
+    "user_journey",
+}
+
+# Common generic stop words that should not trigger runbook reflexes on terminal paths or system prompts
+FLOW_STOP_WORDS = {
+    "user", "users", "primary", "journey", "flow", "flows", "default",
+    "hermes", "runner", "pane", "agent", "task", "session", "alert",
+    "golem", "first", "mate", "firstmate", "step", "steps", "test", "tests"
+}
+
+
 def match_flow_runbook(alert: ShoulderTapAlert) -> Optional[Dict[str, Any]]:
     """
     Scan ~/.golem/wiki/runbooks/flows/ for a matching trigger pattern when
@@ -370,6 +393,10 @@ def match_flow_runbook(alert: ShoulderTapAlert) -> Optional[Dict[str, Any]]:
         for flow_path in flows:
             if not flow_path.endswith(".md"):
                 continue
+            base_filename = os.path.basename(flow_path)
+            if base_filename in EXCLUDED_FLOW_FILES or base_filename.replace(".md", "") in EXCLUDED_FLOW_FILES:
+                continue
+
             content = wiki.read(flow_path)
             if not content:
                 continue
@@ -389,14 +416,15 @@ def match_flow_runbook(alert: ShoulderTapAlert) -> Optional[Dict[str, Any]]:
             for trig in trigger_lines:
                 # Split comma/semicolon/arrow separated keywords
                 keywords = [k.strip() for k in re.split(r"[,;|\->]+", trig) if k.strip()]
-                if any(kw in alert_text for kw in keywords if len(kw) > 2):
+                meaningful_keywords = [kw for kw in keywords if len(kw) > 2 and kw not in FLOW_STOP_WORDS]
+                if any(kw in alert_text for kw in meaningful_keywords):
                     matched = True
                     break
 
             if not matched:
-                # Match flow name tokens if specific (e.g. oauth, audiobookshelf)
-                name_tokens = [tok for tok in flow_name.split("_") if len(tok) > 3]
-                if any(tok in alert_text for tok in name_tokens):
+                # Match flow name tokens if specific (e.g. oauth, audiobookshelf) and not stop words
+                name_tokens = [tok for tok in flow_name.split("_") if len(tok) > 3 and tok not in FLOW_STOP_WORDS]
+                if name_tokens and any(tok in alert_text for tok in name_tokens):
                     matched = True
 
             if matched:
@@ -408,3 +436,4 @@ def match_flow_runbook(alert: ShoulderTapAlert) -> Optional[Dict[str, Any]]:
     except Exception as e:
         logger.debug(f"Error matching flow runbook: {e}")
     return None
+

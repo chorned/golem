@@ -96,6 +96,7 @@ class SessionHandle:
         bus: Optional[Any] = None,
         driver: Optional[Any] = None,
         runner_pane_id: Optional[str] = None,
+        webui_server: Optional[Any] = None,
     ) -> None:
         self.session_id: str = session_id
         self.channel: str = channel
@@ -112,6 +113,7 @@ class SessionHandle:
         self.runner_pane_id: Optional[str] = runner_pane_id or runner_pane
         self.router: Optional[Any] = router
         self.bus: Optional[Any] = bus
+        self.webui_server: Optional[Any] = webui_server
 
         # Active execution & buffer observer
         self.runner_executor: Optional[Any] = runner_executor
@@ -128,6 +130,8 @@ class SessionHandle:
         self.created_at: float = time.time()
         self.last_active_ts: float = time.time()
         self.lock: asyncio.Lock = asyncio.Lock()
+        self._hand_stream_lock: asyncio.Lock = asyncio.Lock()
+        self._active_backstage_hand: Optional[Dict[str, Any]] = None
         self._harness_torn_down: bool = False
 
         # Conversational metadata
@@ -159,10 +163,13 @@ class SessionHandle:
 
     @property
     def is_executing(self) -> bool:
-        """True if an execution is active and running in Pane 2."""
+        """True if an execution is active and running in Pane 2 or active backstage hand."""
         return (
-            self.active_execution is not None
-            and getattr(self.active_execution, "status", None) == "running"
+            (
+                self.active_execution is not None
+                and getattr(self.active_execution, "status", None) == "running"
+            )
+            or getattr(self, "_active_backstage_hand", None) is not None
         )
 
     @property
@@ -339,6 +346,66 @@ class SessionHandle:
             status = "running"
         elif blocker:
             status = "running"
+
+        # Check active backstage hand metadata or webui active hands
+        backstage_hand = getattr(self, "_active_backstage_hand", None)
+        webui_server = getattr(self, "webui_server", None)
+        if webui_server is None and hasattr(self, "harness"):
+            webui_server = getattr(self.harness, "webui_server", None)
+        if webui_server is None and hasattr(self, "router"):
+            webui_server = getattr(self.router, "webui_server", None)
+        if webui_server is None:
+            try:
+                from golem.webui.server import get_active_webui_server
+                webui_server = get_active_webui_server()
+            except Exception:
+                pass
+
+        hand_info = None
+        if isinstance(backstage_hand, dict):
+            hand_info = backstage_hand
+        elif webui_server is not None and getattr(webui_server, "_active_hands", None):
+            candidate_panes = [getattr(self, "runner_pane_id", None), getattr(self, "runner_pane", None), pane]
+            for cp in candidate_panes:
+                if cp and cp in webui_server._active_hands:
+                    hand_info = webui_server._active_hands[cp]
+                    break
+            if not hand_info and self.lock.locked() and hasattr(webui_server, "get_executing_hands"):
+                exec_hands = webui_server.get_executing_hands()
+                if exec_hands:
+                    hand_info = list(exec_hands.values())[0]
+
+        if hand_info:
+            status = "running"
+            if not cmd:
+                cmd = hand_info.get("command")
+            if not pid:
+                pid = hand_info.get("pid")
+
+            hand_pane = hand_info.get("pane_id") or pane
+            # Check if Herdr PTY buffer_tail is empty or just an idle shell prompt
+            is_idle_prompt = False
+            if not buffer_tail or "no terminal output recorded" in buffer_tail.lower():
+                is_idle_prompt = True
+            else:
+                tail_lines = [l for l in buffer_tail.splitlines() if l.strip()]
+                if len(tail_lines) <= 2 and any(re.search(r"(\$|#|%|❯)\s*$", l) for l in tail_lines):
+                    is_idle_prompt = True
+
+            if is_idle_prompt and webui_server is not None and getattr(webui_server, "_active_hands", None):
+                target_h = webui_server._active_hands.get(hand_pane)
+                if not target_h and hasattr(webui_server, "_resolve_hand_key"):
+                    k = webui_server._resolve_hand_key(hand_pane)
+                    target_h = webui_server._active_hands.get(k)
+                if not target_h and isinstance(backstage_hand, dict) and backstage_hand.get("pane_id"):
+                    target_h = webui_server._active_hands.get(backstage_hand["pane_id"])
+
+                if target_h and target_h.get("buffer_tail"):
+                    raw_h_tail = target_h["buffer_tail"]
+                    clean_h_tail = strip_ansi(raw_h_tail).strip()
+                    h_lines = [l for l in clean_h_tail.splitlines() if l.strip()]
+                    if h_lines:
+                        buffer_tail = "\n".join(h_lines[-15:])
 
         if status == "idle" and self.active_execution is None and self.runner_pane:
             try:

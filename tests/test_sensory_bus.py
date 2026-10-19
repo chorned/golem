@@ -138,7 +138,7 @@ class TestShoulderTapEventBusPublishSubscribe(unittest.IsolatedAsyncioTestCase):
         alert = ShoulderTapAlert(alert_type="blocker", source="eyes", summary="OAuth URL detected")
         self.bus.publish(alert)
 
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.005)
         self.assertEqual(len(received), 1)
         self.assertEqual(received[0].summary, "OAuth URL detected")
 
@@ -159,7 +159,7 @@ class TestShoulderTapEventBusPublishSubscribe(unittest.IsolatedAsyncioTestCase):
         alert = ShoulderTapAlert(alert_type="completion", source="runner", summary="Done")
         self.bus.publish(alert)
 
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.005)
         self.assertEqual(len(received_1), 1)
         self.assertEqual(len(received_2), 1)
         self.assertEqual(received_1[0].summary, "Done")
@@ -176,7 +176,7 @@ class TestShoulderTapEventBusPublishSubscribe(unittest.IsolatedAsyncioTestCase):
         alert = ShoulderTapAlert(alert_type="blocker", source="eyes")
         self.bus.publish(alert)
 
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.005)
         self.assertEqual(len(received), 1)
 
     async def test_unsubscribe_removes_subscriber(self) -> None:
@@ -188,13 +188,13 @@ class TestShoulderTapEventBusPublishSubscribe(unittest.IsolatedAsyncioTestCase):
 
         unsub = self.bus.subscribe(handler)
         self.bus.publish(ShoulderTapAlert(alert_type="blocker", source="eyes", summary="Alert 1"))
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.005)
         self.assertEqual(len(received), 1)
 
         # Unsubscribe callable
         unsub()
         self.bus.publish(ShoulderTapAlert(alert_type="blocker", source="eyes", summary="Alert 2"))
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.005)
         self.assertEqual(len(received), 1)
 
     async def test_unsubscribe_method_removes_subscriber(self) -> None:
@@ -206,12 +206,12 @@ class TestShoulderTapEventBusPublishSubscribe(unittest.IsolatedAsyncioTestCase):
 
         self.bus.subscribe(handler)
         self.bus.publish(ShoulderTapAlert(alert_type="blocker", source="eyes", summary="Alert 1"))
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.005)
         self.assertEqual(len(received), 1)
 
         self.bus.unsubscribe(handler)
         self.bus.publish(ShoulderTapAlert(alert_type="blocker", source="eyes", summary="Alert 2"))
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.005)
         self.assertEqual(len(received), 1)
 
     async def test_publish_without_subscribers_is_noop(self) -> None:
@@ -242,7 +242,7 @@ class TestShoulderTapEventBusFiltering(unittest.IsolatedAsyncioTestCase):
         self.bus.publish(ShoulderTapAlert(alert_type="health_anomaly", source="nose", summary="Disk full"))
         self.bus.publish(ShoulderTapAlert(alert_type="blocker", source="eyes", summary="Need OAuth"))
 
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.005)
         self.assertEqual(len(blockers_received), 1)
         self.assertEqual(blockers_received[0].summary, "Need OAuth")
 
@@ -259,7 +259,7 @@ class TestShoulderTapEventBusFiltering(unittest.IsolatedAsyncioTestCase):
         self.bus.publish(ShoulderTapAlert(alert_type="health_anomaly", source="nose", summary="N1"))
         self.bus.publish(ShoulderTapAlert(alert_type="completion", source="runner", summary="C1"))
 
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.005)
         self.assertEqual(len(received), 2)
         summaries = [a.summary for a in received]
         self.assertIn("B1", summaries)
@@ -279,7 +279,7 @@ class TestShoulderTapEventBusFiltering(unittest.IsolatedAsyncioTestCase):
         self.bus.publish(ShoulderTapAlert(alert_type="completion", source="runner"))
         self.bus.publish(ShoulderTapAlert(alert_type="health_anomaly", source="nose"))
 
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.005)
         self.assertEqual(len(received), 3)
 
 
@@ -312,7 +312,7 @@ class TestShoulderTapEventBusSessionQueues(unittest.IsolatedAsyncioTestCase):
         )
         self.bus.publish(alert)
 
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.005)
         self.assertFalse(queue.empty())
         item = queue.get_nowait()
         self.assertEqual(item.summary, "OAuth link found")
@@ -323,7 +323,7 @@ class TestShoulderTapEventBusSessionQueues(unittest.IsolatedAsyncioTestCase):
         queue_b = self.bus.get_session_queue("SESSION_B")
 
         self.bus.publish(ShoulderTapAlert(alert_type="blocker", source="eyes", session_id="SESSION_A", summary="For A"))
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.005)
 
         self.assertFalse(queue_a.empty())
         self.assertTrue(queue_b.empty())
@@ -333,7 +333,7 @@ class TestShoulderTapEventBusSessionQueues(unittest.IsolatedAsyncioTestCase):
         queue = self.bus.get_session_queue("SESSION_A")
         self.bus.publish(ShoulderTapAlert(alert_type="health_anomaly", source="nose", session_id=None, summary="Fleet alert"))
 
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.005)
         self.assertTrue(queue.empty())
 
     async def test_remove_session_queue(self) -> None:
@@ -429,7 +429,7 @@ class TestShoulderTapEventBusResilience(unittest.IsolatedAsyncioTestCase):
         alert = ShoulderTapAlert(alert_type="blocker", source="eyes", summary="Critical alert")
         self.bus.publish(alert)
 
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.005)
         self.assertEqual(len(received), 1)
         self.assertEqual(received[0].summary, "Critical alert")
 
@@ -443,7 +443,7 @@ class TestShoulderTapEventBusResilience(unittest.IsolatedAsyncioTestCase):
         self.bus.subscribe(failing_subscriber)
 
         self.bus.publish(ShoulderTapAlert(alert_type="blocker", source="eyes", session_id="SESSION_X", summary="Queued alert"))
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.005)
 
         self.assertFalse(queue.empty())
         item = queue.get_nowait()

@@ -352,6 +352,7 @@ class AntigravityDriver(BaseAgentDriver):
         cmd = self._build_cmd()
 
         proc_env = dict(os.environ)
+        proc_env.pop("LINEAR_API_KEY", None)
         if self.env:
             proc_env.update(self.env)
 

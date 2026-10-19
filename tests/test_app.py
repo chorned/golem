@@ -957,10 +957,10 @@ class TestThinIngressGateway(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(ack_called, "Wildcard slash command listener MUST call ack() immediately")
                 mock_prompt.assert_awaited_once()
 
-    async def test_handle_update_request_aborts_when_busy(self):
-        """Verify handle_update_request aborts update if active running tasks exist."""
+    async def test_handle_update_request_gracefully_closes_when_busy(self):
+        """Verify handle_update_request gracefully closes active running sessions and proceeds."""
         client = AsyncMock()
-        client.chat_postMessage = AsyncMock(return_value={"ok": True})
+        client.chat_postMessage = AsyncMock(return_value={"ok": True, "ts": "100.2"})
 
         # Add a running session
         running_session = MagicMock()
@@ -968,11 +968,21 @@ class TestThinIngressGateway(unittest.IsolatedAsyncioTestCase):
         running_session.is_busy = True
         app.sessions["C_BUSY:100.1"] = running_session
 
-        await app.handle_update_request("C_BUSY", thread_ts="100.1", client=client)
+        with patch("app.webui_server", None), \
+             patch("app.ingress_gateway", None), \
+             patch("asyncio.create_subprocess_exec") as mock_exec, \
+             patch("herdr_fleet.HerdrFleet.refresh_fleet_herdr", AsyncMock(return_value=[{"node": "hermes", "status": "ACTIVE"}])), \
+             patch("herdr_fleet.HerdrFleet.update_fleet_agy", AsyncMock(return_value=[{"node": "hermes", "status": "UP_TO_DATE"}])):
+            mock_proc = MagicMock()
+            mock_proc.returncode = 0
+            mock_proc.communicate = AsyncMock(return_value=(b"OK", b""))
+            mock_exec.return_value = mock_proc
+            await app.handle_update_request("C_BUSY", thread_ts="100.1", client=client)
 
-        client.chat_postMessage.assert_awaited_once()
-        posted_text = client.chat_postMessage.call_args.kwargs.get("text", "")
-        self.assertIn("Update Aborted", posted_text)
+        self.assertFalse(running_session.is_busy)
+        self.assertEqual(running_session.status, "idle")
+        first_text = client.chat_postMessage.call_args_list[0].kwargs.get("text", "")
+        self.assertIn("Gracefully closed 1 open task(s)", first_text)
 
     async def test_ingress_gateway_intercepts_update(self):
         """Verify IngressGateway intercepts /update and !update cleanly without invoking Mouth LLM."""

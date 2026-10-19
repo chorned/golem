@@ -847,7 +847,8 @@ async def init_dual_pane_workspace(
 async def monitor_agent_lifecycle(
     session: GatewaySession,
     client: Any,
-    trigger_ts: Optional[str] = None
+    trigger_ts: Optional[str] = None,
+    poll_interval: Optional[float] = None,
 ):
     """
     Monitor Herdr agent state transitions with strict State Invariant & Splash Guard:
@@ -863,9 +864,10 @@ async def monitor_agent_lifecycle(
     logger.info(f"Lifecycle monitor active for agent {agent_name} (initial status: {session.status})...")
     consecutive_idle_ticks = 0
     boot_start_time = time.time()
+    effective_interval = poll_interval if poll_interval is not None else float(os.environ.get("GOLEM_LIFECYCLE_POLL_INTERVAL", "1.5"))
 
     while True:
-        await asyncio.sleep(1.5)
+        await asyncio.sleep(effective_interval)
 
         if session.status == "failed":
             if session.telemetry_observer:
@@ -1228,8 +1230,8 @@ async def handle_update_request(
 
         say = _client_say
 
-    # 1. PRE-FLIGHT TASK DRAIN GATE
-    active_count = 0
+    # 1. PRE-FLIGHT TASK DRAIN & GRACEFUL CLOSE
+    closed_count = 0
     target_webui = globals().get("webui_server")
     if target_webui is None and "ingress_gateway" in globals() and ingress_gateway:
         target_webui = getattr(ingress_gateway, "webui_server", None)
@@ -1249,7 +1251,7 @@ async def handle_update_request(
                 try:
                     res = target_webui.get_executing_hands()
                     if isinstance(res, (dict, list, set)):
-                        active_count += len(res)
+                        closed_count += len(res)
                         executing_checked = True
                 except Exception as ge_err:
                     logger.warning(f"Error getting executing hands: {ge_err}")
@@ -1257,29 +1259,53 @@ async def handle_update_request(
         if not executing_checked and hasattr(target_webui, "_active_hands"):
             hands = target_webui._active_hands
             if isinstance(hands, dict):
-                active_count += len([
+                closed_count += len([
                     h for h in hands.values()
                     if not (isinstance(h, dict) and (str(h.get("status", "")).upper() in terminal_statuses or h.get("exit_code") is not None))
                 ])
             elif isinstance(hands, (list, set)):
-                active_count += len([
+                closed_count += len([
                     h for h in hands
                     if not (isinstance(h, dict) and (str(h.get("status", "")).upper() in terminal_statuses or h.get("exit_code") is not None))
                 ])
             elif hands and not ("Mock" in type(hands).__name__):
-                active_count += 1
-    elif "sessions" in globals() and isinstance(sessions, dict):
-        active_count += len([s for s in sessions.values() if getattr(s, "status", "") == "running" or getattr(s, "is_busy", False)])
+                closed_count += 1
 
-    if active_count > 0:
-        await say(
-            f"⚠️ *Update Aborted:* Fleet is actively executing {active_count} task(s). "
-            f"Wait for backstage tasks to settle before restarting.",
+        try:
+            is_mock = "Mock" in type(target_webui).__name__
+            if hasattr(target_webui, "close_all_open_hands") and (not is_mock or "close_all_open_hands" in target_webui.__dict__):
+                target_webui.close_all_open_hands(reason="Gracefully closed for !update")
+            raw_hands = getattr(target_webui, "_active_hands", None)
+            if isinstance(raw_hands, (dict, list, set)):
+                raw_hands.clear()
+        except Exception as ce:
+            logger.warning(f"Error closing open hands before update: {ce}")
+
+    if "sessions" in globals() and isinstance(sessions, dict):
+        for s_obj in list(sessions.values()):
+            if getattr(s_obj, "status", "") == "running" or getattr(s_obj, "is_busy", False):
+                closed_count += 1
+                try:
+                    cancel_fn = getattr(s_obj, "cancel_execution", None)
+                    if callable(cancel_fn):
+                        res_c = cancel_fn()
+                        if inspect.isawaitable(res_c):
+                            await res_c
+                except Exception:
+                    pass
+                try:
+                    s_obj.is_busy = False
+                    s_obj.status = "idle"
+                except Exception:
+                    pass
+
+    if closed_count > 0:
+        progress_msg = await say(
+            f"♻️ *Gracefully closed {closed_count} open task(s).* Initiating full-stack update and fleet refresh...",
             thread_ts=target_ts,
         )
-        return
-
-    progress_msg = await say("♻️ *Initiating full-stack update and fleet refresh...*", thread_ts=target_ts)
+    else:
+        progress_msg = await say("♻️ *Initiating full-stack update and fleet refresh...*", thread_ts=target_ts)
     progress_ts = progress_msg["ts"] if isinstance(progress_msg, dict) and "ts" in progress_msg else target_ts
 
     # 2. RUN TEST GATE & LOCAL HERDR REFRESH
@@ -2096,6 +2122,7 @@ async def start_bluebubbles_transport():
     bb_port = int(os.getenv("BLUEBUBBLES_WEBHOOK_PORT", "8646"))
     bb_host = os.getenv("BLUEBUBBLES_WEBHOOK_HOST", "0.0.0.0")
     bb_allowed = os.getenv("BLUEBUBBLES_ALLOWED_HANDLES", "k.horned@gmail.com")
+    bb_coalesce = float(os.getenv("IMESSAGE_COALESCE_SECONDS", "10.0"))
 
     bb_transport = BlueBubblesTransport(
         server_url=bb_url,
@@ -2103,7 +2130,8 @@ async def start_bluebubbles_transport():
         webhook_host=bb_host,
         webhook_port=bb_port,
         allowed_handles=bb_allowed,
-        message_handler=handle_bluebubbles_inbound_message
+        message_handler=handle_bluebubbles_inbound_message,
+        coalesce_seconds=bb_coalesce
     )
     try:
         await bb_transport.start()

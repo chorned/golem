@@ -291,8 +291,11 @@ class TestIngressEmailHandler(unittest.IsolatedAsyncioTestCase):
         # Count must remain 1
         self.assertEqual(len(self.client.posted_messages), 1)
 
-    async def test_error_isolation(self):
+    @patch("golem.notify.send_slack_message", new_callable=AsyncMock)
+    async def test_error_isolation(self, mock_send_slack):
         """Verify exceptions during Slack dispatch or URL inspection do not crash the handler."""
+        mock_send_slack.return_value = {"ok": True, "ts": "mock.fallback.ts", "channel": "C_TEST"}
+
         alert = ShoulderTapAlert(
             alert_type="email_received",
             source="nose",
@@ -313,6 +316,12 @@ class TestIngressEmailHandler(unittest.IsolatedAsyncioTestCase):
             await self.gateway.process_sensory_alert(alert, client=broken_client)
         except Exception as e:
             self.fail(f"process_sensory_alert raised exception: {e}")
+
+        # Assert fallback was called safely without live dispatch
+        mock_send_slack.assert_awaited_once()
+        call_kwargs = mock_send_slack.await_args.kwargs
+        self.assertIn("Shared via Email", call_kwargs.get("text", ""))
+        self.assertIn("Error Test", call_kwargs.get("text", ""))
 
 
 if __name__ == "__main__":

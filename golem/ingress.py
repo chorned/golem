@@ -26,6 +26,20 @@ from typing import Dict, Any, Optional, Deque, List, Union, Tuple
 
 import aiohttp
 
+try:
+    from bluebubbles_transport import resolve_imessage_speaker_name, _normalize_handle
+except ImportError:
+    try:
+        _root_dir = str(Path(__file__).resolve().parent.parent)
+        if _root_dir not in sys.path:
+            sys.path.insert(0, _root_dir)
+        from bluebubbles_transport import resolve_imessage_speaker_name, _normalize_handle
+    except Exception:
+        def resolve_imessage_speaker_name(sender: Optional[str], speaker_map: Optional[Any] = None) -> str:
+            return ""
+        def _normalize_handle(handle: Optional[str]) -> str:
+            return str(handle or "").strip().lower()
+
 from golem.router import SessionRouter
 from golem.session import (
     SessionHandle,
@@ -1668,11 +1682,20 @@ class IngressGateway:
     async def _handle_health_anomaly_alert(self, alert: Any, client: Optional[Any] = None) -> None:
         """Receive health anomaly alerts from The Nose Sentinel and deliver advisory to Carl."""
         summary = getattr(alert, "summary", "") or "Fleet Sentinel detected a health anomaly."
-        channel = getattr(alert, "channel", None) or os.environ.get("FIRSTMATE_DEFAULT_CHANNEL", "")
-        thread_ts = getattr(alert, "thread_ts", None)
+        from golem.notify import DEFAULT_SLACK_CHANNEL, send_slack_message
+        channel = (
+            getattr(alert, "channel", None)
+            or (getattr(alert, "data", {}) or {}).get("channel")
+            or os.environ.get("FIRSTMATE_DEFAULT_CHANNEL")
+            or os.environ.get("GOLEM_DEFAULT_CHANNEL")
+            or DEFAULT_SLACK_CHANNEL
+        )
+        thread_ts = getattr(alert, "thread_ts", None) or (getattr(alert, "data", {}) or {}).get("thread_ts")
         advisory_msg = f"👃 *Sentinel Advisory (Fleet Health):*\n{summary}"
         if client and channel:
             await self._post_response(client, channel, thread_ts, advisory_msg, is_imessage=False)
+        elif channel:
+            await send_slack_message(text=advisory_msg, channel=channel, thread_ts=thread_ts)
 
     async def _handle_email_received_alert(self, alert: Any, client: Optional[Any] = None) -> None:
         """
@@ -2239,7 +2262,19 @@ class IngressGateway:
                     or bool(msg.get("bot_id"))
                     or bool(msg.get("bot_profile"))
                 )
-                sender = "Hermes" if (is_imessage and is_bot) else ("AGY" if is_bot else "User")
+                if is_imessage:
+                    if is_bot:
+                        sender = "Hermes"
+                    else:
+                        mapped = resolve_imessage_speaker_name(user_id) if user_id else ""
+                        if mapped:
+                            sender = mapped
+                        elif ";+;" in channel:
+                            sender = user_id or "User"
+                        else:
+                            sender = "User"
+                else:
+                    sender = "AGY" if is_bot else "User"
                 clean_msg = strip_bot_mentions(text, bot_id)
                 if len(clean_msg) > max_char_len:
                     clean_msg = clean_msg[:max_char_len] + "..."
@@ -2893,6 +2928,18 @@ class IngressGateway:
 
             # Prepend thread context and attachment tags to prompt sent to LLM without mutating clean_text
             prompt_to_send = clean_text
+            if is_imessage:
+                im_user = str(event.get("user") or event.get("sender") or "").strip()
+                speaker_name = resolve_imessage_speaker_name(im_user) if im_user else ""
+                is_group = ";+;" in channel
+                if is_group:
+                    effective_speaker = speaker_name or im_user or "User"
+                    speaker_tag = f"[iMessage Speaker: {effective_speaker} (in Group Chat)]"
+                    prompt_to_send = f"{speaker_tag}\n\n{prompt_to_send}" if prompt_to_send else speaker_tag
+                elif speaker_name:
+                    speaker_tag = f"[iMessage Speaker: {speaker_name}]"
+                    prompt_to_send = f"{speaker_tag}\n\n{prompt_to_send}" if prompt_to_send else speaker_tag
+
             if thread_context:
                 prompt_to_send = f"{thread_context}\n\n{prompt_to_send}"
             if attachment_tags:
@@ -3956,6 +4003,56 @@ class IngressGateway:
                 node=effective_node,
             )
 
+        # Guard against re-entrant dispatch_task while session.lock is held by an active backstage hand
+        if (
+            session is not None
+            and getattr(session, "lock", None) is not None
+            and hasattr(session.lock, "locked")
+            and session.lock.locked() is True
+            and isinstance(getattr(session, "_active_backstage_hand", None), dict)
+        ):
+            active_hand = getattr(session, "_active_backstage_hand", {})
+            h_pane = active_hand.get("pane_id") or "runner"
+            elapsed_sec = int(time.time() - active_hand.get("started_at", time.time()))
+
+            webui = getattr(self, "webui_server", None)
+            if webui is None:
+                try:
+                    from golem.webui.server import get_active_webui_server
+                    webui = get_active_webui_server()
+                except Exception:
+                    webui = None
+
+            live_tail = ""
+            if webui is not None and getattr(webui, "_active_hands", None):
+                target_hand = webui._active_hands.get(h_pane)
+                if not target_hand and hasattr(webui, "_resolve_hand_key"):
+                    k = webui._resolve_hand_key(h_pane)
+                    target_hand = webui._active_hands.get(k)
+                if target_hand and target_hand.get("buffer_tail"):
+                    from golem.normalizer import strip_ansi
+                    clean_h = strip_ansi(target_hand["buffer_tail"]).strip()
+                    h_lines = [l for l in clean_h.splitlines() if l.strip()]
+                    if h_lines:
+                        live_tail = "\n".join(h_lines[-15:])
+
+            if not live_tail:
+                live_tail = "Worker active — streaming output..."
+
+            active_cmd_snippet = str(active_hand.get("command", "") or "")[:300]
+            accumulator.turn_status = "SUCCESS"
+            accumulator.final_response = (
+                f"[BACKSTAGE TASK ALREADY RUNNING on {h_pane} (elapsed {elapsed_sec}s)]\n"
+                f"Active Task: {active_cmd_snippet}\n"
+                f"Recent Buffer Tail:\n{live_tail}"
+            )
+            accumulator.output_tail = live_tail
+            logger.info(
+                f"_execute_backstage_task: Session '{session.session_id}' already has active backstage task on {h_pane}. "
+                f"Returning active task status without re-entrant dispatch."
+            )
+            return accumulator
+
         stream_gen = self._stream_backstage_events(session, task_desc)
         event_queue: asyncio.Queue[Any] = asyncio.Queue()
         sentinel = object()
@@ -3979,6 +4076,7 @@ class IngressGateway:
                 clean_ts = str(thread_ts).replace(".", "")
                 pane = f"agy-{clean_ts[-6:]}"
         eyes_observer: Optional[Any] = None
+        node_label = effective_node
         pid = getattr(getattr(session, "active_execution", None), "pid", None) or os.getpid()
         hand_registered = False
 
@@ -4041,35 +4139,92 @@ class IngressGateway:
             finally:
                 await event_queue.put(sentinel)
 
+        driver_pid = getattr(getattr(getattr(session, "adapter", None), "process", None), "pid", None)
+        active_hand_metadata = {
+            "pane_id": pane,
+            "command": effective_task,
+            "pid": driver_pid or pid,
+            "worker": effective_worker,
+            "node": effective_node,
+            "started_at": time.time(),
+        }
+        if session is not None:
+            session._active_backstage_hand = active_hand_metadata
+
         worker_task = asyncio.create_task(_worker_consumer())
         start_time = time.time()
         acknowledged_yield = False
 
         # Heartbeat monitoring for quiet periods
         last_activity_time = [time.time()]
+        stall_alerted = [False]
         heartbeat_task: Optional[asyncio.Task] = None
 
-        if webui is not None and not _is_mock_object(webui):
+        if (webui is not None and not _is_mock_object(webui)) or getattr(self, "bus", None) is not None:
             async def _heartbeat_worker():
                 try:
+                    hb_interval = float(os.environ.get("GOLEM_HEARTBEAT_INTERVAL", "5.0"))
                     while True:
-                        await asyncio.sleep(5.0)
+                        await asyncio.sleep(hb_interval)
                         now = time.time()
-                        if (now - last_activity_time[0]) >= 5.0:
+                        idle_seconds = now - last_activity_time[0]
+                        if idle_seconds >= hb_interval:
                             elapsed_from_start = int(now - start_time)
                             hb_text = f"\x1b[90m⏳ [HEARTBEAT +{elapsed_from_start}s] Worker active — waiting on model/tool stream...\x1b[0m\n"
-                            try:
-                                res = webui.update_hand_buffer(pane_id=pane, delta=hb_text, node=effective_node)
-                                if inspect.isawaitable(res):
-                                    await res
-                                res = webui.broadcast("hand_buffer", {
-                                    "pane_id": pane,
-                                    "delta": hb_text,
-                                })
-                                if inspect.isawaitable(res):
-                                    await res
-                            except Exception:
-                                pass
+                            if webui is not None and not _is_mock_object(webui):
+                                try:
+                                    res = webui.update_hand_buffer(pane_id=pane, delta=hb_text, node=effective_node)
+                                    if inspect.isawaitable(res):
+                                        await res
+                                    res = webui.broadcast("hand_buffer", {
+                                        "pane_id": pane,
+                                        "delta": hb_text,
+                                    })
+                                    if inspect.isawaitable(res):
+                                        await res
+                                except Exception:
+                                    pass
+
+                            stall_threshold = float(os.environ.get("GOLEM_HAND_STALL_SECONDS", "180"))
+                            if idle_seconds >= stall_threshold and not stall_alerted[0]:
+                                stall_alerted[0] = True
+                                nose = getattr(self, "get_nose_sentinel", lambda: None)() if callable(getattr(self, "get_nose_sentinel", None)) else getattr(self, "nose_sentinel", None)
+                                if nose is not None and hasattr(nose, "_alerted_stalled_hands"):
+                                    nose._alerted_stalled_hands.add(pane)
+
+                                stall_summary = (
+                                    f"Backstage hand {pane} ({effective_worker} on {effective_node}) "
+                                    f"has been silent with no stream activity for {int(idle_seconds)}s (total: {elapsed_from_start}s)."
+                                )
+                                if webui is not None and hasattr(webui, "append_organ_log"):
+                                    try:
+                                        webui.append_organ_log("nose", f"[ANOMALY] {stall_summary}")
+                                    except Exception:
+                                        pass
+
+                                if getattr(self, "bus", None) is not None:
+                                    try:
+                                        alert = ShoulderTapAlert(
+                                            alert_type="health_anomaly",
+                                            source="nose",
+                                            channel=channel,
+                                            thread_ts=thread_ts,
+                                            timestamp=now,
+                                            summary=stall_summary,
+                                            data={
+                                                "category": "hand_stalled",
+                                                "pane_id": pane,
+                                                "worker": effective_worker,
+                                                "node": effective_node,
+                                                "idle_seconds": int(idle_seconds),
+                                                "elapsed_seconds": elapsed_from_start,
+                                                "channel": channel,
+                                                "thread_ts": thread_ts,
+                                            },
+                                        )
+                                        self.bus.publish(alert)
+                                    except Exception as exc:
+                                        logger.warning(f"Error publishing hand_stalled alert: {exc}")
                 except asyncio.CancelledError:
                     pass
 
@@ -4176,6 +4331,7 @@ class IngressGateway:
 
                 accumulator.record_event(event_item)
                 last_activity_time[0] = time.time()
+                stall_alerted[0] = False
 
                 # Format rich execution events (thoughts, tools, outputs, deltas) for WebUI terminal
                 delta_text = _format_hand_event_for_webui(event_item)
@@ -4218,6 +4374,8 @@ class IngressGateway:
                     break
 
         finally:
+            if session is not None and getattr(session, "_active_backstage_hand", None) is active_hand_metadata:
+                session._active_backstage_hand = None
             if heartbeat_task is not None and not heartbeat_task.done():
                 heartbeat_task.cancel()
                 try:

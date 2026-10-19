@@ -34,25 +34,36 @@ def clean_exhausted_models():
     clear_exhausted_models()
 
 
-@pytest.fixture(autouse=True)
-def _hermetic_wiki_dir(tmp_path, monkeypatch):
+@pytest.fixture(scope="session")
+def _hermetic_wiki_template(tmp_path_factory):
     """
-    Hermetic wiki fixture redirecting all GolemWiki writes and peripheral vision crawls
-    to an isolated temporary git repository so tests never touch ~/.golem/wiki.
+    Session-scoped template git repository for GolemWiki.
+    Initializes git repository, standard directories, and default templates ONCE per session
+    so individual tests can copy the pre-initialized git repository in <2ms with ZERO subprocess calls.
     """
     import shutil
     from pathlib import Path
-    hermetic_dir = tmp_path / "hermetic_wiki"
-    hermetic_dir.mkdir(parents=True, exist_ok=True)
-    real_wiki = Path(os.path.expanduser("~/.golem/wiki"))
-    if real_wiki.exists():
-        for folder in ("context", "runbooks"):
-            src = real_wiki / folder
-            dst = hermetic_dir / folder
-            if src.exists():
-                shutil.copytree(src, dst, symlinks=True, ignore=shutil.ignore_patterns(".git*", "*.tmp", ".wiki.lock"))
     from golem.wiki import GolemWiki
-    wiki = GolemWiki(wiki_dir=hermetic_dir)
+
+    template_dir = tmp_path_factory.mktemp("hermetic_wiki_template")
+
+    # Initialize git repo and base files ONCE for the session
+    GolemWiki(wiki_dir=template_dir)
+    GolemWiki._session_template_wiki_dir = str(template_dir)
+    return template_dir
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_wiki_dir(tmp_path, monkeypatch, _hermetic_wiki_template):
+    """
+    Hermetic wiki fixture redirecting all GolemWiki writes and peripheral vision crawls
+    to an isolated temporary git repository so tests never touch ~/.golem/wiki.
+    Fast copy of the session template avoids running git subprocesses on every test.
+    """
+    import shutil
+    hermetic_dir = tmp_path / "hermetic_wiki"
+    shutil.copytree(_hermetic_wiki_template, hermetic_dir, symlinks=True)
+
     monkeypatch.setenv("GOLEM_WIKI_DIR", str(hermetic_dir))
     monkeypatch.setattr("golem.wiki.DEFAULT_WIKI_DIR", hermetic_dir)
     from golem.memory.peripheral import clear_peripheral_vision_cache

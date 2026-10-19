@@ -104,7 +104,7 @@ class TestWebUIConfiguration(unittest.TestCase):
 
     def test_config_dict_contains_webui_entries(self):
         """Verify get_config_dict() includes webui_enabled, webui_host, webui_port."""
-        with patch.dict(os.environ, {"GOLEM_ENABLE_WEBUI": "1", "GOLEM_WEBUI_PORT": "8888"}):
+        with patch.dict(os.environ, {"GOLEM_ENABLE_WEBUI": "1", "GOLEM_WEBUI_PORT": "8888", "GOLEM_WEBUI_HOST": ""}):
             cfg = golem_cfg.get_config_dict()
             self.assertEqual(cfg.get("webui_enabled"), "True")
             self.assertEqual(cfg.get("webui_port"), "8888")
