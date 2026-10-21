@@ -919,7 +919,7 @@ class ZeroRegexEvaluator:
             "Analyze the newly detected error logs and fleet status deltas, and judge whether an operational health anomaly exists ('smells_off').\n\n"
             "Strict Guidelines:\n"
             "- 'smells_off': true ONLY for genuine operational failures: unhandled daemon crash loops, "
-            "production VPS downtime (oci-machine), container crashes, or host root disk exhaustion.\n"
+            "production VPS downtime (oci-machine), container crashes, host root disk exhaustion, or stalled/hung backstage hand agents (hand_stalled).\n"
             "- 'smells_off': false for benign/expected events: Carl's personal laptop (personal-laptop) sleeping/standby, "
             "routine test suite executions, or clean daemon restarts.\n"
             "- Output strictly valid JSON matching the schema.\n\n"
@@ -927,7 +927,7 @@ class ZeroRegexEvaluator:
             "{\n"
             '  "smells_off": true | false,\n'
             '  "severity": "low" | "medium" | "high" | "critical",\n'
-            '  "category": "crash_loop" | "node_down" | "disk_pressure" | "container_crash" | "network" | "other",\n'
+            '  "category": "crash_loop" | "node_down" | "disk_pressure" | "container_crash" | "hand_stalled" | "network" | "other",\n'
             '  "summary": "<concise 1-2 sentence executive briefing>",\n'
             '  "affected_nodes": ["<node_names>"],\n'
             '  "recommended_action": "<concrete actionable next step for Carl>"\n'
@@ -1075,6 +1075,21 @@ class ZeroRegexEvaluator:
 
         # 3. Error logs
         if error_logs:
+            has_linear_quota = any(
+                "USAGE_LIMIT_EXCEEDED" in l
+                or "exceeded the free issue limit" in l.lower()
+                or ("linear" in l.lower() and "usage limit exceeded" in l.lower())
+                for l in error_logs
+            )
+            if has_linear_quota:
+                return AnomalyVerdict(
+                    smells_off=True,
+                    severity="high",
+                    category="linear_quota_exceeded",
+                    summary="Linear free tier issue limit reached (activeIssueCount exceeded); issue creation is blocked.",
+                    affected_nodes=["hermes"],
+                    recommended_action="Carl needs to clean up, archive, or delete Done/Cancelled issues in Linear workspace.",
+                )
             has_traceback = any("Traceback" in l for l in error_logs)
             return AnomalyVerdict(
                 smells_off=True,
@@ -1862,6 +1877,10 @@ class NoseSentinel:
         self._last_assigned_tickets: List[Dict[str, Any]] = []
         self._last_alerted_ticket_signatures: Set[str] = set()
         self._alerted_stalled_hands: Set[str] = set()
+        self._linear_quota_exceeded: bool = False
+        self._last_linear_quota_details: Dict[str, Any] = {}
+        self._linear_quota_alert_sent: bool = False
+        self._last_alerted_quota_sig: Optional[Tuple[str, ...]] = None
         self._last_log_delta_bytes: int = 0
         self.last_sniff_receipt: Optional[Dict[str, Any]] = None
         self.last_sniff_receipt_str: str = ""
@@ -2100,6 +2119,12 @@ class NoseSentinel:
                 error_lines.append(line)
             elif "Exception ignored" in line or "Unhandled exception" in line or "Fatal error:" in line:
                 error_lines.append(line)
+            elif (
+                "USAGE_LIMIT_EXCEEDED" in line
+                or "exceeded the free issue limit" in line.lower()
+                or ("linear" in line.lower() and "usage limit exceeded" in line.lower())
+            ):
+                error_lines.append(line)
 
         return error_lines
 
@@ -2157,8 +2182,104 @@ class NoseSentinel:
                 res = await res
             return list(res) if res else []
         except Exception as exc:
+            err_msg = str(exc)
+            if (
+                "USAGE_LIMIT_EXCEEDED" in err_msg
+                or "exceeded the free issue limit" in err_msg.lower()
+                or "usage limit exceeded" in err_msg.lower()
+            ):
+                self._linear_quota_exceeded = True
+                self._last_linear_quota_details = {
+                    "metric": "activeIssueCount",
+                    "error_code": "USAGE_LIMIT_EXCEEDED",
+                    "message": err_msg,
+                    "sample_lines": [err_msg[:200]],
+                    "timestamp": time.time(),
+                }
             logger.warning(f"Error querying assigned Linear tickets in NoseSentinel: {exc}")
             return []
+
+    def detect_linear_quota_exceeded(
+        self,
+        raw_text: str = "",
+        error_lines: Optional[List[str]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Detect if Linear free tier issue quota / USAGE_LIMIT_EXCEEDED is present
+        in newly sniffed log text, error lines, or sentinel state.
+        Returns structured quota details or None if no quota error is detected.
+        """
+        target_lines = (error_lines or []) + (raw_text.splitlines() if raw_text else [])
+        matching_lines = []
+        for line in target_lines:
+            line_str = str(line).strip()
+            if (
+                "USAGE_LIMIT_EXCEEDED" in line_str
+                or "exceeded the free issue limit" in line_str.lower()
+                or ("linear" in line_str.lower() and "usage limit exceeded" in line_str.lower())
+            ):
+                if line_str not in matching_lines:
+                    matching_lines.append(line_str)
+
+        if not matching_lines and not getattr(self, "_linear_quota_exceeded", False):
+            return None
+
+        sample = matching_lines[:5] if matching_lines else getattr(self, "_last_linear_quota_details", {}).get("sample_lines", [])
+        return {
+            "metric": "activeIssueCount",
+            "error_code": "USAGE_LIMIT_EXCEEDED",
+            "message": "You've exceeded the free issue limit for this workspace.",
+            "sample_lines": sample,
+            "timestamp": time.time(),
+        }
+
+    def check_linear_quota(
+        self,
+        raw_text: str = "",
+        error_lines: Optional[List[str]] = None,
+    ) -> Optional[ShoulderTapAlert]:
+        """
+        Check for Linear free tier quota exhaustion and return a ShoulderTapAlert if detected.
+        Ensures idempotency and deduplication across cycles.
+        DOES NOT delete or call issueDelete on any tickets; prompts Carl to perform cleanup.
+        """
+        details = self.detect_linear_quota_exceeded(raw_text=raw_text, error_lines=error_lines)
+        if not details:
+            return None
+
+        self._linear_quota_exceeded = True
+        self._last_linear_quota_details = details
+
+        # Deduplication check by error sample signature
+        sample_sig = tuple(details.get("sample_lines", [])) or ("quota_exceeded",)
+        last_sig = getattr(self, "_last_alerted_quota_sig", None)
+        if sample_sig == last_sig and getattr(self, "_linear_quota_alert_sent", False):
+            return None
+
+        self._last_alerted_quota_sig = sample_sig
+        self._linear_quota_alert_sent = True
+
+        alert = ShoulderTapAlert(
+            alert_type="linear_quota_exceeded",
+            source="nose",
+            timestamp=time.time(),
+            summary="Linear free tier issue limit reached (activeIssueCount exceeded); new issue creation is blocked. Carl needs to clean up Done/Cancelled tickets.",
+            data={
+                "metric": details.get("metric", "activeIssueCount"),
+                "status": "blocked",
+                "error_sample": details.get("sample_lines", []),
+                "details": details,
+                "recommended_action": "Carl needs to clean up, archive, or delete Done/Cancelled issues in Linear workspace to restore issue creation capacity.",
+            },
+        )
+        if self.bus is not None:
+            try:
+                self.bus.publish(alert)
+                logger.info(f"Published linear_quota_exceeded alert: {alert.summary}")
+            except Exception as e:
+                logger.warning(f"Error publishing linear_quota_exceeded alert: {e}")
+
+        return alert
 
     def is_ticket_actively_worked(self, ticket: Dict[str, Any], now: Optional[float] = None) -> bool:
         """Evaluate deterministic active work detection on an In Progress ticket."""
@@ -2351,6 +2472,13 @@ class NoseSentinel:
                 logger.warning(f"Error checking Linear assigned tickets in NoseSentinel.tick: {le}")
             self._last_assigned_tickets = assigned_tickets
 
+            # 4b-1. Check for Linear free tier quota exhaustion
+            quota_alert: Optional[ShoulderTapAlert] = None
+            try:
+                quota_alert = self.check_linear_quota(raw_text=raw, error_lines=errors)
+            except Exception as qe:
+                logger.warning(f"Error checking Linear quota in NoseSentinel.tick: {qe}")
+
             # Active Work Detection: ignore tickets that are actively being worked on
             # and suppress Backlog/Todo tickets tracked by an In Progress ticket in assigned_tickets
             in_progress_texts = [
@@ -2475,9 +2603,11 @@ class NoseSentinel:
             else:
                 linear_str = f"{assigned_count} assigned (0 actionable)"
 
+            stalled_list = sorted(self._alerted_stalled_hands) if getattr(self, "_alerted_stalled_hands", None) else []
+            stalled_suffix = f" | Stalled: {', '.join(stalled_list)}" if stalled_list else ""
             receipt_str = (
                 f"[SNIFF] Fleet: {fleet_str} | Disk: {disk_str} | "
-                f"Docker: {docker_str} | bot.err: {bot_err_str} | Linear: {linear_str}"
+                f"Docker: {docker_str} | bot.err: {bot_err_str} | Linear: {linear_str}{stalled_suffix}"
             )
             receipt_data = {
                 "fleet": {
@@ -2506,6 +2636,7 @@ class NoseSentinel:
                     "ticket_ids": actionable_ids,
                     "tickets": actionable_tickets,
                 },
+                "stalled_hands": stalled_list,
                 "timestamp": time.time(),
             }
             self.last_sniff_receipt = receipt_data
@@ -2518,11 +2649,15 @@ class NoseSentinel:
                     if hasattr(webui, "append_organ_log"):
                         webui.append_organ_log("nose", receipt_str)
                     if hasattr(webui, "broadcast"):
-                        webui.broadcast("nose_telemetry", {
+                        telem_payload: Dict[str, Any] = {
                             "sniff_receipt": receipt_data,
                             "receipt_str": receipt_str,
                             "timestamp": receipt_data["timestamp"],
-                        })
+                        }
+                        if stalled_list:
+                            telem_payload["smells_off"] = True
+                            telem_payload["verdict_summary"] = f"Stalled hand agent(s) detected: {', '.join(stalled_list)}"
+                        webui.broadcast("nose_telemetry", telem_payload)
                 except Exception as we:
                     logger.debug(f"WebUI server sniff receipt emit warning: {we}")
 
@@ -2543,15 +2678,25 @@ class NoseSentinel:
             # 5. Quiescent Zero-Regex Gate: 0 tokens if quiet
             if self.evaluator.is_quiescent(errors, deltas):
                 logger.debug("NoseSentinel tick: Quiescent state, 0 errors, 0 actionable deltas.")
-                self.last_verdict = AnomalyVerdict(
-                    smells_off=False,
-                    severity="low",
-                    category="other",
-                    summary="All systems nominal; 0 errors, fleet healthy.",
-                    affected_nodes=[],
-                    recommended_action="",
-                )
-                return linear_alert or (email_alerts[0] if email_alerts else None)
+                if stalled_list:
+                    self.last_verdict = AnomalyVerdict(
+                        smells_off=True,
+                        severity="high",
+                        category="hand_stalled",
+                        summary=f"Stalled hand agent(s) detected: {', '.join(stalled_list)}",
+                        affected_nodes=["hermes"],
+                        recommended_action="Inspect or terminate stalled hand pane(s) in WebUI.",
+                    )
+                else:
+                    self.last_verdict = AnomalyVerdict(
+                        smells_off=False,
+                        severity="low",
+                        category="other",
+                        summary="All systems nominal; 0 errors, fleet healthy.",
+                        affected_nodes=[],
+                        recommended_action="",
+                    )
+                return quota_alert or linear_alert or (email_alerts[0] if email_alerts else None)
 
             # 6. Evaluate via NOSE_MODEL
             verdict = await self.evaluate_anomaly(errors, deltas)
@@ -2592,7 +2737,7 @@ class NoseSentinel:
 
                 return alert
 
-            return linear_alert or (email_alerts[0] if email_alerts else None)
+            return quota_alert or linear_alert or (email_alerts[0] if email_alerts else None)
 
     def start(self) -> asyncio.Task[Any]:
         """
@@ -2747,6 +2892,11 @@ class NoseSentinel:
                 smells_off = bool(self.last_verdict.get("smells_off", False))
                 verdict_summary = str(self.last_verdict.get("summary") or verdict_summary)
 
+        if getattr(self, "_linear_quota_exceeded", False):
+            smells_off = True
+            if not self.last_verdict or not smells_off:
+                verdict_summary = "⚠️ Linear free tier issue limit reached (activeIssueCount exceeded); writes blocked."
+
         recent_err_count = _safe_int(getattr(self, "_last_error_count", 0), 0)
         assigned_tickets_list = list(getattr(self, "_last_assigned_tickets", []))
 
@@ -2763,6 +2913,8 @@ class NoseSentinel:
             "email": self.email_sniffer.get_telemetry(),
             "assigned_tickets": assigned_tickets_list,
             "linear_assigned_tickets": assigned_tickets_list,
+            "linear_quota_exceeded": bool(getattr(self, "_linear_quota_exceeded", False)),
+            "linear_quota_details": dict(getattr(self, "_last_linear_quota_details", {})),
             "recent_error_count": recent_err_count,
             "error_count": recent_err_count,
         }

@@ -71,7 +71,7 @@ class RunnerBufferObserver:
                     await res
                 w = proc.wait()
                 if inspect.isawaitable(w):
-                    await w
+                    await asyncio.wait_for(w, timeout=1.0)
             except Exception:
                 pass
             raise

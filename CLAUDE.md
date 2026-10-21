@@ -25,7 +25,7 @@ Golem decouples conversational front-of-house interactions from backstage execut
 
 2. **The Hands (Backstage Runner):**
    - Operates in Pane 2 (`runner`) and dynamic subagent panes (`Pane 3..N`).
-   - Executes commands, builds, refactors, and test suites across fleet nodes using `agy`, `claude_code`, or `opencode`.
+   - Executes commands, builds, refactors, and test suites across fleet nodes using Antigravity (`agy`) by default, with modular support for alternative harnesses like Claude Code, Codex, or OpenCode.
    - Long-running commands (> 3.0s) yield non-blocking `ExecutionHandle(status="running")`.
 
 3. **The Eyes (Task Observer):**
@@ -54,11 +54,6 @@ Golem decouples conversational front-of-house interactions from backstage execut
 - **Run CI and repository hygiene tests:**
   ```bash
   python3 -m unittest tests/test_ci_and_repo_hygiene.py
-  ```
-
-- **Run documentation and manual validation:**
-  ```bash
-  python3 -m unittest tests/test_documentation_and_manuals.py
   ```
 
 - **Run wiki and memory tests:**

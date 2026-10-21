@@ -1,0 +1,8 @@
+# Golem WebUI Custom Top-Right Navigation Links
+# Copy or edit `webui_links.txt` in the repo root (gitignored so personal links never sync to GitHub).
+# The WebUI always displays "Wiki" (/wiki) first, followed by any links listed in `webui_links.txt`.
+#
+# Supported formats (one per line, `#` for comments):
+#   Status | https://status.example.com
+#   https://code.example.com (Code)
+#   status.example.com

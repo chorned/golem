@@ -414,6 +414,7 @@ class SessionHandle:
                     from golem.runner import RunnerExecutor
                     herdr_cl = getattr(self.harness, "herdr_client", None)
                     executor = RunnerExecutor(herdr_client=herdr_cl, buffer_observer=self.buffer_observer)
+                    self.runner_executor = executor
                 if hasattr(executor, "_get_pane_foreground_pid"):
                     fg_pid = await executor._get_pane_foreground_pid(self.runner_pane, timeout=0.2)
                     if fg_pid is not None and fg_pid > 0:
@@ -813,16 +814,24 @@ class SessionHandle:
                 await old_gen.aclose()
             except Exception:
                 pass
+        if self.runner_executor is not None:
+            exec_inst = self.runner_executor
+            self.runner_executor = None
+            try:
+                if hasattr(exec_inst, "close"):
+                    exec_inst.close()
+            except Exception:
+                pass
         if self.adapter:
             try:
                 if hasattr(self.adapter, "stop"):
                     res = self.adapter.stop()
                     if inspect.isawaitable(res):
-                        await res
+                        await asyncio.wait_for(res, timeout=6.0)
                 elif hasattr(self.adapter, "terminate_session"):
                     res = self.adapter.terminate_session()
                     if inspect.isawaitable(res):
-                        await res
+                        await asyncio.wait_for(res, timeout=6.0)
             except Exception as e:
                 logger.warning(f"Error stopping adapter during close for session '{self.session_id}': {e}")
         if self.harness and self.workspace_id:
@@ -833,7 +842,7 @@ class SessionHandle:
             try:
                 res = harness.teardown(ws_id)
                 if inspect.isawaitable(res):
-                    await res
+                    await asyncio.wait_for(res, timeout=5.0)
             except Exception as e:
                 logger.warning(
                     f"Error tearing down harness workspace '{ws_id}' for session '{self.session_id}': {e}"

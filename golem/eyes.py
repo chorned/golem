@@ -652,6 +652,28 @@ class EyesTaskObserver:
 
         classification = await self.classify_buffer(buffer_text, pane=target_pane)
         if classification.get("skipped") or classification.get("state") in ("UNCHANGED", "IDLE"):
+            if self._last_emitted_state == "COMPLETED":
+                has_running_hands = False
+                if self.webui_server is not None and hasattr(self.webui_server, "get_executing_hands"):
+                    try:
+                        has_running_hands = bool(self.webui_server.get_executing_hands())
+                    except Exception:
+                        has_running_hands = False
+                if not has_running_hands:
+                    self._last_emitted_state = "IDLE"
+                    if self.webui_server is not None and hasattr(self.webui_server, "broadcast"):
+                        try:
+                            self.webui_server.broadcast("eye_telemetry", {
+                                "state": "IDLE",
+                                "command": "",
+                                "active_command": "",
+                                "pid": None,
+                                "delta_lines": 0,
+                                "buffer_diff": "",
+                                "timestamp": time.time(),
+                            })
+                        except Exception:
+                            pass
             return None
 
         state = classification.get("state", "RUNNING")
@@ -697,7 +719,10 @@ class EyesTaskObserver:
             if self.webui_server is not None and hasattr(self.webui_server, "update_hand_buffer"):
                 try:
                     delta_text = "\n".join(diff_lines) + "\n"
-                    self.webui_server.update_hand_buffer(target_pane, delta=delta_text)
+                    try:
+                        self.webui_server.update_hand_buffer(target_pane, delta=delta_text, auto_register=False)
+                    except TypeError:
+                        self.webui_server.update_hand_buffer(target_pane, delta=delta_text)
                 except Exception as e:
                     logger.debug(f"EyesTaskObserver: Failed to update webui hand buffer: {e}")
 

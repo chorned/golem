@@ -2,7 +2,7 @@
 
 > **"Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh."**
 
-This guide is designed for an operator collaborating with an AI coding assistant (such as **Claude Code**, **OpenCode**, or **AGY**) to configure and deploy Golem from scratch.
+This guide is designed for an operator collaborating with an AI coding assistant (such as **Antigravity / AGY**, **Claude Code**, or **Codex**) to configure and deploy Golem from scratch.
 
 When an AI assistant is asked to "help set up Golem", the agent should follow this document interactively, verifying prerequisites and conducting the interview one section at a time.
 
@@ -72,7 +72,7 @@ Ask the operator for their model choices and endpoint preferences:
 - **Model Assignments:**
   - `MOUTH_MODEL`: Flagship conversational model (e.g., `gemini-4-argon`, `claude-sonnet-4-5`, `gpt-4o`).
   - `EYES_MODEL` & `NOSE_MODEL`: Lightweight, cost-efficient observer models (e.g., `gemini-flash-lite-latest`, `gpt-4o-mini`).
-  - `GOLEM_DEFAULT_HAND_WORKER`: Backstage execution worker (`claude_code`, `opencode`, or `agy`).
+  - `GOLEM_DEFAULT_HAND_WORKER`: Backstage execution worker (`agy` by default; `claude_code`, `codex`, or `opencode` supported).
   - `HANDS_MODEL`: Execution model used by the backstage runner.
 
 ### 4. Slack / BlueBubbles Credentials
@@ -87,9 +87,9 @@ Ask the operator how they wish to communicate with Golem:
 
 ---
 
-## Step 3: Generate `.env` & `launchd` Service
+## Step 3: Generate `.env` & Run Gateway (Optional Service)
 
-Once the interview is complete, the assistant automatically writes the configuration files.
+Once the interview is complete, the assistant writes the `.env` configuration file.
 
 ### 1. Write `.env`
 Create `.env` at the project root based on the answers gathered during the interview:
@@ -109,7 +109,7 @@ LLM_BASE_URL="<OPTIONAL_V1_ENDPOINT_OR_BLANK>"
 MOUTH_MODEL="<CHOSEN_MOUTH_MODEL>"
 EYES_MODEL="<CHOSEN_EYES_MODEL>"
 NOSE_MODEL="<CHOSEN_NOSE_MODEL>"
-GOLEM_DEFAULT_HAND_WORKER="<agy|claude_code|opencode>"
+GOLEM_DEFAULT_HAND_WORKER="agy"
 HANDS_MODEL="<CHOSEN_HANDS_MODEL>"
 
 # Slack Integration
@@ -123,8 +123,47 @@ GOLEM_ENABLE_WEBUI=0
 GOLEM_LOG_LEVEL=INFO
 ```
 
-### 2. Generate macOS `launchd` Service (`com.user.golem.plist`)
-Copy `com.user.golem.plist` to `~/Library/LaunchAgents/` substituting the operator's real `$HOME`, virtualenv Python path, and environment variables:
+### 2. Running Golem
+
+Running Golem directly in a terminal or a `tmux` session is often the simplest way to get started:
+
+```bash
+# Inside your virtual environment:
+golem --webUI
+# Or:
+python3 app.py --webUI
+```
+
+### 3. Optional Background Service (systemd / launchd)
+
+If you prefer to run Golem as an always-on background operating system service:
+
+#### On Linux (systemd)
+Create a user service file at `~/.config/systemd/user/golem.service`:
+```ini
+[Unit]
+Description=Golem Autonomous Fleet Chief of Staff
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/golem
+ExecStart=%h/golem/.venv/bin/golem --webUI
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+```
+Start and enable the service:
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now golem
+```
+
+#### On macOS (`launchd`)
+> [!NOTE]
+> `com.user.golem.plist` is a template file. Make sure to edit the working directory, Python virtual environment path, and your actual environment tokens (Slack tokens, API keys) before loading.
 
 ```bash
 mkdir -p ~/Library/LaunchAgents
@@ -159,7 +198,7 @@ To verify that Golem is properly configured:
 
 ```bash
 # Run hygiene and configuration validation suite
-python3 -m unittest tests/test_ci_and_repo_hygiene.py tests/test_documentation_and_manuals.py
+python3 -m unittest tests/test_ci_and_repo_hygiene.py
 
 # Verify sensory bus and wiki engine
 python3 -m unittest tests/test_wiki_engine.py tests/test_memory_tiers.py

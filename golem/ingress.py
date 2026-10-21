@@ -1186,6 +1186,7 @@ class IngressGateway:
         bus: Optional[ShoulderTapEventBus] = None,
         nose_sentinel: Optional[Any] = None,
         webui_server: Optional[Any] = None,
+        linear_bridge: Optional[Any] = None,
     ) -> None:
         self.router = router if router is not None else SessionRouter()
         self.bot_user_id = bot_user_id
@@ -1203,6 +1204,7 @@ class IngressGateway:
             self.nose_sentinel.session_router = self.router
         self.webui_server = webui_server
         self.webui = webui_server
+        self.linear_bridge = linear_bridge
 
         # Shoulder Tap Event Bus Integration
         self.bus = sensory_bus or bus
@@ -1219,6 +1221,10 @@ class IngressGateway:
             self.bus.subscribe(
                 self._handle_linear_assigned_tickets_alert,
                 alert_types=["linear_assigned_tickets", "assigned_tickets"],
+            )
+            self.bus.subscribe(
+                self._handle_linear_quota_exceeded_alert,
+                alert_types=["linear_quota_exceeded"],
             )
 
         # Ensure router shares the same event bus if not explicitly configured
@@ -1332,6 +1338,9 @@ class IngressGateway:
 
         elif alert.alert_type in ("linear_assigned_tickets", "assigned_tickets"):
             await self._handle_linear_assigned_tickets_alert(alert, client=client)
+
+        elif alert.alert_type == "linear_quota_exceeded":
+            await self._handle_linear_quota_exceeded_alert(alert, client=client)
 
     def _find_existing_thread_for_ticket(self, channel: str, ticket: Dict[str, Any]) -> Optional[str]:
         """Find an existing Slack thread_ts in recent history bound to this specific Linear ticket."""
@@ -1658,6 +1667,58 @@ class IngressGateway:
                 self.router._save_registry()
             except Exception as sre:
                 logger.debug(f"Unable to save router registry: {sre}")
+
+    async def _handle_linear_quota_exceeded_alert(self, alert: Any, client: Optional[Any] = None) -> None:
+        """
+        Receive Linear free tier quota exhaustion alerts from The Nose Sentinel.
+        Prompts Carl to clean up Done / Canceled tickets in Linear.
+        CRITICAL: Never deletes or calls issueDelete automatically. Carl owns hard delete operations.
+        """
+        if not alert:
+            return
+        data = getattr(alert, "data", {}) or {}
+        channel = (
+            getattr(alert, "channel", None)
+            or data.get("channel")
+            or os.environ.get("FIRSTMATE_DEFAULT_CHANNEL")
+            or os.environ.get("GOLEM_DEFAULT_CHANNEL")
+        )
+        if not channel:
+            try:
+                from golem.notify import DEFAULT_SLACK_CHANNEL
+                channel = DEFAULT_SLACK_CHANNEL
+            except Exception:
+                channel = ""
+
+        from golem.mouth import synthesize_linear_quota_nudge
+        msg_text = synthesize_linear_quota_nudge(data)
+
+        target_thread_ts = getattr(alert, "thread_ts", None) or data.get("thread_ts")
+        posted_ts = ""
+
+        if client and channel and hasattr(client, "chat_postMessage"):
+            try:
+                resp = client.chat_postMessage(channel=channel, text=msg_text, thread_ts=target_thread_ts)
+                if inspect.isawaitable(resp):
+                    resp = await resp
+                if isinstance(resp, dict):
+                    posted_ts = str(resp.get("ts") or "")
+                elif hasattr(resp, "data") and isinstance(resp.data, dict):
+                    posted_ts = str(resp.data.get("ts") or "")
+            except Exception as ce:
+                logger.warning(f"chat_postMessage for linear quota alert failed: {ce}")
+
+        if not posted_ts and channel:
+            try:
+                from golem.notify import send_slack_message
+                resp = await send_slack_message(text=msg_text, channel=channel, thread_ts=target_thread_ts)
+                if isinstance(resp, dict):
+                    posted_ts = str(resp.get("ts") or "")
+                elif hasattr(resp, "data") and isinstance(resp.data, dict):
+                    posted_ts = str(resp.data.get("ts") or "")
+            except Exception as se:
+                logger.warning(f"send_slack_message for linear quota alert failed: {se}")
+
 
     def _is_ticket_actively_worked(self, ticket: Dict[str, Any], now: Optional[float] = None) -> bool:
         """Determine whether a Linear ticket is actively being worked on or queued in an active batch."""
@@ -4433,15 +4494,21 @@ class IngressGateway:
                         if inspect.isawaitable(res):
                             await res
                         if not _is_mock_object(webui):
-                            async def _delayed_cleanup(p_id: str, w_ui: Any) -> None:
+                            async def _delayed_cleanup(p_id: str, n_id: str, w_ui: Any) -> None:
                                 try:
                                     await asyncio.sleep(120.0)
-                                    c_res = w_ui.unregister_active_hand(pane_id=p_id)
+                                    executing = w_ui.get_executing_hands() if hasattr(w_ui, "get_executing_hands") else {}
+                                    if p_id in executing:
+                                        return
+                                    try:
+                                        c_res = w_ui.unregister_active_hand(pane_id=p_id, node=n_id)
+                                    except TypeError:
+                                        c_res = w_ui.unregister_active_hand(pane_id=p_id)
                                     if inspect.isawaitable(c_res):
                                         await c_res
                                 except Exception:
                                     pass
-                            asyncio.create_task(_delayed_cleanup(pane, webui))
+                            asyncio.create_task(_delayed_cleanup(pane, effective_node, webui))
                     else:
                         settle_payload = {
                             "pane_id": pane,

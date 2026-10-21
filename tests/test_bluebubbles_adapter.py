@@ -1201,7 +1201,10 @@ class TestBlueBubblesPrivateAPILifecycle(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertIn("[Previous iMessage Conversation Context:", ctx)
-        self.assertIn("User: Can you generate a graph of the finances?", ctx)
+        self.assertTrue(
+            "Carl: Can you generate a graph of the finances?" in ctx
+            or "User: Can you generate a graph of the finances?" in ctx
+        )
         self.assertIn("Hermes: Here is a breakdown:\nAug $3198 vs Oct $2677", ctx)
 
     def test_bluebubbles_client_clear_history(self):

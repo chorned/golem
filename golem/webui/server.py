@@ -78,6 +78,102 @@ _CURRENT_DIR = Path(__file__).resolve().parent
 _TEMPLATES_DIR = _CURRENT_DIR / "templates"
 _DASHBOARD_FILE = _TEMPLATES_DIR / "dashboard.html"
 _WIKI_FILE = _TEMPLATES_DIR / "wiki.html"
+_REPO_ROOT = _CURRENT_DIR.parent.parent
+_DEFAULT_LINKS_FILE = _REPO_ROOT / "webui_links.txt"
+
+
+def load_webui_nav_links(links_file: Optional[Union[str, Path]] = None) -> List[Dict[str, Any]]:
+    """
+    Load top-right navigation links for the WebUI.
+    Always begins with the built-in Wiki link (/wiki), followed by any user-configured
+    links from `webui_links.txt` (or GOLEM_WEBUI_LINKS_FILE).
+    """
+    links: List[Dict[str, Any]] = [
+        {"label": "WIKI", "url": "/wiki", "icon": "📖", "external": False}
+    ]
+    target_path = Path(links_file) if links_file is not None else Path(
+        os.environ.get("GOLEM_WEBUI_LINKS_FILE", str(_DEFAULT_LINKS_FILE))
+    )
+    if not target_path.exists() or not target_path.is_file():
+        return links
+    try:
+        raw_lines = target_path.read_text(encoding="utf-8").splitlines()
+    except Exception:
+        return links
+
+    for raw_line in raw_lines:
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        import re as _re
+        paren_match1 = _re.match(r"^(https?://[^\s()]+|[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}(?:/[^\s()]*)?)\s*\(([^)]+)\)$", line)
+        paren_match2 = _re.match(r"^([^(]+)\s*\((https?://[^\s()]+|[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}(?:/[^\s()]*)?)\)$", line)
+        if paren_match1:
+            url = paren_match1.group(1).strip()
+            label = paren_match1.group(2).strip()
+        elif paren_match2:
+            label = paren_match2.group(1).strip()
+            url = paren_match2.group(2).strip()
+        elif "|" in line:
+            part1, part2 = line.split("|", 1)
+            p1, p2 = part1.strip(), part2.strip()
+            if (p1.startswith("http://") or p1.startswith("https://")) and not (p2.startswith("http://") or p2.startswith("https://")):
+                url, label = p1, p2
+            else:
+                label, url = p1, p2
+        else:
+            label = line
+            url = line
+        if not url:
+            continue
+        if not (url.startswith("http://") or url.startswith("https://") or url.startswith("/")):
+            url = f"https://{url}"
+        if not label:
+            label = url
+        links.append({
+            "label": label,
+            "url": url,
+            "icon": "↗",
+            "external": not url.startswith("/"),
+        })
+    return links
+
+
+def _render_nav_links_html(links: List[Dict[str, Any]]) -> str:
+    """Render top-right navigation links HTML inside #top-nav-links."""
+    import html as _html
+    items: List[str] = []
+    for link in links:
+        url = _html.escape(str(link.get("url", "/wiki")), quote=True)
+        label = _html.escape(str(link.get("label", "WIKI")))
+        icon = _html.escape(str(link.get("icon", "↗")))
+        external = bool(link.get("external", False))
+        target_attr = ' target="_blank" rel="noopener noreferrer"' if external else ""
+        title_str = "Open Golem Operational Memory Wiki" if url == "/wiki" else f"Open {label}"
+        items.append(
+            f'        <a href="{url}" class="wiki-nav-link" title="{_html.escape(title_str, quote=True)}"{target_attr}>\n'
+            f'            <span>{icon}</span>\n'
+            f'            <span>{label}</span>\n'
+            f'        </a>'
+        )
+    return "\n".join(items)
+
+
+def _clean_hand_command(command: str) -> str:
+    """Strip internal pre-flight invariants and guardrail boilerplate from displayed hand commands."""
+    if not command:
+        return ""
+    text = str(command)
+    if "[Node Context & Invariants]" in text and "[Task]" in text:
+        text = text.split("[Task]", 1)[1]
+    for marker in (
+        "[LINEAR GUARDRAIL:",
+        "[IRON LAW OF EXTERNAL INTEGRATIONS",
+    ):
+        if marker in text:
+            text = text.split(marker, 1)[0]
+    return text.strip() or str(command).strip()
+
 
 if _DASHBOARD_FILE.exists():
     try:
@@ -314,38 +410,69 @@ class WebUIServer:
     def _allocate_hand_key(self, pane_id: str, node: str = "localhost", identity: Optional[tuple] = None) -> str:
         """
         Pick the registry key for a hand. The same (node, pane, pane_id) re-registering replaces itself;
+        a settled hand with the same (pane_id, node) is also replaced in-place;
         a *different* hand that happens to share a pane label (e.g. every node has a 'runner')
         or a distinct subtask (e.g. hand_CHO-155 vs hand_CHO-156) gets its own key so it can
         never silently overwrite another running agent.
         """
         if identity is None:
             identity = (node, pane_id, pane_id)
+        terminal_statuses = {"EXIT_0", "COMPLETED", "FAILED", "DONE", "SETTLED", "CANCELLED", "SUCCESS"}
         candidates = [pane_id, f"{pane_id}@{node}"]
         n = 2
         while True:
             for cand in candidates:
                 if cand not in self._active_hands:
                     return cand
-                owner = self._hand_meta.get(cand, {}).get("identity")
+                meta = self._hand_meta.get(cand, {})
+                owner = meta.get("identity")
                 if owner is None or owner == identity:
+                    return cand
+                existing = self._active_hands.get(cand, {})
+                existing_status = str(existing.get("status", "")).upper()
+                if (
+                    meta.get("pane_id") == pane_id
+                    and meta.get("node") == node
+                    and (existing_status in terminal_statuses or existing.get("exit_code") is not None)
+                ):
                     return cand
             candidates = [f"{pane_id}@{node}#{n}"]
             n += 1
 
-    def _resolve_hand_key(self, pane_id: str, node: Optional[str] = None) -> Optional[str]:
-        """Map a caller's (pane_id[, node]) to the registry key of an active hand."""
+    def _resolve_all_hand_keys(self, pane_id: str, node: Optional[str] = None) -> List[str]:
+        """Return all active registry keys matching (pane_id[, node]), including collided #N keys."""
+        matches: List[str] = []
         if node is None:
             if pane_id in self._active_hands:
-                return pane_id
-            matches = [
-                k for k, m in self._hand_meta.items()
-                if m.get("pane_id") == pane_id and k in self._active_hands
-            ]
-            return matches[0] if len(matches) == 1 else None
-        for k, m in self._hand_meta.items():
-            if m.get("pane_id") == pane_id and m.get("node") == node and k in self._active_hands:
-                return k
-        return None
+                matches.append(pane_id)
+            for k, m in self._hand_meta.items():
+                if k in self._active_hands and m.get("pane_id") == pane_id and k not in matches:
+                    matches.append(k)
+        else:
+            for k, m in self._hand_meta.items():
+                if k in self._active_hands and m.get("pane_id") == pane_id and m.get("node") == node:
+                    matches.append(k)
+            if not matches and pane_id in self._active_hands:
+                if self._active_hands[pane_id].get("node") == node:
+                    matches.append(pane_id)
+        return matches
+
+    def _resolve_hand_key(self, pane_id: str, node: Optional[str] = None) -> Optional[str]:
+        """Map a caller's (pane_id[, node]) to the registry key of an active hand."""
+        matches = self._resolve_all_hand_keys(pane_id, node)
+        if not matches:
+            return None
+        if len(matches) == 1:
+            return matches[0]
+        terminal_statuses = {"EXIT_0", "COMPLETED", "FAILED", "DONE", "SETTLED", "CANCELLED", "SUCCESS"}
+        running = [
+            k for k in matches
+            if str(self._active_hands.get(k, {}).get("status", "")).upper() not in terminal_statuses
+            and self._active_hands.get(k, {}).get("exit_code") is None
+        ]
+        if running:
+            return running[-1]
+        return matches[-1]
 
     def _register_hand(
         self,
@@ -364,23 +491,33 @@ class WebUIServer:
                 "Hand pane id %r on %s collides with an active hand; registered as %r",
                 pane_id, node, key,
             )
+        clean_cmd = _clean_hand_command(command)
         now_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
         pid_str = f"PID: {pid}" if pid is not None else "PID: N/A"
         initial_log = (
             f"{now_str} [INFO] Golem.Hands: Agent '{key}' initialized on {node}\n"
-            f"{now_str} [INFO] Golem.Hands: Command: {command} [{pid_str}]\n"
+            f"{now_str} [INFO] Golem.Hands: Command: {clean_cmd} [{pid_str}]\n"
             f"{now_str} [INFO] Golem.Hands: Process buffer attached; streaming execution trace...\n"
         )
         now_ts = time.time()
+        hand_model = kwargs.get("model")
+        if not hand_model:
+            try:
+                from golem.config import get_engine_model
+                hand_model = get_engine_model(worker or "agy")
+            except Exception:
+                hand_model = worker or "agy"
+
         self._active_hands[key] = {
             "pane_id": key,
             "herdr_pane_id": herdr_pane,
             "node": node,
-            "command": command,
+            "command": clean_cmd,
             "pid": pid,
             "status": kwargs.get("status", "RUNNING"),
             "buffer_tail": initial_log,
             "worker": worker or "agy",
+            "model": hand_model or worker or "agy",
             "started_at": kwargs.get("started_at", now_ts),
             "last_activity_at": kwargs.get("last_activity_at", now_ts),
             "last_real_activity_at": kwargs.get("last_real_activity_at", kwargs.get("started_at", now_ts)),
@@ -435,10 +572,13 @@ class WebUIServer:
         delta: str = "",
         node: Optional[str] = None,
         buffer_tail: Optional[str] = None,
+        auto_register: bool = True,
     ) -> Any:
         """Append output delta to an active hand's buffer tail."""
         key = self._resolve_hand_key(pane_id, node)
         if key is None:
+            if not auto_register:
+                return _SyncAndAwaitableNone()
             key = self._register_hand(pane_id, node or "localhost", "Task", None, "agy")
             self._broadcast_hands()
         hand = self._active_hands.get(key)
@@ -460,9 +600,10 @@ class WebUIServer:
         delta: str = "",
         node: Optional[str] = None,
         buffer_tail: Optional[str] = None,
+        auto_register: bool = True,
     ) -> None:
         """Asynchronous variant of update_hand_buffer."""
-        self.update_hand_buffer(pane_id, delta, node, buffer_tail=buffer_tail)
+        self.update_hand_buffer(pane_id, delta, node, buffer_tail=buffer_tail, auto_register=auto_register)
 
     def settle_active_hand(
         self,
@@ -475,18 +616,25 @@ class WebUIServer:
         Mark a hand agent as COMPLETED / EXIT_0 / FAILED, retaining it in _active_hands
         for WebUI multi-agent visibility until explicitly cleared by a parent task resolution.
         """
-        key = self._resolve_hand_key(pane_id, node)
-        if key is not None and key in self._active_hands:
+        keys = self._resolve_all_hand_keys(pane_id, node)
+        if keys:
             status_str = status or ("COMPLETED" if exit_code == 0 else "FAILED")
-            self._active_hands[key]["status"] = status_str
-            self._active_hands[key]["exit_code"] = exit_code
-            self._active_hands[key]["settled_at"] = time.time()
-            self._mirror_detach(key)
-            self.broadcast("hand_settle", {
-                "pane_id": key,
-                "exit_code": exit_code,
-                "status": status_str,
-            })
+            now_ts = time.time()
+            for key in keys:
+                if key in self._active_hands:
+                    self._active_hands[key]["status"] = status_str
+                    self._active_hands[key]["exit_code"] = exit_code
+                    self._active_hands[key]["settled_at"] = now_ts
+                    self._mirror_detach(key)
+                    self.broadcast("hand_settle", {
+                        "pane_id": key,
+                        "exit_code": exit_code,
+                        "status": status_str,
+                    })
+            if not self.get_executing_hands():
+                obs = getattr(self, "_eyes_observer", None)
+                if obs is not None and getattr(obs, "_last_emitted_state", None) != "BLOCKER":
+                    obs._last_emitted_state = "IDLE"
             self._broadcast_hands()
         return _SyncAndAwaitableNone()
 
@@ -622,12 +770,17 @@ class WebUIServer:
 
     def unregister_active_hand(self, pane_id: str, node: Optional[str] = None) -> Any:
         """Remove a settled hand agent from active registry."""
-        key = self._resolve_hand_key(pane_id, node)
-        if key is not None:
-            self._active_hands.pop(key, None)
-            self._hand_meta.pop(key, None)
-            self._pane_targets.pop(key, None)
-            self._mirror_detach(key)
+        keys = self._resolve_all_hand_keys(pane_id, node)
+        if keys:
+            for key in keys:
+                self._active_hands.pop(key, None)
+                self._hand_meta.pop(key, None)
+                self._pane_targets.pop(key, None)
+                self._mirror_detach(key)
+            if not self.get_executing_hands():
+                obs = getattr(self, "_eyes_observer", None)
+                if obs is not None and getattr(obs, "_last_emitted_state", None) != "BLOCKER":
+                    obs._last_emitted_state = "IDLE"
             self._broadcast_hands()
         return _SyncAndAwaitableNone()
 
@@ -850,6 +1003,15 @@ class WebUIServer:
                 html = _DASHBOARD_FILE.read_text(encoding="utf-8")
             except Exception:
                 pass
+        try:
+            import re as _re
+            nav_links = load_webui_nav_links()
+            rendered_links = _render_nav_links_html(nav_links)
+            nav_pattern = _re.compile(r'<nav\s+id=["\']top-nav-links["\'][^>]*>.*?</nav>', _re.DOTALL)
+            if nav_pattern.search(html):
+                html = nav_pattern.sub(f'<nav id="top-nav-links" class="top-nav-links">\n{rendered_links}\n    </nav>', html, count=1)
+        except Exception:
+            pass
         return web.Response(
             text=html,
             content_type="text/html",
@@ -2056,7 +2218,15 @@ def get_system_status() -> Dict[str, Any]:
     agent_logs = extract_recent_agent_logs()
 
     # 1. Nose status
+    nose_model = ""
+    try:
+        from golem.config import get_nose_model
+        nose_model = get_nose_model()
+    except Exception:
+        nose_model = ""
+
     nose_data: Dict[str, Any] = {
+        "model": nose_model or "gemini-flash-lite-latest",
         "smells_off": False,
         "quiescent": True,
         "seconds_ago": 0.0,
@@ -2098,6 +2268,13 @@ def get_system_status() -> Dict[str, Any]:
                 nose_data["quiescent"] = not nose_data["smells_off"]
                 if getattr(last_verd, "summary", None):
                     nose_data["verdict_summary"] = str(last_verd.summary)
+            stalled_set = getattr(sentinel, "_alerted_stalled_hands", None)
+            if stalled_set:
+                nose_data["smells_off"] = True
+                nose_data["quiescent"] = False
+                nose_data["stalled_hands"] = sorted(stalled_set)
+                if not nose_data.get("verdict_summary") or "healthy" in nose_data["verdict_summary"].lower() or "nominal" in nose_data["verdict_summary"].lower():
+                    nose_data["verdict_summary"] = f"Stalled hand agent(s) detected: {', '.join(sorted(stalled_set))}"
     except Exception:
         pass
 
@@ -2190,7 +2367,15 @@ def get_system_status() -> Dict[str, Any]:
         pass
 
     # 2. Eye status
+    eyes_model = ""
+    try:
+        from golem.config import get_eyes_model
+        eyes_model = get_eyes_model()
+    except Exception:
+        eyes_model = ""
+
     eyes_data: Dict[str, Any] = {
+        "model": eyes_model or "gemini-flash-lite-latest",
         "state": "IDLE",
         "active_command": "",
         "command": "",
@@ -2227,7 +2412,9 @@ def get_system_status() -> Dict[str, Any]:
         if active_server is not None and getattr(active_server, "_eyes_observer", None) is not None:
             obs = active_server._eyes_observer
             emitted = getattr(obs, "_last_emitted_state", None)
-            if emitted and emitted in ("BLOCKER", "COMPLETED", "RUNNING", "IDLE"):
+            if emitted == "BLOCKER":
+                eyes_data["state"] = "BLOCKER"
+            elif executing_list and emitted in ("BLOCKER", "COMPLETED", "RUNNING", "IDLE"):
                 eyes_data["state"] = emitted
 
     # 3. Mouth status
@@ -2265,6 +2452,7 @@ def get_system_status() -> Dict[str, Any]:
         "nose": nose_data,
         "mouth": mouth_data,
         "hands": hands_data,
+        "nav_links": load_webui_nav_links(),
     }
 
 
@@ -2276,6 +2464,7 @@ __all__ = [
     "WebUIServer",
     "RunnerBufferObserver",
     "EyesTaskObserver",
+    "load_webui_nav_links",
     "start_webui_server",
     "stop_webui_server",
     "get_active_webui_server",

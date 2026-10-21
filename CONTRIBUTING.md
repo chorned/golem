@@ -16,7 +16,7 @@ Golem requires **Python 3.11** or newer (fully tested on Python 3.11, 3.12, 3.13
 
 1. **Clone the Repository:**
    ```bash
-   git clone https://github.com/kunchenguid/golem.git
+   git clone https://github.com/kunchenguid/firstmate.git golem
    cd golem
    ```
 
@@ -55,11 +55,11 @@ golem/
 │   │   ├── mouth.py          # Mouth LLM orchestration & briefing synthesis
 │   │   ├── prompts.py        # Calibrated system prompts
 │   │   ├── events.py         # Strongly-typed AgentEvent protocol
-│   │   └── drivers/          # Pluggable CLI drivers (Antigravity, Claude, OpenCode)
+│   │   └── drivers/          # Pluggable CLI drivers (Antigravity default; Claude Code, Codex, OpenCode)
 │   ├── execution/            # Backstage Hand worker execution & Herdr mesh
 │   │   ├── harness.py        # Dual-pane workspace harness (Mouth vs Hands)
 │   │   ├── runner.py         # RunnerExecutor with 3.0s non-blocking yield
-│   │   ├── delegation.py     # WorkerDelegator (AGY default, opencode, hermes)
+│   │   ├── delegation.py     # WorkerDelegator (AGY default, pluggable worker hooks)
 │   │   ├── buffer.py         # Terminal scrollback buffer management
 │   │   └── mesh.py           # Herdr fleet PTY mesh abstraction
 │   ├── sensory/              # Sensory monitoring plane

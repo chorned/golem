@@ -337,5 +337,177 @@ class TestNoseTelemetryDeduplicationLogic(unittest.IsolatedAsyncioTestCase):
         self.assertIn("[INFO] Golem.Sensory.Nose: Quiescent scan clean", res["logs"][2])
 
 
+class TestWebUISensoryAndLinksFixes(unittest.IsolatedAsyncioTestCase):
+    """Verify Eye no-auto-vivification, collided key resolution, Nose stalled hand persistence, terminal scroll CSS, and custom top-right nav links."""
+
+    async def asyncSetUp(self) -> None:
+        self.port = _get_free_port()
+        self.server = WebUIServer(host="127.0.0.1", port=self.port)
+        await self.server.start()
+
+    async def asyncTearDown(self) -> None:
+        if self.server.is_running:
+            await self.server.stop()
+
+    async def test_eyes_observer_does_not_auto_vivify_unregistered_runner(self) -> None:
+        """EyesTaskObserver.evaluate_buffer_content must not auto-create a phantom 'runner' card when no hand is registered."""
+        from golem.eyes import EyesTaskObserver
+        obs = EyesTaskObserver(pane="runner", webui_server=self.server)
+        self.server._eyes_observer = obs
+
+        # Evaluate a prompt buffer on unregistered 'runner'
+        await obs.evaluate_buffer_content("user@host:~$ ", pane="runner")
+        self.assertEqual(len(self.server.active_hands), 0)
+        self.assertEqual(obs._last_emitted_state, "COMPLETED")
+
+        # Subsequent unchanged tick when no hands are running transitions Eye back to IDLE
+        await obs.evaluate_buffer_content("user@host:~$ ", pane="runner")
+        self.assertEqual(obs._last_emitted_state, "IDLE")
+
+    def test_collided_hand_key_resolution_and_prompt_boilerplate_stripping(self) -> None:
+        """Collided hand keys (#2) resolve, settle, and unregister cleanly; Node Context & Invariants boilerplate is stripped."""
+        raw_cmd = (
+            "[Node Context & Invariants]\n- Node: hermes\n\n"
+            "[Task]\nRun unit tests on hermes\n"
+            "[LINEAR GUARDRAIL: NEVER call Linear GraphQL APIs]\n"
+        )
+        # Register first hand with identity 1, then second concurrent hand with identity 2 on same pane_id/node
+        self.server.register_active_hand(
+            pane_id="agy-381549",
+            node="hermes",
+            command=raw_cmd,
+            pid=101,
+            herdr_pane_id="w1:p2",
+            mirror=False,
+        )
+        self.server.register_active_hand(
+            pane_id="agy-381549",
+            node="hermes",
+            command=raw_cmd,
+            pid=102,
+            herdr_pane_id="w2:p2",
+            mirror=False,
+        )
+        self.assertIn("agy-381549", self.server.active_hands)
+        self.assertIn("agy-381549@hermes", self.server.active_hands)
+        self.assertEqual(self.server.active_hands["agy-381549"]["command"], "Run unit tests on hermes")
+        self.assertNotIn("[Node Context & Invariants]", self.server.active_hands["agy-381549"]["command"])
+
+        # Settling by base pane_id settles all collided entries for that pane_id/node
+        self.server.settle_active_hand("agy-381549", exit_code=0, status="EXIT_0", node="hermes")
+        self.assertEqual(len(self.server.get_executing_hands()), 0)
+
+        # Unregistering by base pane_id removes all collided entries
+        self.server.unregister_active_hand("agy-381549", node="hermes")
+        self.assertEqual(len(self.server.active_hands), 0)
+
+    def test_hand_card_cmd_clamped_for_terminal_scrolling(self) -> None:
+        """dashboard.html must clamp .hand-card-cmd height so .hand-card-xterm remains scrollable."""
+        template_path = Path(PROJECT_DIR) / "golem" / "webui" / "templates" / "dashboard.html"
+        content = template_path.read_text(encoding="utf-8")
+        self.assertIn("-webkit-line-clamp: 2;", content)
+        self.assertIn("max-height: 30px;", content)
+        self.assertNotIn("Comms Gateway", content)
+        self.assertNotIn("HAND AGENTS MATRIX", content)
+
+    async def test_custom_webui_nav_links_and_gitignore(self) -> None:
+        """load_webui_nav_links ships with Wiki by default and loads status.horned.se and code.horned.se from gitignored webui_links.txt."""
+        import tempfile
+        from golem.webui.server import load_webui_nav_links
+
+        # 1. Default when file does not exist: only Wiki
+        default_links = load_webui_nav_links("/tmp/nonexistent_golem_links_12345.txt")
+        self.assertEqual(len(default_links), 1)
+        self.assertEqual(default_links[0]["label"], "WIKI")
+        self.assertEqual(default_links[0]["url"], "/wiki")
+
+        # 2. Custom links from repo's webui_links.txt
+        repo_links = load_webui_nav_links()
+        labels = [l["label"] for l in repo_links]
+        urls = [l["url"] for l in repo_links]
+        self.assertIn("WIKI", labels)
+        self.assertIn("Status", labels)
+        self.assertIn("Code", labels)
+        self.assertIn("https://status.horned.se", urls)
+        self.assertIn("https://code.horned.se", urls)
+
+        # 3. Verify GET / renders the links in #top-nav-links
+        async with aiohttp.ClientSession() as session:
+            async with session.get(f"http://127.0.0.1:{self.port}/") as resp:
+                html = await resp.text()
+                self.assertIn('href="https://status.horned.se"', html)
+                self.assertIn('href="https://code.horned.se"', html)
+
+
+class TestCleanTerminalHeadersAndMobileLayout(unittest.IsolatedAsyncioTestCase):
+    """Verify that terminal headers contain only name and model badge, standby card matches terminal width, and mobile layout is optimized."""
+
+    def setUp(self) -> None:
+        self.template_path = Path(PROJECT_DIR) / "golem" / "webui" / "templates" / "dashboard.html"
+        self.template_content = self.template_path.read_text(encoding="utf-8")
+
+    def test_terminal_headers_contain_only_name_and_model_badge(self) -> None:
+        """Eye, Nose, Mouth and Hand headers must strictly contain terminal name, model badge, and window controls."""
+        # 1. Eye card: contains eye-model-badge, no eye-state-badge in header actions
+        self.assertIn('id="eye-model-badge"', self.template_content)
+        self.assertNotIn('<span id="eye-state-badge"', self.template_content)
+
+        # 2. Nose card: contains nose-model-badge, no nodes/ports/mem/quiescent badges in header
+        self.assertIn('id="nose-model-badge"', self.template_content)
+        self.assertNotIn('<span id="nose-nodes-badge"', self.template_content)
+        self.assertNotIn('<span id="nose-ports-badge"', self.template_content)
+        self.assertNotIn('<span id="nose-mem-badge"', self.template_content)
+        self.assertNotIn('<span id="nose-status-badge"', self.template_content)
+
+        # 3. Mouth card: contains mouth-model-badge, no mouth-turns-badge in header
+        self.assertIn('id="mouth-model-badge"', self.template_content)
+        self.assertNotIn('<span id="mouth-turns-badge"', self.template_content)
+
+        # 4. Hand card header template: uses hand-card-model instead of hand-card-tag
+        self.assertIn('hand-card-model', self.template_content)
+        self.assertNotIn('hand-card-tag', self.template_content)
+
+    def test_standby_card_matches_terminal_width(self) -> None:
+        """Hands standby card must match the exact 580px width of terminals above it."""
+        self.assertIn("max-width: 580px;", self.template_content)
+        import re
+        match = re.search(r'\.hands-idle-card\s*\{([^}]+)\}', self.template_content)
+        self.assertIsNotNone(match, ".hands-idle-card CSS rule not found")
+        rule_body = match.group(1)
+        self.assertIn("max-width: 580px", rule_body)
+        self.assertIn("margin: 0 auto", rule_body)
+
+    def test_mobile_layout_removes_mobile_only_views_and_fixes_overlaps(self) -> None:
+        """Mobile layout must remove mobile-only fleet panel/tab and prevent top nav links overlap."""
+        # Fleet CTA and panel removed
+        self.assertNotIn('data-tab="fleet"', self.template_content)
+        self.assertNotIn('id="mobile-fleet-panel"', self.template_content)
+        self.assertNotIn("tabName === 'fleet'", self.template_content)
+
+        # Top nav links positioned statically on mobile to prevent floating over mobile-tab-strip
+        self.assertIn("position: static !important;", self.template_content)
+        self.assertIn("min-height: 44px;", self.template_content)
+        self.assertIn("min-height: 40px !important;", self.template_content)
+
+    async def test_api_status_supplies_eyes_and_nose_models(self) -> None:
+        """REST /api/status endpoint must supply model names for eyes and nose."""
+        port = _get_free_port()
+        server = WebUIServer(host="127.0.0.1", port=port)
+        await server.start()
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f"http://127.0.0.1:{port}/api/status") as resp:
+                    self.assertEqual(resp.status, 200)
+                    data = await resp.json()
+                    self.assertIn("eyes", data)
+                    self.assertIn("nose", data)
+                    self.assertIn("model", data["eyes"])
+                    self.assertIn("model", data["nose"])
+                    self.assertTrue(data["eyes"]["model"])
+                    self.assertTrue(data["nose"]["model"])
+        finally:
+            await server.stop()
+
+
 if __name__ == "__main__":
     unittest.main()

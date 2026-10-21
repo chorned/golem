@@ -39,6 +39,7 @@ AlertType = Union[
         "email_received",
         "linear_assigned_tickets",
         "assigned_tickets",
+        "linear_quota_exceeded",
     ],
     str,
 ]
@@ -112,6 +113,11 @@ class ShoulderTapAlert:
     def is_linear_assigned_tickets(self) -> bool:
         """True if this alert signals assigned Linear tickets awaiting attention."""
         return self.alert_type in ("linear_assigned_tickets", "assigned_tickets")
+
+    @property
+    def is_linear_quota_exceeded(self) -> bool:
+        """True if this alert signals Linear free tier quota exhaustion."""
+        return self.alert_type == "linear_quota_exceeded"
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert alert to serializable dictionary."""

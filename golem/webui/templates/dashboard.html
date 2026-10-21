@@ -7,21 +7,65 @@
     <!-- Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh. -->
     <style>
         :root {
+            /* Stoneforge Legacy Tokens for Strict Backwards Compatibility */
             --bg-base: #080c10;
             --bg-void: #06070a;
             --bg-surface: #090b10;
-            --bg-card: #0d0f16;
-            --border-stone: #2a2e39;
-            --border-red: #140103;
-            --header-red-1: #ff2a2a;
-            --header-red-2: #b80000;
-            --header-red-3: #7a0000;
-            --runic-cyan: #00f0ff;
-            --runic-gold: #ffd700;
-            --runic-green: #00e676;
-            --runic-red: #ff2222;
-            --font-pixel: 'Press Start 2P', 'Courier New', 'Lucida Console', Monaco, monospace;
-            --font-crt: 'VT323', 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+            --bg-card: #171922;
+            --border-stone: #3d3429;
+            --border-red: #7A1138;
+            --header-red-1: #D82B67;
+            --header-red-2: #E05E46;
+            --header-red-3: #7A1138;
+            --runic-cyan: #5BC0DE;
+            --runic-gold: #F3C65F;
+            --runic-green: #52D681;
+            --runic-red: #F25757;
+
+            /* Tactile Textile & Felt Appliqué Tokens */
+            --burlap-canvas: #C8AE85;
+            --burlap-shadow: #B5986D;
+            --burlap-highlight: #D6BE96;
+            --felt-forest: #244332;
+            --felt-teal: #0D3B4C;
+            --felt-navy: #162447;
+            --felt-navy-shadow: #0A1124;
+            --felt-navy-border: #23386B;
+
+            /* Organ Appliqué Tokens */
+            --eye-teal: #1CA3B8;
+            --eye-lavender: #8B63A6;
+            --eye-mustard: #C9961A;
+            --eye-shadow: #0E5966;
+
+            --nose-orange-1: #E05C2E;
+            --nose-orange-2: #BA3C12;
+            --nose-shadow: #7C260B;
+
+            --mouth-magenta: #D82B67;
+            --mouth-coral: #E05E46;
+            --mouth-shadow: #7A1138;
+
+            /* Mitten Themes for Hand Workers */
+            --mitten-tweed: #705848;
+            --mitten-gingham: #B8332A;
+            --mitten-denim: #274472;
+            --mitten-mustard: #C85A28;
+            --mitten-olive: #6B7B3A;
+
+            /* Terminal Recessed Pocket & Yarn Thread Tokens */
+            --pocket-bg: #171922;
+            --yarn-cream: #F6EFE2;
+            --thread-muted: #94A3B8;
+            --thread-gold: #F3C65F;
+            --thread-cyan: #5BC0DE;
+            --thread-mint: #52D681;
+            --thread-coral: #F25757;
+            --thread-lilac: #D69EF7;
+
+            /* Typography Stack */
+            --font-pixel: 'Fredoka', 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            --font-crt: 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace;
             --font-space: 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
         }
 
@@ -32,8 +76,8 @@
         }
 
         body {
-            background-color: #000000;
-            color: #d1d5db;
+            background-color: var(--burlap-canvas);
+            color: #F6EFE2;
             font-family: var(--font-space);
             font-size: 13px;
             height: 100vh;
@@ -48,12 +92,12 @@
 
         /* Selection styling */
         ::selection {
-            background: rgba(0, 240, 255, 0.35);
+            background: rgba(91, 192, 222, 0.4);
             color: #ffffff;
             text-shadow: 0 0 6px var(--runic-cyan);
         }
         ::-moz-selection {
-            background: rgba(0, 240, 255, 0.35);
+            background: rgba(91, 192, 222, 0.4);
             color: #ffffff;
             text-shadow: 0 0 6px var(--runic-cyan);
         }
@@ -96,22 +140,67 @@
             -webkit-user-select: none;
         }
 
-        /* Scanlines and CRT Curvature Overlay (Confined to Background Mech) */
+        /* Embroidered Felt Trim strip with repeating inline cross-stitch */
         .crt-overlay {
             position: absolute;
-            inset: 0;
-            z-index: 2;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 26px;
+            z-index: 45;
             pointer-events: none;
-            background: linear-gradient(rgba(18, 16, 20, 0) 50%, rgba(0, 0, 0, 0.45) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.04), rgba(0, 255, 128, 0.02), rgba(0, 200, 255, 0.04));
-            background-size: 100% 3px, 6px 100%;
+            background-color: var(--felt-forest);
+            background-image: url("data:image/svg+xml,%3Csvg width='36' height='26' viewBox='0 0 36 26' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M4 6 L12 20 M12 6 L4 20' stroke='%23F3C65F' stroke-width='2' stroke-linecap='round'/%3E%3Cpath d='M16 6 L24 20 M24 6 L16 20' stroke='%235BC0DE' stroke-width='2' stroke-linecap='round'/%3E%3Cpath d='M28 6 L36 20 M36 6 L28 20' stroke='%23EB6B56' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E");
+            background-repeat: repeat-x;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.5), inset 0 -2px 0 #182e22;
+            border-bottom: 2px dashed #D6BE96;
         }
 
-        /* Colossus Background Mech Layer */
+        /* 3-Zone Patchwork Quilt Backdrop (Coarse Tan Burlap + Forest Green & Deep Teal Patches) */
         .colossus-backdrop {
-            position: absolute;
+            position: fixed;
             inset: 0;
             z-index: 0;
             overflow: hidden;
+            background-color: var(--burlap-canvas);
+            background-image: 
+                repeating-linear-gradient(0deg, rgba(181, 152, 109, 0.45) 0px, rgba(181, 152, 109, 0.45) 2px, transparent 2px, transparent 6px),
+                repeating-linear-gradient(90deg, rgba(214, 190, 150, 0.4) 0px, rgba(214, 190, 150, 0.4) 2px, transparent 2px, transparent 6px),
+                url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.06'/%3E%3C/svg%3E");
+        }
+
+        .colossus-backdrop::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            right: 0;
+            width: 48vw;
+            height: 46vh;
+            background-color: var(--felt-forest);
+            background-image: repeating-linear-gradient(45deg, rgba(255,255,255,0.03) 0px, rgba(255,255,255,0.03) 2px, transparent 2px, transparent 8px);
+            border-left: 3px dashed #F3C65F;
+            border-bottom: 3px dashed #5BC0DE;
+            border-bottom-left-radius: 32px;
+            box-shadow: inset 0 0 40px rgba(0,0,0,0.55), -4px 6px 16px rgba(10, 20, 15, 0.35);
+            pointer-events: none;
+            z-index: 1;
+        }
+
+        .colossus-backdrop::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            right: 0;
+            width: 52vw;
+            height: 48vh;
+            background-color: var(--felt-teal);
+            background-image: repeating-linear-gradient(-45deg, rgba(255,255,255,0.03) 0px, rgba(255,255,255,0.03) 2px, transparent 2px, transparent 8px);
+            border-left: 3px dashed #52D681;
+            border-top: 3px dashed #F3C65F;
+            border-top-left-radius: 36px;
+            box-shadow: inset 0 0 45px rgba(0,0,0,0.6), -4px -6px 18px rgba(5, 20, 30, 0.4);
+            pointer-events: none;
+            z-index: 1;
         }
 
         .colossus-img {
@@ -125,23 +214,25 @@
         .backdrop-vignette {
             position: absolute;
             inset: 0;
-            background: linear-gradient(to top, rgba(6, 7, 10, 0.92) 0%, rgba(10, 12, 19, 0.55) 50%, rgba(6, 7, 10, 0.88) 100%);
+            background: radial-gradient(circle at center, transparent 55%, rgba(60, 40, 20, 0.28) 100%);
             pointer-events: none;
+            z-index: 2;
         }
 
         .backdrop-radial {
             position: absolute;
             inset: 0;
-            background: radial-gradient(circle at center, transparent 30%, #000000 95%);
+            box-shadow: inset 0 0 100px rgba(40, 25, 10, 0.35);
             pointer-events: none;
-            opacity: 0.82;
+            opacity: 0.7;
+            z-index: 2;
         }
 
-        /* Metallic Girder Bevel Borders like SNES Arcade Frames */
+        /* Embroidered Felt Girders (Navy & Teal Felt Side Trims) */
         .arcade-girder-left {
             position: absolute;
             left: 0;
-            top: 0;
+            top: 26px;
             bottom: 0;
             width: 28px;
             z-index: 40;
@@ -150,15 +241,16 @@
             justify-content: space-around;
             align-items: center;
             padding: 24px 0;
-            background: repeating-linear-gradient(180deg, #373e4b 0px, #20242e 6px, #4a5468 10px, #11141b 16px);
-            box-shadow: inset -3px 0 6px rgba(0,0,0,0.9), 4px 0 12px rgba(0,0,0,0.85);
-            border-right: 2px solid #000000;
+            background-color: var(--felt-navy);
+            background-image: repeating-linear-gradient(180deg, rgba(255,255,255,0.03) 0px, rgba(255,255,255,0.03) 4px, transparent 4px, transparent 12px);
+            box-shadow: inset -3px 0 8px rgba(10, 17, 36, 0.9), 4px 0 14px rgba(0,0,0,0.6);
+            border-right: 2px dashed #EB6B56;
         }
 
         .arcade-girder-right {
             position: absolute;
             right: 0;
-            top: 0;
+            top: 26px;
             bottom: 0;
             width: 28px;
             z-index: 40;
@@ -167,56 +259,192 @@
             justify-content: space-around;
             align-items: center;
             padding: 24px 0;
-            background: repeating-linear-gradient(180deg, #373e4b 0px, #20242e 6px, #4a5468 10px, #11141b 16px);
-            box-shadow: inset 3px 0 6px rgba(0,0,0,0.9), -4px 0 12px rgba(0,0,0,0.85);
-            border-left: 2px solid #000000;
+            background-color: var(--felt-teal);
+            background-image: repeating-linear-gradient(180deg, rgba(255,255,255,0.03) 0px, rgba(255,255,255,0.03) 4px, transparent 4px, transparent 12px);
+            box-shadow: inset 3px 0 8px rgba(5, 20, 30, 0.9), -4px 0 14px rgba(0,0,0,0.6);
+            border-left: 2px dashed #52D681;
         }
 
+        /* 4-Hole Sewn Buttons with Alternating Colorful Fills and Cross Thread */
         .girder-rivet {
-            width: 12px;
-            height: 12px;
+            width: 14px;
+            height: 14px;
             border-radius: 50%;
-            background: #4a5468;
-            border: 1px solid #11141b;
-            box-shadow: inset 1px 1px 2px rgba(255,255,255,0.4), inset -1px -1px 2px rgba(0,0,0,0.9);
+            position: relative;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.6), inset 0 1px 2px rgba(255,255,255,0.4), inset 0 -1px 2px rgba(0,0,0,0.7);
+            border: 1px solid rgba(0,0,0,0.5);
+            background: #D9383A;
+        }
+        .arcade-girder-left .girder-rivet:nth-child(4n+1) { background: #D9383A; }
+        .arcade-girder-left .girder-rivet:nth-child(4n+2) { background: #8CC63F; }
+        .arcade-girder-left .girder-rivet:nth-child(4n+3) { background: #2B8CBE; }
+        .arcade-girder-left .girder-rivet:nth-child(4n+4) { background: #F39C12; }
+        .arcade-girder-right .girder-rivet:nth-child(4n+1) { background: #2B8CBE; }
+        .arcade-girder-right .girder-rivet:nth-child(4n+2) { background: #F39C12; }
+        .arcade-girder-right .girder-rivet:nth-child(4n+3) { background: #D9383A; }
+        .arcade-girder-right .girder-rivet:nth-child(4n+4) { background: #8CC63F; }
+
+        .girder-rivet::after {
+            content: '✕';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 8px;
+            line-height: 1;
+            color: #F6EFE2;
+            opacity: 0.9;
+            text-shadow: 0 0 1px #000;
         }
 
-        /* 16-bit SNES Arcade Window Styling */
+        /* Handcrafted Felt Card Styling with 3D Wool-Edge Drop Shadows */
         .arcade-window-red {
             box-shadow: 
-                inset 1px 1px 0px rgba(255, 160, 160, 0.8),
-                inset -2px -2px 0px #300000,
-                0 8px 24px rgba(0, 0, 0, 0.95),
-                0 0 14px rgba(230, 0, 0, 0.25);
+                0 6px 0 var(--border-red),
+                0 14px 28px rgba(20, 12, 5, 0.55);
             border: 2px solid var(--border-red);
-            background: rgba(9, 11, 16, 0.95);
-            backdrop-filter: blur(8px);
-            border-radius: 4px;
+            background: var(--pocket-bg);
+            border-radius: 16px;
             transition: all 0.15s ease-in-out;
+            position: relative;
         }
 
         .arcade-window-red:hover {
-            border-color: #ff4d4d;
             box-shadow: 
-                inset 1px 1px 0px rgba(255, 180, 180, 0.9),
-                inset -2px -2px 0px #400000,
-                0 10px 28px rgba(0, 0, 0, 0.98),
-                0 0 18px rgba(255, 42, 42, 0.4);
+                0 8px 0 var(--border-red),
+                0 18px 32px rgba(20, 12, 5, 0.65);
+            transform: translateY(-2px);
         }
 
         .arcade-header-red {
-            background: linear-gradient(180deg, var(--header-red-1) 0%, var(--header-red-2) 55%, var(--header-red-3) 100%);
-            box-shadow: inset 0 1px 0 rgba(255,255,255,0.45), inset 0 -1px 0 rgba(0,0,0,0.8);
-            text-shadow: 1px 1px 0px #240003;
-            padding: 4px 8px;
+            background: linear-gradient(180deg, var(--header-red-1) 0%, var(--header-red-2) 100%);
+            border-bottom: 2px dashed rgba(255, 255, 255, 0.45);
+            border-top-left-radius: 14px;
+            border-top-right-radius: 14px;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.35), inset 0 -1px 0 rgba(0,0,0,0.4);
+            text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.6);
+            padding: 6px 12px;
             display: flex;
             align-items: center;
             justify-content: space-between;
             font-family: var(--font-pixel);
-            font-size: 10px;
+            font-size: 11px;
             color: #ffffff;
-            font-weight: bold;
+            font-weight: 700;
+            letter-spacing: 0.5px;
         }
+
+        /* Organ-Specific Felt Appliqué Styling */
+        #eye-card {
+            border-radius: 16px;
+            border: 2px solid var(--eye-shadow);
+            box-shadow: 0 6px 0 var(--eye-shadow), 0 14px 28px rgba(14, 89, 102, 0.45);
+            background: var(--pocket-bg);
+        }
+        #eye-card:hover {
+            box-shadow: 0 8px 0 var(--eye-shadow), 0 18px 32px rgba(14, 89, 102, 0.6);
+        }
+        #eye-card .arcade-header-red {
+            background: linear-gradient(135deg, var(--eye-teal) 0%, var(--eye-lavender) 50%, var(--eye-mustard) 100%);
+            border-bottom: 2px dashed #F6EFE2;
+            border-top-left-radius: 14px;
+            border-top-right-radius: 14px;
+        }
+
+        #nose-card {
+            border-radius: 16px;
+            border: 2px solid var(--nose-shadow);
+            box-shadow: 0 6px 0 var(--nose-shadow), 0 14px 28px rgba(124, 38, 11, 0.45);
+            background: var(--pocket-bg);
+        }
+        #nose-card:hover {
+            box-shadow: 0 8px 0 var(--nose-shadow), 0 18px 32px rgba(124, 38, 11, 0.6);
+        }
+        #nose-card .arcade-header-red {
+            background: linear-gradient(135deg, var(--nose-orange-1) 0%, var(--nose-orange-2) 100%);
+            border-bottom: 2px dashed #F3C65F;
+            border-top-left-radius: 14px;
+            border-top-right-radius: 14px;
+        }
+
+        #mouth-card {
+            border-radius: 16px;
+            border: 2px solid var(--mouth-shadow);
+            box-shadow: 0 6px 0 var(--mouth-shadow), 0 14px 28px rgba(122, 17, 56, 0.45);
+            background: var(--pocket-bg);
+        }
+        #mouth-card:hover {
+            box-shadow: 0 8px 0 var(--mouth-shadow), 0 18px 32px rgba(122, 17, 56, 0.6);
+        }
+        #mouth-card .arcade-header-red {
+            background: linear-gradient(90deg, var(--mouth-magenta) 0%, var(--mouth-magenta) 50%, var(--mouth-coral) 50%, var(--mouth-coral) 100%);
+            border-bottom: 2px dashed #F6EFE2;
+            border-top-left-radius: 14px;
+            border-top-right-radius: 14px;
+        }
+
+        /* Hand Mitten Rotating Patchwork Themes */
+        .hand-card {
+            border-radius: 16px;
+            background: var(--pocket-bg);
+        }
+        .hand-card:nth-child(5n+1) {
+            border-color: #4a382c;
+            box-shadow: 0 6px 0 #3a2b22, 0 12px 24px rgba(20,12,5,0.55);
+        }
+        .hand-card:nth-child(5n+1) .arcade-header-red {
+            background: linear-gradient(135deg, var(--mitten-tweed) 0%, #4a382c 100%);
+            border-bottom: 2px dashed #D6BE96;
+        }
+
+        .hand-card:nth-child(5n+2) {
+            border-color: #852119;
+            box-shadow: 0 6px 0 #5c140e, 0 12px 24px rgba(20,12,5,0.55);
+        }
+        .hand-card:nth-child(5n+2) .arcade-header-red {
+            background: linear-gradient(135deg, var(--mitten-gingham) 0%, #852119 100%);
+            border-bottom: 2px dashed #F6EFE2;
+        }
+
+        .hand-card:nth-child(5n+3) {
+            border-color: #172c4d;
+            box-shadow: 0 6px 0 #0f1c32, 0 12px 24px rgba(20,12,5,0.55);
+        }
+        .hand-card:nth-child(5n+3) .arcade-header-red {
+            background: linear-gradient(135deg, var(--mitten-denim) 0%, #172c4d 100%);
+            border-bottom: 2px dashed #5BC0DE;
+        }
+
+        .hand-card:nth-child(5n+4) {
+            border-color: #943d14;
+            box-shadow: 0 6px 0 #61250a, 0 12px 24px rgba(20,12,5,0.55);
+        }
+        .hand-card:nth-child(5n+4) .arcade-header-red {
+            background: linear-gradient(135deg, var(--mitten-mustard) 0%, #943d14 100%);
+            border-bottom: 2px dashed #F3C65F;
+        }
+
+        .hand-card:nth-child(5n+5) {
+            border-color: #465323;
+            box-shadow: 0 6px 0 #2d3615, 0 12px 24px rgba(20,12,5,0.55);
+        }
+        .hand-card:nth-child(5n+5) .arcade-header-red {
+            background: linear-gradient(135deg, var(--mitten-olive) 0%, #465323 100%);
+            border-bottom: 2px dashed #D6BE96;
+        }
+
+        /* Dynamic Braided Rainbow Yarn SVG Routing Layer */
+        .yarn-router-layer {
+            position: fixed;
+            inset: 0;
+            width: 100vw;
+            height: 100vh;
+            pointer-events: none;
+            z-index: 12;
+            overflow: visible;
+        }
+
+
 
         /* Glow utilities */
         .text-glow-cyan {
@@ -521,12 +749,15 @@
         .sensory-lead-body,
         .terminal-body {
             font-family: var(--font-crt);
-            font-size: 11px;
+            font-size: 11.5px;
             line-height: 18px;
-            background: rgba(7, 9, 14, 0.95);
-            padding: 6px 10px;
-            color: #cbd5e1;
-            border-top: 1px solid #1e2430;
+            background: var(--pocket-bg);
+            box-shadow: inset 0 4px 10px rgba(0,0,0,0.65);
+            padding: 8px 12px;
+            color: var(--yarn-cream);
+            border-top: 1px solid #282c3c;
+            border-bottom-left-radius: 14px;
+            border-bottom-right-radius: 14px;
             display: flex;
             flex-direction: column;
             gap: 0;
@@ -545,14 +776,14 @@
 
         .terminal-log-line {
             font-family: var(--font-crt);
-            font-size: 11px;
+            font-size: 11.5px;
             line-height: 18px;
             min-height: 18px;
             height: auto;
             max-height: none;
             flex-shrink: 0 !important;
             display: block;
-            color: #cbd5e1;
+            color: var(--yarn-cream);
             white-space: pre-wrap;
             word-break: break-word;
             overflow-wrap: anywhere;
@@ -675,19 +906,20 @@
 
         .hands-idle-card {
             grid-column: 1 / -1;
-            background: rgba(9, 11, 16, 0.95);
-            border: 2px solid var(--border-red);
-            border-radius: 4px;
-            padding: 16px 20px;
+            width: 100%;
+            max-width: 580px;
+            margin: 0 auto;
+            box-sizing: border-box;
+            background: var(--pocket-bg);
+            border: 2px dashed #D6BE96;
+            border-radius: 16px;
+            padding: 18px 24px;
             display: flex;
             align-items: center;
             justify-content: center;
             box-shadow: 
-                inset 1px 1px 0px rgba(255, 160, 160, 0.5),
-                inset -2px -2px 0px #240003,
-                0 8px 24px rgba(0, 0, 0, 0.95),
-                0 0 10px rgba(230, 0, 0, 0.15);
-            backdrop-filter: blur(8px);
+                0 6px 0 #241e17,
+                0 14px 28px rgba(20, 12, 5, 0.45);
         }
 
         .hands-idle-content {
@@ -754,14 +986,18 @@
 
         .hand-card-body {
             flex: 1;
+            min-height: 0;
             font-family: var(--font-crt);
-            font-size: 11px;
-            background: rgba(7, 9, 14, 0.95);
-            padding: 5px 8px;
+            font-size: 11.5px;
+            background: var(--pocket-bg);
+            box-shadow: inset 0 4px 10px rgba(0,0,0,0.65);
+            padding: 8px 10px;
             display: flex;
             flex-direction: column;
             justify-content: space-between;
-            border-top: 1px solid #1e2430;
+            border-top: 1px solid #282c3c;
+            border-bottom-left-radius: 14px;
+            border-bottom-right-radius: 14px;
             overflow: hidden;
             user-select: text !important;
             -webkit-user-select: text !important;
@@ -772,11 +1008,18 @@
             font-weight: bold;
             font-size: 11px;
             line-height: 15px;
+            max-height: 30px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
             white-space: pre-wrap;
             word-break: break-word;
             overflow-wrap: anywhere;
             color: var(--runic-cyan);
             margin-bottom: 2px;
+            flex-shrink: 0;
             user-select: text !important;
             -webkit-user-select: text !important;
             cursor: text;
@@ -785,8 +1028,8 @@
         /* Live Herdr pane mirror (read-only) with line breaks and no ellipsizing */
         .hand-card-xterm {
             display: block;
-            flex: 1;
-            min-height: 40px;
+            flex: 1 1 0;
+            min-height: 0;
             height: 100%;
             margin: 2px 0;
             overflow: hidden;
@@ -810,7 +1053,7 @@
             white-space: pre-wrap;
             word-break: break-word;
             overflow-wrap: anywhere;
-            color: #cbd5e1;
+            color: var(--yarn-cream);
             box-sizing: border-box;
             padding: 4px 6px;
             user-select: text !important;
@@ -851,9 +1094,6 @@
         .mobile-tab-strip {
             display: none;
         }
-        .mobile-panel {
-            display: none;
-        }
 
         @media (max-width: 768px) {
             .arcade-girder-left,
@@ -872,6 +1112,29 @@
                 display: none !important;
             }
 
+            .top-nav-links {
+                position: static !important;
+                width: 100% !important;
+                justify-content: center !important;
+                padding: 10px 12px !important;
+                gap: 8px !important;
+                background: rgba(13, 15, 22, 0.98);
+                border-bottom: 1px solid #232936;
+                box-sizing: border-box;
+                z-index: 50;
+            }
+
+            .wiki-nav-link {
+                padding: 8px 14px !important;
+                font-size: 11px !important;
+                min-height: 40px !important;
+                border-radius: 8px !important;
+                box-sizing: border-box;
+                display: inline-flex !important;
+                align-items: center !important;
+                justify-content: center !important;
+            }
+
             .mobile-tab-strip {
                 display: flex !important;
                 position: sticky;
@@ -879,30 +1142,33 @@
                 z-index: 40;
                 background: rgba(13, 15, 22, 0.98);
                 border-bottom: 2px solid #232936;
-                padding: 6px 8px;
-                gap: 6px;
+                padding: 8px;
+                gap: 8px;
                 overflow-x: auto;
                 -webkit-overflow-scrolling: touch;
+                box-sizing: border-box;
             }
 
             .mobile-tab-btn {
-                flex: 1;
-                min-width: 64px;
-                padding: 8px 4px;
+                flex: 1 1 0;
+                min-width: 72px;
+                min-height: 44px;
+                padding: 10px 8px;
                 background: #11141d;
                 border: 1px solid #232936;
-                border-radius: 4px;
+                border-radius: 6px;
                 color: #94a3b8;
                 font-family: var(--font-space);
-                font-size: 11px;
+                font-size: 13px;
                 font-weight: 600;
                 cursor: pointer;
                 display: flex;
                 align-items: center;
                 justify-content: center;
-                gap: 4px;
+                gap: 6px;
                 white-space: nowrap;
                 transition: all 0.15s ease;
+                box-sizing: border-box;
             }
 
             .mobile-tab-btn.active {
@@ -910,6 +1176,24 @@
                 border-color: var(--runic-cyan);
                 color: #ffffff;
                 box-shadow: 0 0 8px rgba(0, 240, 255, 0.35);
+            }
+
+            .terminal-header-actions {
+                gap: 8px !important;
+            }
+
+            .arcade-ctrl-btn {
+                width: 36px !important;
+                height: 36px !important;
+                font-size: 14px !important;
+                border-radius: 6px !important;
+            }
+
+            .arcade-ctrl-btn.btn-confirm-kill {
+                min-width: 56px !important;
+                min-height: 36px !important;
+                font-size: 11px !important;
+                padding: 0 8px !important;
             }
 
             .sensory-organs-row {
@@ -920,23 +1204,47 @@
             }
 
             /* Mobile Tab Visibility */
-            body.mobile-mode .golem-anchor,
-            body.mobile-mode .mobile-panel {
+            .golem-anchor {
                 display: none !important;
             }
 
-            body.mobile-mode .golem-anchor.mobile-active-tab,
-            body.mobile-mode .mobile-panel.mobile-active-tab {
+            .golem-anchor.mobile-active-tab {
                 display: flex !important;
                 width: 100% !important;
                 margin: 0 !important;
             }
 
+            .anchor-eyes,
+            .anchor-nose,
+            .anchor-mouth,
+            .anchor-hands {
+                max-width: 100% !important;
+                width: 100% !important;
+                padding: 0 4px;
+                box-sizing: border-box;
+            }
+
+            .sensory-window,
+            .hand-card {
+                width: 100% !important;
+                max-width: 100% !important;
+                box-sizing: border-box;
+            }
+
+            .sensory-window.terminal-expanded,
+            .hand-card.terminal-expanded {
+                width: 100% !important;
+                max-width: 100% !important;
+            }
+
             .terminal-body {
-                height: calc(100vh - 135px) !important;
+                height: calc(100vh - 190px) !important;
+                min-height: 280px !important;
                 max-height: none !important;
                 font-size: 12.5px !important;
                 line-height: 1.55 !important;
+                overflow-y: auto !important;
+                -webkit-overflow-scrolling: touch !important;
             }
 
             .terminal-log-line {
@@ -949,8 +1257,93 @@
             }
 
             .hand-card {
-                min-height: 160px !important;
+                min-height: 320px !important;
+                height: calc(100vh - 190px) !important;
+                max-height: none !important;
+                display: flex !important;
+                flex-direction: column !important;
             }
+
+            .hand-card-body {
+                flex: 1 1 auto !important;
+                display: flex !important;
+                flex-direction: column !important;
+                min-height: 0 !important;
+                overflow: hidden !important;
+            }
+
+            .hand-card-xterm {
+                flex: 1 1 auto !important;
+                min-height: 180px !important;
+                height: 100% !important;
+            }
+        }
+
+        body.mobile-mode .top-nav-links {
+            position: static !important;
+            width: 100% !important;
+            justify-content: center !important;
+            padding: 10px 12px !important;
+            gap: 8px !important;
+            background: rgba(13, 15, 22, 0.98);
+            border-bottom: 1px solid #232936;
+            box-sizing: border-box;
+            z-index: 50;
+        }
+        body.mobile-mode .wiki-nav-link {
+            padding: 8px 14px !important;
+            font-size: 11px !important;
+            min-height: 40px !important;
+            border-radius: 8px !important;
+            box-sizing: border-box;
+            display: inline-flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+        }
+        body.mobile-mode .mobile-tab-strip {
+            display: flex !important;
+            position: sticky;
+            top: 0;
+            z-index: 40;
+            background: rgba(13, 15, 22, 0.98);
+            border-bottom: 2px solid #232936;
+            padding: 8px;
+            gap: 8px;
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+            box-sizing: border-box;
+        }
+        body.mobile-mode .mobile-tab-btn {
+            flex: 1 1 0;
+            min-width: 72px;
+            min-height: 44px;
+            padding: 10px 8px;
+            font-size: 13px;
+            box-sizing: border-box;
+        }
+        body.mobile-mode .arcade-girder-left,
+        body.mobile-mode .arcade-girder-right {
+            display: none !important;
+        }
+        body.mobile-mode .arcade-ctrl-btn {
+            width: 36px !important;
+            height: 36px !important;
+            font-size: 14px !important;
+            border-radius: 6px !important;
+        }
+        body.mobile-mode .arcade-ctrl-btn.btn-confirm-kill {
+            min-width: 56px !important;
+            min-height: 36px !important;
+            font-size: 11px !important;
+            padding: 0 8px !important;
+        }
+        body.mobile-mode .golem-anchor {
+            display: none !important;
+        }
+        body.mobile-mode .golem-anchor.mobile-active-tab {
+            display: flex !important;
+            width: 100% !important;
+            margin: 0 !important;
         }
 
         .hand-card-xterm .xterm { height: 100%; padding: 0; }
@@ -999,26 +1392,26 @@
         }
 
         .arcade-ctrl-btn {
-            background: rgba(255, 255, 255, 0.08);
-            border: 1px solid rgba(255, 255, 255, 0.28);
-            color: #ffffff;
+            background: #2b3345;
+            border: 1px solid #1a202c;
+            color: #F6EFE2;
             font-family: var(--font-pixel);
-            font-size: 9px;
-            width: 17px;
-            height: 17px;
+            font-size: 10px;
+            width: 22px;
+            height: 22px;
             display: inline-flex;
             align-items: center;
             justify-content: center;
             cursor: pointer;
             padding: 0;
-            border-radius: 2px;
+            border-radius: 50%;
             transition: all 0.15s ease-in-out;
             line-height: 1;
-            box-shadow: inset 1px 1px 0 rgba(255,255,255,0.25), inset -1px -1px 0 rgba(0,0,0,0.6);
+            box-shadow: inset 0 1px 2px rgba(255,255,255,0.4), 0 2px 4px rgba(0,0,0,0.6);
         }
 
         .arcade-ctrl-btn:hover {
-            background: rgba(0, 240, 255, 0.3);
+            background: rgba(91, 192, 222, 0.35);
             border-color: var(--runic-cyan);
             color: var(--runic-cyan);
             box-shadow: 0 0 8px var(--runic-cyan);
@@ -1143,12 +1536,16 @@
         }
 
         .status-pill-badge {
-            font-size: 8px;
+            font-size: 8.5px;
             font-family: var(--font-pixel);
-            padding: 1px 6px;
-            border-radius: 2px;
-            border: 1px solid currentColor;
+            font-weight: 700;
+            padding: 2px 7px;
+            border-radius: 8px;
+            border: 1px dashed currentColor;
             line-height: 1.2;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            background: rgba(0, 0, 0, 0.35);
         }
 
         .badge-green {
@@ -1313,53 +1710,65 @@
             transform: scale(0.96);
         }
 
-        .wiki-nav-link {
+        .top-nav-links {
             position: fixed;
             top: 14px;
             right: 18px;
             z-index: 9999;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+        }
+
+        .wiki-nav-link {
             display: inline-flex;
             align-items: center;
             gap: 6px;
-            background: rgba(13, 15, 22, 0.88);
-            border: 1px solid var(--border-stone);
-            border-radius: 4px;
+            background: #244332;
+            border: 2px dashed #F3C65F;
+            border-radius: 12px;
             padding: 5px 12px;
-            color: var(--runic-cyan);
-            font-family: var(--font-crt);
-            font-size: 13px;
+            color: #F6EFE2;
+            font-family: var(--font-pixel);
+            font-size: 11px;
             text-decoration: none;
             letter-spacing: 1px;
-            backdrop-filter: blur(4px);
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.4);
             transition: all 0.2s ease;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
         }
         .wiki-nav-link:hover {
-            border-color: var(--runic-cyan);
-            background: rgba(0, 240, 255, 0.15);
-            box-shadow: 0 0 10px rgba(0, 240, 255, 0.4);
+            border-color: #5BC0DE;
+            background: #1d3628;
+            box-shadow: 0 0 12px rgba(243, 198, 95, 0.5);
             color: #ffffff;
             transform: translateY(-1px);
         }
     </style>
 </head>
 <body class="dark">
-    <!-- Floating Link to Golem Memory Wiki -->
-    <a href="/wiki" class="wiki-nav-link" title="Open Golem Operational Memory Wiki">
-        <span>📖</span>
-        <span>WIKI</span>
-    </a>
+    <!-- Dynamic Braided Rainbow Yarn SVG Routing Layer -->
+    <svg id="yarn-router-layer" class="yarn-router-layer" aria-hidden="true"></svg>
 
-    <!-- Background Image: Ancient Robotic Stone Golem Colossus -->
+    <!-- Top-Right Navigation Links (Ships with Wiki; user links loaded from gitignored webui_links.txt) -->
+    <nav id="top-nav-links" class="top-nav-links">
+        <a href="/wiki" class="wiki-nav-link" title="Open Golem Operational Memory Wiki">
+            <span>📖</span>
+            <span>WIKI</span>
+        </a>
+    </nav>
+
+    <!-- Background Quilt: Coarse Tan Burlap & Asymmetric Forest/Teal Wool Patches -->
     <div class="colossus-backdrop">
-        <img alt="Ancient Stone Colossus Mech" class="colossus-img" id="colossus-img" src="/colossus.png" />
+        <img alt="Ancient Stone Colossus Mech" class="colossus-img" id="colossus-img" src="/colossus.png" style="display: none;" />
         <div class="backdrop-vignette"></div>
         <div class="backdrop-radial"></div>
-        <!-- CRT Scanline Overlay applied ONLY to background image -->
+        <!-- Embroidered Felt Trim strip with repeating inline cross-stitch -->
         <div class="crt-overlay"></div>
     </div>
 
-    <!-- Left Girder Bevel (SNES arcade cabinet side trim) -->
+    <!-- Left Girder Bevel (Navy Felt Trim with Sewn 4-Hole Buttons) -->
     <div class="arcade-girder-left">
         <div class="girder-rivet"></div>
         <div class="girder-rivet"></div>
@@ -1368,7 +1777,7 @@
         <div class="girder-rivet"></div>
     </div>
 
-    <!-- Right Girder Bevel -->
+    <!-- Right Girder Bevel (Teal Felt Trim with Sewn 4-Hole Buttons) -->
     <div class="arcade-girder-right">
         <div class="girder-rivet"></div>
         <div class="girder-rivet"></div>
@@ -1376,6 +1785,8 @@
         <div class="girder-rivet"></div>
         <div class="girder-rivet"></div>
     </div>
+
+
 
     <!-- Hidden status metrics and controls (header menu removed per user preference) -->
     <div style="display: none;" aria-hidden="true" id="hidden-status-dock">
@@ -1396,8 +1807,6 @@
         <button class="mobile-tab-btn" data-tab="eyes">👁️ Eyes</button>
         <button class="mobile-tab-btn" data-tab="nose">👃 Nose</button>
         <button class="mobile-tab-btn" data-tab="mouth">👄 Mouth</button>
-        <button class="mobile-tab-btn" data-tab="fleet">🌐 Fleet</button>
-        <a href="/wiki" class="mobile-tab-btn" style="text-decoration: none; display: flex; align-items: center; justify-content: center; color: var(--runic-cyan);">📖 Wiki</a>
     </nav>
 
     <!-- Hidden metadata for test / system invariants -->
@@ -1409,17 +1818,16 @@
     <main class="workspace-canvas" id="workspace-canvas">
         <!-- Central Golem Facial Feature Anchor Matrix -->
         <div class="golem-face-matrix" id="golem-face-matrix">
-                <!-- 1. Eye Agent Terminal Anchor (Ocular Stream) -->
+                <!-- 1. Eye Agent Terminal Anchor -->
                 <div class="golem-anchor anchor-eyes" id="anchor-eyes" data-anchor="eyes" data-tab="eyes">
                     <article class="sensory-window arcade-window-red" id="eye-card">
                         <div class="arcade-header-red">
                             <div style="display: flex; align-items: center; gap: 8px;">
                                 <span style="width: 8px; height: 8px; background: var(--runic-cyan); border-radius: 50%; box-shadow: 0 0 6px var(--runic-cyan);"></span>
                                 <span>Eye Agent</span>
-                                <span style="color: #67e8f9; font-family: var(--font-space); font-size: 8px; font-weight: 600;">[OCULAR_STREAM]</span>
                             </div>
                             <div class="terminal-header-actions">
-                                <span id="eye-state-badge" class="status-pill-badge badge-green">OBSERVING</span>
+                                <span id="eye-model-badge" class="status-pill-badge badge-cyan">gemini-flash-lite-latest</span>
                                 <button class="arcade-ctrl-btn btn-expand" title="Expand to full viewport height" aria-label="Expand terminal">□</button>
                                 <button class="arcade-ctrl-btn btn-close" title="Close" aria-label="Close">×</button>
                             </div>
@@ -1428,20 +1836,16 @@
                     </article>
                 </div>
 
-                <!-- 2. Nose Agent Terminal Anchor (Heuristic Sniffer) -->
+                <!-- 2. Nose Agent Terminal Anchor -->
                 <div class="golem-anchor anchor-nose" id="anchor-nose" data-anchor="nose" data-tab="nose">
                     <article class="sensory-window arcade-window-red" id="nose-card">
                         <div class="arcade-header-red">
                             <div style="display: flex; align-items: center; gap: 8px;">
                                 <span style="width: 8px; height: 8px; background: var(--runic-cyan); border-radius: 50%; box-shadow: 0 0 6px var(--runic-cyan);"></span>
                                 <span>Nose Agent</span>
-                                <span style="color: #a5f3fc; font-family: var(--font-space); font-size: 8px; font-weight: 600;">[HEURISTIC_SNIFFER]</span>
                             </div>
                             <div class="terminal-header-actions">
-                                <span id="nose-nodes-badge" class="status-pill-badge badge-cyan" title="Fleet node reachability">NODES --</span>
-                                <span id="nose-ports-badge" class="status-pill-badge badge-cyan" title="Local listening ports">PORTS --</span>
-                                <span id="nose-mem-badge" class="status-pill-badge badge-cyan" title="Host memory used">MEM --</span>
-                                <span id="nose-status-badge" class="status-pill-badge badge-green">QUIESCENT</span>
+                                <span id="nose-model-badge" class="status-pill-badge badge-amber">gemini-flash-lite-latest</span>
                                 <button class="arcade-ctrl-btn btn-expand" title="Expand to full viewport height" aria-label="Expand terminal">□</button>
                                 <button class="arcade-ctrl-btn btn-close" title="Close" aria-label="Close">×</button>
                             </div>
@@ -1450,18 +1854,16 @@
                     </article>
                 </div>
 
-                <!-- 3. Mouth Agent Terminal Anchor (Voice Synth Dispatch) -->
+                <!-- 3. Mouth Agent Terminal Anchor -->
                 <div class="golem-anchor anchor-mouth" id="anchor-mouth" data-anchor="mouth" data-tab="mouth">
                     <article class="sensory-window arcade-window-red" id="mouth-card">
                         <div class="arcade-header-red">
                             <div style="display: flex; align-items: center; gap: 8px;">
                                 <span style="width: 8px; height: 8px; background: var(--runic-green); border-radius: 50%; box-shadow: 0 0 6px var(--runic-green);"></span>
                                 <span>Mouth Agent</span>
-                                <span style="color: #bbf7d0; font-family: var(--font-space); font-size: 8px; font-weight: 600;">[VOICE_SYNTH_DISPATCH]</span>
                             </div>
                             <div class="terminal-header-actions">
-                                <span id="mouth-model-badge" class="status-pill-badge badge-amber">gemini-3.8-flash</span>
-                                <span id="mouth-turns-badge" class="status-pill-badge badge-cyan" style="display: none;">0 turns</span>
+                                <span id="mouth-model-badge" class="status-pill-badge badge-amber">gemini-4-argon</span>
                                 <button class="arcade-ctrl-btn btn-expand" title="Expand to full viewport height" aria-label="Expand terminal">□</button>
                                 <button class="arcade-ctrl-btn btn-close" title="Close" aria-label="Close">×</button>
                             </div>
@@ -1471,14 +1873,7 @@
                 </div>
 
             <!-- 4. Hand Agents Terminal Anchor (3x3 Grid positioned below sensory deck) -->
-            <div class="golem-anchor anchor-hands" id="anchor-hands" data-anchor="hands" data-tab="hands">
-                <div class="hands-section-header" style="margin-bottom: 6px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #1e2430; padding-bottom: 4px;">
-                    <div style="display: flex; align-items: center; gap: 8px;">
-                        <span style="color: var(--runic-cyan); font-weight: bold; font-family: var(--font-pixel); font-size: 10px;">HAND AGENTS MATRIX</span>
-                        <span style="color: #64748b; font-family: var(--font-space); font-size: 8px;">[DISTRIBUTED_PTY_MESH]</span>
-                    </div>
-                    <div style="color: #94a3b8; font-size: 9px; font-family: var(--font-crt);">Active Workers: <span id="hands-active-counter" style="color: #4ade80;">0</span></div>
-                </div>
+            <div class="golem-anchor anchor-hands mobile-active-tab" id="anchor-hands" data-anchor="hands" data-tab="hands">
                 <div class="hands-grid" id="hands-grid">
                     <!-- Standby view: cleanly rendered when 0 active hands are registered -->
                     <div class="hands-idle-card" id="hands-standby-card">
@@ -1492,45 +1887,6 @@
                         </div>
                     </div>
                 </div>
-            </div>
-
-            <!-- 5. Mobile Fleet Panel (Accessible on mobile phone via Fleet tab) -->
-            <div class="mobile-panel" id="mobile-fleet-panel" data-tab="fleet" style="width: 100%;">
-                <article class="sensory-window arcade-window-red" style="width: 100%;">
-                    <div class="arcade-header-red">
-                        <div style="display: flex; align-items: center; gap: 8px;">
-                            <span style="width: 8px; height: 8px; background: var(--runic-gold); border-radius: 50%; box-shadow: 0 0 6px var(--runic-gold);"></span>
-                            <span>Fleet Telemetry &amp; Node Health</span>
-                            <span style="color: var(--runic-gold); font-family: var(--font-space); font-size: 8px; font-weight: 600;">[FLEET_TOPOLOGY]</span>
-                        </div>
-                    </div>
-                    <div class="terminal-body" style="height: auto; min-height: 220px; padding: 12px; gap: 10px;">
-                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
-                            <div style="background: rgba(13, 15, 22, 0.8); border: 1px solid #232936; border-radius: 4px; padding: 8px;">
-                                <div style="color: #64748b; font-size: 10px;">DISK FREE / USAGE</div>
-                                <div id="mobile-disk-stat" style="color: #4ade80; font-size: 14px; font-weight: bold; margin-top: 2px;">--%</div>
-                            </div>
-                            <div style="background: rgba(13, 15, 22, 0.8); border: 1px solid #232936; border-radius: 4px; padding: 8px;">
-                                <div style="color: #64748b; font-size: 10px;">DOCKER CONTAINERS</div>
-                                <div id="mobile-docker-stat" style="color: #a78bfa; font-size: 14px; font-weight: bold; margin-top: 2px;">--</div>
-                            </div>
-                            <div style="background: rgba(13, 15, 22, 0.8); border: 1px solid #232936; border-radius: 4px; padding: 8px;">
-                                <div style="color: #64748b; font-size: 10px;">TAILSCALE MESH</div>
-                                <div id="mobile-ts-stat" style="color: #f59e0b; font-size: 14px; font-weight: bold; margin-top: 2px;">--</div>
-                            </div>
-                            <div style="background: rgba(13, 15, 22, 0.8); border: 1px solid #232936; border-radius: 4px; padding: 8px;">
-                                <div style="color: #64748b; font-size: 10px;">SYSTEM UPTIME</div>
-                                <div id="mobile-uptime-stat" style="color: #38bdf8; font-size: 14px; font-weight: bold; margin-top: 2px;">00:00:00</div>
-                            </div>
-                        </div>
-                        <div style="border-top: 1px solid #1e2430; padding-top: 8px; font-size: 11px; color: #94a3b8; line-height: 1.6;">
-                            <div>&bull; <strong>localhost</strong>: hermes (Chief of Staff &amp; Homelab)</div>
-                            <div>&bull; <strong>personal-laptop</strong>: Carl's MacBook (Strict Ad-Hoc)</div>
-                            <div>&bull; <strong>desktop-pc</strong>: Windows CUDA / PyTorch Compute Grid</div>
-                            <div>&bull; <strong>oci-machine</strong>: Cloud Ops VPS (Production &amp; WireGuard)</div>
-                        </div>
-                    </div>
-                </article>
             </div>
         </div>
     </main>
@@ -1547,6 +1903,7 @@
             const uptimeDisplay = document.getElementById('uptime-display');
             const portDisplay = document.getElementById('port-display');
             const eyeCountBadge = document.getElementById('eye-count-badge');
+            const eyeModelBadge = document.getElementById('eye-model-badge');
             const eyeStateBadge = document.getElementById('eye-state-badge');
             const eyeLeadMsg = document.getElementById('eye-lead-msg');
             const eyeConfMsg = document.getElementById('eye-conf-msg');
@@ -1555,6 +1912,7 @@
             const noseSmellVal = document.getElementById('nose-smell-val');
             const noseDriftVal = document.getElementById('nose-drift-val');
             const noseQuiescentBadge = document.getElementById('nose-quiescent-badge');
+            const noseModelBadge = document.getElementById('nose-model-badge');
             const noseStatusBadge = document.getElementById('nose-status-badge');
             const diskVal = document.getElementById('disk-val');
             const dockerVal = document.getElementById('docker-val');
@@ -1598,7 +1956,7 @@
                     switchMobileTab(tabKey);
                 } else {
                     document.body.classList.remove('mobile-mode');
-                    document.querySelectorAll('.golem-anchor, .mobile-panel').forEach(el => {
+                    document.querySelectorAll('.golem-anchor').forEach(el => {
                         el.classList.remove('mobile-active-tab');
                     });
                 }
@@ -1608,7 +1966,7 @@
                 document.querySelectorAll('.mobile-tab-btn').forEach(btn => {
                     btn.classList.toggle('active', btn.getAttribute('data-tab') === tabName);
                 });
-                document.querySelectorAll('.golem-anchor, .mobile-panel').forEach(el => {
+                document.querySelectorAll('.golem-anchor').forEach(el => {
                     el.classList.remove('mobile-active-tab');
                 });
                 if (tabName === 'hands') {
@@ -1622,9 +1980,6 @@
                     if (el) el.classList.add('mobile-active-tab');
                 } else if (tabName === 'mouth') {
                     const el = document.getElementById('anchor-mouth');
-                    if (el) el.classList.add('mobile-active-tab');
-                } else if (tabName === 'fleet') {
-                    const el = document.getElementById('mobile-fleet-panel');
                     if (el) el.classList.add('mobile-active-tab');
                 }
             }
@@ -1874,10 +2229,17 @@
                         anchorHands.style.marginTop = `${Math.round(handsMargin)}px`;
                     }
                 }
+                setTimeout(updateYarnRouting, 20);
             }
 
-            window.addEventListener('resize', alignFaceAnchors);
-            window.addEventListener('DOMContentLoaded', alignFaceAnchors);
+            window.addEventListener('resize', () => {
+                alignFaceAnchors();
+                updateYarnRouting();
+            });
+            window.addEventListener('DOMContentLoaded', () => {
+                alignFaceAnchors();
+                updateYarnRouting();
+            });
 
             function formatFullTimestamp(d = new Date()) {
                 const pad = n => String(n).padStart(2, '0');
@@ -1916,22 +2278,24 @@
                 if (data.drift_percent !== undefined && noseDriftVal) {
                     noseDriftVal.textContent = `| DRIFT: ${Number(data.drift_percent).toFixed(2)}%`;
                 }
-                if (noseSmellVal) {
-                    if (data.smells_off) {
-                        noseSmellVal.textContent = '|| CODE_SMELL: ALERT';
-                        noseSmellVal.style.color = 'var(--runic-red)';
-                    } else {
-                        noseSmellVal.textContent = '|| CODE_SMELL: CLEAN';
-                        noseSmellVal.style.color = 'var(--runic-green)';
+                if (data.smells_off !== undefined) {
+                    if (noseSmellVal) {
+                        if (data.smells_off) {
+                            noseSmellVal.textContent = '|| CODE_SMELL: ALERT';
+                            noseSmellVal.style.color = 'var(--runic-red)';
+                        } else {
+                            noseSmellVal.textContent = '|| CODE_SMELL: CLEAN';
+                            noseSmellVal.style.color = 'var(--runic-green)';
+                        }
                     }
-                }
-                if (noseStatusBadge) {
-                    if (data.smells_off) {
-                        noseStatusBadge.textContent = 'Anomaly';
-                        noseStatusBadge.className = 'status-pill-badge badge-red';
-                    } else {
-                        noseStatusBadge.textContent = 'Clean';
-                        noseStatusBadge.className = 'status-pill-badge badge-cyan';
+                    if (noseStatusBadge) {
+                        if (data.smells_off) {
+                            noseStatusBadge.textContent = 'Anomaly';
+                            noseStatusBadge.className = 'status-pill-badge badge-red';
+                        } else {
+                            noseStatusBadge.textContent = 'Clean';
+                            noseStatusBadge.className = 'status-pill-badge badge-cyan';
+                        }
                     }
                 }
                 if (data.disk && diskVal) {
@@ -2240,6 +2604,7 @@
                         handsCountBadge.textContent = 'IDLE';
                         handsCountBadge.className = 'status-pill-badge badge-amber';
                     }
+                    setTimeout(updateYarnRouting, 20);
                     return;
                 }
 
@@ -2267,6 +2632,7 @@
                     handsCountBadge.textContent = `${count} GAUNTLET${count > 1 ? 'S' : ''} ONLINE`;
                     handsCountBadge.className = 'status-pill-badge badge-green';
                 }
+                setTimeout(updateYarnRouting, 20);
             }
 
             // Live Herdr pane mirror: latest full snapshot per pane, applied to an xterm.js instance.
@@ -2388,17 +2754,6 @@
                     return item.el;
                 }
 
-                // Determine tag badge
-                let tag = 'WORKER';
-                const cmd = (h.command || '').toLowerCase();
-                if (cmd.includes('pytest') || cmd.includes('test')) tag = 'PYTEST';
-                else if (cmd.includes('git')) tag = 'GIT_OPS';
-                else if (cmd.includes('docker')) tag = 'CONTAINER';
-                else if (cmd.includes('lint')) tag = 'LINTER';
-                else if (cmd.includes('df') || cmd.includes('sniff')) tag = 'DIAGNOSTIC';
-                else if (cmd.includes('mesh') || cmd.includes('ws')) tag = 'WEBSOCKET';
-                else if (h.node && h.node !== 'localhost') tag = h.node.toUpperCase();
-
                 const safePaneId = paneId.replace(/[^a-zA-Z0-9_-]/g, '_');
                 const card = document.createElement('article');
                 card.className = 'hand-card arcade-window-red';
@@ -2410,6 +2765,7 @@
 
                 const pidDisplay = (h.pid !== undefined && h.pid !== null) ? ` [PID: ${h.pid}]` : '';
                 const cmdText = (h.command || 'Active Task') + pidDisplay;
+                const handModel = h.model || (h.worker ? h.worker.toUpperCase() : 'AGY');
 
                 card.innerHTML = `
                     <div class="arcade-header-red">
@@ -2418,16 +2774,15 @@
                             <span class="hand-card-title">${escapeHtml(paneId)}</span>
                         </div>
                         <div class="terminal-header-actions">
-                            <span class="status-pill-badge badge-red hand-card-tag" style="border-color: #b91c1c; color: var(--runic-gold); font-size: 8px;">${tag}</span>
+                            <span class="status-pill-badge badge-amber hand-card-model" style="font-size: 8px;">${escapeHtml(handModel)}</span>
                             <button class="arcade-ctrl-btn btn-expand" title="Expand to full viewport height" aria-label="Expand terminal">□</button>
                             <button class="arcade-ctrl-btn btn-close" title="Kill Herdr Pane" aria-label="Kill Herdr Pane">×</button>
                         </div>
                     </div>
                     <div class="hand-card-body">
-                        <div class="hand-card-cmd" style="color: var(--runic-cyan);">&gt; ${escapeHtml(cmdText)}</div>
+                        <div class="hand-card-cmd" style="color: var(--runic-cyan);" title="${escapeHtml(cmdText)}">&gt; ${escapeHtml(cmdText)}</div>
                         <div class="hand-card-xterm"></div>
                         <div class="hand-card-footer">
-                            <span class="worker-state" style="color: #94a3b8;">${escapeHtml(h.status || 'RUNNING')}</span>
                             <span class="pane-tag"></span>
                             <span class="hand-sol-badge"></span>
                             <span class="status-pill-badge badge-cyan status-badge">${escapeHtml(h.status || 'RUNNING')}</span>
@@ -2481,23 +2836,14 @@
                 const cmdEl = item.el.querySelector('.hand-card-cmd');
                 if (cmdEl && item.command) {
                     const pidDisplay = (item.pid !== undefined && item.pid !== null) ? ` [PID: ${item.pid}]` : '';
-                    cmdEl.textContent = `> ${item.command}${pidDisplay}`;
+                    const fullCmd = `${item.command}${pidDisplay}`;
+                    cmdEl.textContent = `> ${fullCmd}`;
+                    cmdEl.title = fullCmd;
                 }
-                const stateEl = item.el.querySelector('.worker-state');
                 const badgeEl = item.el.querySelector('.status-badge');
                 const dotEl = item.el.querySelector('.hand-card-dot');
 
                 const status = item.status || 'RUNNING';
-                if (stateEl) {
-                    stateEl.textContent = status;
-                    if (status === 'EXIT_0' || status === 'SUCCESS') {
-                        stateEl.style.color = 'var(--runic-green)';
-                    } else if (status === 'FAILED') {
-                        stateEl.style.color = 'var(--runic-red)';
-                    } else {
-                        stateEl.style.color = '#94a3b8';
-                    }
-                }
                 if (badgeEl) {
                     badgeEl.textContent = status;
                     if (status === 'EXIT_0' || status === 'SUCCESS') {
@@ -2520,19 +2866,85 @@
                         }
                     }
                 }
+                const modelEl = item.el.querySelector('.hand-card-model');
+                if (modelEl && (item.model || item.worker)) {
+                    modelEl.textContent = item.model || item.worker.toUpperCase();
+                }
             }
 
             // Initial render: Hands start in standby mode until hydrated via /api/status or SSE
             renderHandsState();
 
+            function renderNavLinks(links) {
+                if (!Array.isArray(links) || links.length === 0) return;
+                const navContainer = document.getElementById('top-nav-links');
+                if (!navContainer) return;
+                navContainer.innerHTML = links.map(link => {
+                    const url = escapeHtml(link.url || '/wiki');
+                    const label = escapeHtml(link.label || 'WIKI');
+                    const icon = escapeHtml(link.icon || '↗');
+                    const targetAttr = link.external ? ' target="_blank" rel="noopener noreferrer"' : '';
+                    const title = (link.url === '/wiki') ? 'Open Golem Operational Memory Wiki' : `Open ${label}`;
+                    return `<a href="${url}" class="wiki-nav-link" title="${escapeHtml(title)}"${targetAttr}><span>${icon}</span><span>${label}</span></a>`;
+                }).join('');
+            }
+
+            function loadNavLinksFallback() {
+                fetch('/static/webui_links.txt')
+                    .then(r => r.ok ? r.text() : '')
+                    .then(text => {
+                        if (!text) return;
+                        const lines = text.split('\n');
+                        const links = [{ label: 'WIKI', url: '/wiki', icon: '📖', external: false }];
+                        for (let raw of lines) {
+                            let line = raw.trim();
+                            if (!line || line.startsWith('#')) continue;
+                            let url = '', label = '';
+                            const m1 = line.match(/^([^\s()]+)\s*\(([^)]+)\)$/);
+                            const m2 = line.match(/^([^(]+)\s*\(([^)]+)\)$/);
+                            if (m1) { url = m1[1].trim(); label = m1[2].trim(); }
+                            else if (m2) { label = m2[1].trim(); url = m2[2].trim(); }
+                            else if (line.includes('|')) {
+                                const parts = line.split('|');
+                                const p1 = parts[0].trim(), p2 = parts[1].trim();
+                                if ((p1.startsWith('http://') || p1.startsWith('https://')) && !(p2.startsWith('http://') || p2.startsWith('https://'))) {
+                                    url = p1; label = p2;
+                                } else {
+                                    label = p1; url = p2;
+                                }
+                            } else {
+                                label = line; url = line;
+                            }
+                            if (!url) continue;
+                            if (!url.startsWith('http://') && !url.startsWith('https://') && !url.startsWith('/')) {
+                                url = 'https://' + url;
+                            }
+                            links.push({ label: label || url, url: url, icon: '↗', external: !url.startsWith('/') });
+                        }
+                        if (links.length > 1) {
+                            renderNavLinks(links);
+                        }
+                    })
+                    .catch(() => {});
+            }
+
+            // Immediately load navigation links
+            loadNavLinksFallback();
+
             // Hydrate REST snapshot from /api/status
             fetch('/api/status')
                 .then(r => r.json())
                 .then(data => {
+                    if (Array.isArray(data.nav_links) && data.nav_links.length > 0) {
+                        renderNavLinks(data.nav_links);
+                    } else {
+                        loadNavLinksFallback();
+                    }
                     if (data.port && portDisplay) portDisplay.textContent = data.port;
                     if (data.uptime_formatted && uptimeDisplay) uptimeDisplay.textContent = data.uptime_formatted;
                     if (data.nose) {
-                        updateNoseData(data.nose);
+                        if (data.nose.model && noseModelBadge) noseModelBadge.textContent = data.nose.model;
+                        updateNoseData(data);
                         if (Array.isArray(data.nose.logs) && data.nose.logs.length > 0) {
                             const noseTerm = document.getElementById('nose-terminal-body');
                             if (noseTerm) {
@@ -2558,9 +2970,7 @@
                         }
                     }
                     if (data.eyes) {
-                        if (data.eyes.state && eyeStateBadge) {
-                            eyeStateBadge.textContent = data.eyes.state.toUpperCase();
-                        }
+                        if (data.eyes.model && eyeModelBadge) eyeModelBadge.textContent = data.eyes.model;
                         if (Array.isArray(data.eyes.logs) && data.eyes.logs.length > 0) {
                             const eyeTerm = document.getElementById('eye-terminal-body');
                             if (eyeTerm) {
@@ -2676,6 +3086,7 @@
                 eventSource.addEventListener('eye_telemetry', function(e) {
                     try {
                         const data = JSON.parse(e.data);
+                        if (data.model && eyeModelBadge) eyeModelBadge.textContent = data.model;
                         if (data.state && eyeStateBadge) eyeStateBadge.textContent = data.state.toUpperCase();
                     } catch (_) {}
                 });
@@ -2685,6 +3096,7 @@
                 // explicit health check), so identical ticks never produce log lines.
                 function handleNoseTelemetryUpdate(data, isAlert = false) {
                     if (!data) return;
+                    if (data.model && noseModelBadge) noseModelBadge.textContent = data.model;
                     updateNoseData(data);
 
                     const summary = (data.verdict_summary || data.summary || '').trim();
@@ -3044,6 +3456,7 @@
                         btn.title = 'Collapse terminal';
                     }
                 }
+                setTimeout(updateYarnRouting, 50);
             }
 
             // Click delegation for Expand / Collapse, kill resets, and click-outside
@@ -3106,9 +3519,14 @@
             });
 
             // 16-bit Low Framerate Animated Golem Background Loop (A -> Z -> A ping-pong loop)
+            // Gated behind window.STONE_MECH_PHOTO_MODE so felt/burlap appliqué backdrop shines by default
             (function initGolemAnimation() {
                 const colossusEl = document.getElementById('colossus-img');
                 if (!colossusEl) return;
+                if (!window.STONE_MECH_PHOTO_MODE) {
+                    colossusEl.style.display = 'none';
+                    return;
+                }
 
                 // 8 frames generated with Nano Banana
                 const frames = [
@@ -3133,6 +3551,11 @@
 
                 // Slightly increased framerate: 220ms (~4.5 FPS)
                 setInterval(() => {
+                    if (!window.STONE_MECH_PHOTO_MODE) {
+                        colossusEl.style.display = 'none';
+                        return;
+                    }
+                    colossusEl.style.display = 'block';
                     frameIdx += direction;
                     if (frameIdx >= frames.length - 1) {
                         frameIdx = frames.length - 1;
@@ -3145,8 +3568,125 @@
                 }, 220);
             })();
 
+            window.toggleStoneMechPhotoMode = function(enable) {
+                window.STONE_MECH_PHOTO_MODE = (enable !== undefined) ? Boolean(enable) : !window.STONE_MECH_PHOTO_MODE;
+                const colossusEl = document.getElementById('colossus-img');
+                if (colossusEl) {
+                    colossusEl.style.display = window.STONE_MECH_PHOTO_MODE ? 'block' : 'none';
+                }
+                return window.STONE_MECH_PHOTO_MODE;
+            };
+
+            // Dynamic Braided Rainbow Yarn SVG Router
+            function createBraidedYarnGroup(pathD, idPrefix) {
+                return `
+                    <g class="yarn-braid-group" id="${idPrefix}">
+                        <!-- Soft drop shadow -->
+                        <path d="${pathD}" fill="none" stroke="rgba(20, 12, 5, 0.45)" stroke-width="7" stroke-linecap="round"/>
+                        <!-- Dark underthread core -->
+                        <path d="${pathD}" fill="none" stroke="#241e17" stroke-width="5" stroke-linecap="round"/>
+                        <!-- Red Strand (#D94B43) -->
+                        <path d="${pathD}" fill="none" stroke="#D94B43" stroke-width="3.5" stroke-dasharray="6 18" stroke-dashoffset="0" stroke-linecap="round"/>
+                        <!-- Gold Strand (#F3C65F) -->
+                        <path d="${pathD}" fill="none" stroke="#F3C65F" stroke-width="3.5" stroke-dasharray="6 18" stroke-dashoffset="6" stroke-linecap="round"/>
+                        <!-- Teal Strand (#4ECDC4) -->
+                        <path d="${pathD}" fill="none" stroke="#4ECDC4" stroke-width="3.5" stroke-dasharray="6 18" stroke-dashoffset="12" stroke-linecap="round"/>
+                        <!-- Purple Strand (#9B5DE5) -->
+                        <path d="${pathD}" fill="none" stroke="#9B5DE5" stroke-width="3.5" stroke-dasharray="6 18" stroke-dashoffset="18" stroke-linecap="round"/>
+                    </g>
+                `;
+            }
+
+            function createAnchorEyelet(x, y, color = '#F3C65F') {
+                return `
+                    <circle cx="${Math.round(x)}" cy="${Math.round(y)}" r="5.5" fill="${color}" stroke="#1a1a1a" stroke-width="1.5"/>
+                    <circle cx="${Math.round(x)}" cy="${Math.round(y)}" r="2.2" fill="#171922"/>
+                `;
+            }
+
+            function updateYarnRouting() {
+                const svgLayer = document.getElementById('yarn-router-layer');
+                if (!svgLayer) return;
+
+                if (window.innerWidth <= 768 || document.querySelector('.terminal-expanded')) {
+                    svgLayer.innerHTML = '';
+                    return;
+                }
+
+                const eyeCard = document.getElementById('eye-card');
+                const noseCard = document.getElementById('nose-card');
+                const mouthCard = document.getElementById('mouth-card');
+                const standbyCard = document.getElementById('hands-standby-card');
+
+                if (!mouthCard) return;
+
+                let svgHtml = '';
+                const mRect = mouthCard.getBoundingClientRect();
+
+                // 1. Eye Card -> Top of Mouth Card
+                if (eyeCard) {
+                    const eRect = eyeCard.getBoundingClientRect();
+                    const x1 = eRect.left + eRect.width * 0.5;
+                    const y1 = eRect.bottom - 4;
+                    const x2 = mRect.left + mRect.width * 0.35;
+                    const y2 = mRect.top + 4;
+                    const dy = Math.max(20, (y2 - y1) * 0.5);
+                    const pathD = `M ${x1} ${y1} C ${x1} ${y1 + dy}, ${x2} ${y2 - dy}, ${x2} ${y2}`;
+                    svgHtml += createBraidedYarnGroup(pathD, 'yarn-eye-mouth');
+                    svgHtml += createAnchorEyelet(x1, y1, '#1CA3B8');
+                    svgHtml += createAnchorEyelet(x2, y2, '#D82B67');
+                }
+
+                // 2. Nose Card -> Top of Mouth Card
+                if (noseCard) {
+                    const nRect = noseCard.getBoundingClientRect();
+                    const x1 = nRect.left + nRect.width * 0.5;
+                    const y1 = nRect.bottom - 4;
+                    const x2 = mRect.left + mRect.width * 0.65;
+                    const y2 = mRect.top + 4;
+                    const dy = Math.max(20, (y2 - y1) * 0.5);
+                    const pathD = `M ${x1} ${y1} C ${x1} ${y1 + dy}, ${x2} ${y2 - dy}, ${x2} ${y2}`;
+                    svgHtml += createBraidedYarnGroup(pathD, 'yarn-nose-mouth');
+                    svgHtml += createAnchorEyelet(x1, y1, '#E05C2E');
+                    svgHtml += createAnchorEyelet(x2, y2, '#E05E46');
+                }
+
+                // 3. Bottom of Mouth Card -> Hand Mittens (or Standby Card)
+                const mouthBottomX = mRect.left + mRect.width * 0.5;
+                const mouthBottomY = mRect.bottom - 4;
+
+                const handCards = Array.from(document.querySelectorAll('.hand-card')).filter(c => window.getComputedStyle(c).display !== 'none');
+                if (handCards.length > 0) {
+                    handCards.forEach((card, idx) => {
+                        const hRect = card.getBoundingClientRect();
+                        if (hRect.width === 0 || hRect.height === 0) return;
+                        const x2 = hRect.left + hRect.width * 0.5;
+                        const y2 = hRect.top + 4;
+                        const dy = Math.max(20, (y2 - mouthBottomY) * 0.5);
+                        const pathD = `M ${mouthBottomX} ${mouthBottomY} C ${mouthBottomX} ${mouthBottomY + dy}, ${x2} ${y2 - dy}, ${x2} ${y2}`;
+                        svgHtml += createBraidedYarnGroup(pathD, `yarn-mouth-hand-${idx}`);
+                        svgHtml += createAnchorEyelet(x2, y2, '#F3C65F');
+                    });
+                    svgHtml += createAnchorEyelet(mouthBottomX, mouthBottomY, '#D82B67');
+                } else if (standbyCard && window.getComputedStyle(standbyCard).display !== 'none') {
+                    const sRect = standbyCard.getBoundingClientRect();
+                    if (sRect.width > 0 && sRect.height > 0) {
+                        const x2 = sRect.left + sRect.width * 0.5;
+                        const y2 = sRect.top + 4;
+                        const dy = Math.max(20, (y2 - mouthBottomY) * 0.5);
+                        const pathD = `M ${mouthBottomX} ${mouthBottomY} C ${mouthBottomX} ${mouthBottomY + dy}, ${x2} ${y2 - dy}, ${x2} ${y2}`;
+                        svgHtml += createBraidedYarnGroup(pathD, 'yarn-mouth-standby');
+                        svgHtml += createAnchorEyelet(mouthBottomX, mouthBottomY, '#D82B67');
+                        svgHtml += createAnchorEyelet(x2, y2, '#D6BE96');
+                    }
+                }
+
+                svgLayer.innerHTML = svgHtml;
+            }
+
             connectSSE();
             setTimeout(alignFaceAnchors, 50);
+            setTimeout(updateYarnRouting, 100);
         })();
     </script>
 </body>

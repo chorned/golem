@@ -193,8 +193,12 @@ class SessionRouter:
                 return existing, False
 
             if existing and existing.state in (SessionState.CLOSED, SessionState.FAILED):
+                self.sessions.pop(key, None)
                 try:
-                    await existing.close(reason="failed_session_replacement")
+                    await asyncio.wait_for(
+                        existing.close(reason="failed_session_replacement"),
+                        timeout=5.0,
+                    )
                 except Exception as e:
                     logger.warning(f"Error closing previous session '{key}' during replacement: {e}")
 
@@ -342,28 +346,32 @@ class SessionRouter:
         """
         async with self._router_lock:
             session = self.sessions.pop(session_id, None)
-            if session:
+
+        if session:
+            try:
                 await session.close(reason=reason)
-                if not getattr(session, "_harness_torn_down", False) and self.harness and getattr(session, "workspace_id", None):
-                    try:
-                        res = self.harness.teardown(session.workspace_id)
-                        if inspect.isawaitable(res):
-                            await res
-                    except Exception as e:
-                        logger.warning(f"Error in router tearing down harness for '{session.workspace_id}': {e}")
-                logger.info(f"Tore down session '{session_id}' (reason: {reason})")
-                return True
-            else:
-                # Defensively purge session queue in bus even if session was already removed
+            except Exception as e:
+                logger.warning(f"Error closing session '{session_id}' during teardown: {e}")
+            if not getattr(session, "_harness_torn_down", False) and self.harness and getattr(session, "workspace_id", None):
                 try:
-                    bus = self.bus
-                    if bus is None:
-                        from golem.bus import peek_default_event_bus
-                        bus = peek_default_event_bus()
-                    if bus is not None and hasattr(bus, "remove_session_queue"):
-                        bus.remove_session_queue(session_id)
-                except Exception:
-                    pass
+                    res = self.harness.teardown(session.workspace_id)
+                    if inspect.isawaitable(res):
+                        await res
+                except Exception as e:
+                    logger.warning(f"Error in router tearing down harness for '{session.workspace_id}': {e}")
+            logger.info(f"Tore down session '{session_id}' (reason: {reason})")
+            return True
+        else:
+            # Defensively purge session queue in bus even if session was already removed
+            try:
+                bus = self.bus
+                if bus is None:
+                    from golem.bus import peek_default_event_bus
+                    bus = peek_default_event_bus()
+                if bus is not None and hasattr(bus, "remove_session_queue"):
+                    bus.remove_session_queue(session_id)
+            except Exception:
+                pass
             return False
 
     async def teardown(self, channel: str, thread_ts: str, reason: str = "explicit") -> bool:
@@ -376,6 +384,7 @@ class SessionRouter:
     async def reap_expired_sessions(self) -> List[str]:
         """Audit all sessions and prune those inactive > timeout_seconds or in dead state."""
         pruned_keys: List[str] = []
+        to_close: List[Tuple[str, SessionHandle, str]] = []
         async with self._router_lock:
             expired_keys = [
                 key
@@ -397,15 +406,22 @@ class SessionRouter:
                         f"idle={idle_s:.0f}s timeout={s.timeout_seconds:.0f}s "
                         f"last_prompt={str(getattr(s, 'last_prompt', ''))[:80]!r}"
                     )
-                    await s.close(reason=reason)
-                    if not getattr(s, "_harness_torn_down", False) and self.harness and getattr(s, "workspace_id", None):
-                        try:
-                            res = self.harness.teardown(s.workspace_id)
-                            if inspect.isawaitable(res):
-                                await res
-                        except Exception as e:
-                            logger.warning(f"Error in router reaping harness for '{s.workspace_id}': {e}")
+                    to_close.append((key, s, reason))
                     pruned_keys.append(key)
+
+        for key, s, reason in to_close:
+            try:
+                await s.close(reason=reason)
+            except Exception as e:
+                logger.warning(f"Error closing reaped session '{key}': {e}")
+            if not getattr(s, "_harness_torn_down", False) and self.harness and getattr(s, "workspace_id", None):
+                try:
+                    res = self.harness.teardown(s.workspace_id)
+                    if inspect.isawaitable(res):
+                        await res
+                except Exception as e:
+                    logger.warning(f"Error in router reaping harness for '{s.workspace_id}': {e}")
+
         if pruned_keys:
             logger.info(f"Reaped {len(pruned_keys)} expired session(s): {pruned_keys}")
         return pruned_keys
@@ -430,18 +446,20 @@ class SessionRouter:
                 pass
             self._reaper_task = None
 
-        # Gracefully close remaining sessions
+        # Pop remaining sessions under lock, then close outside lock
         async with self._router_lock:
-            for s in list(self.sessions.values()):
-                try:
-                    await s.close(reason="shutdown")
-                    if not getattr(s, "_harness_torn_down", False) and self.harness and getattr(s, "workspace_id", None):
-                        res = self.harness.teardown(s.workspace_id)
-                        if inspect.isawaitable(res):
-                            await res
-                except Exception as e:
-                    logger.warning(f"Error during shutdown for session '{s.session_id}': {e}")
+            remaining = list(self.sessions.values())
             self.sessions.clear()
+
+        for s in remaining:
+            try:
+                await s.close(reason="shutdown")
+                if not getattr(s, "_harness_torn_down", False) and self.harness and getattr(s, "workspace_id", None):
+                    res = self.harness.teardown(s.workspace_id)
+                    if inspect.isawaitable(res):
+                        await res
+            except Exception as e:
+                logger.warning(f"Error during shutdown for session '{s.session_id}': {e}")
         logger.info("Stopped session reaper watchdog and cleared sessions")
 
     async def _reaper_loop(self) -> None:

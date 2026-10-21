@@ -1810,3 +1810,24 @@ async def synthesize_linear_ticket_nudge(
     return fallback_text
 
 
+def synthesize_linear_quota_nudge(alert_data: Optional[Dict[str, Any]] = None) -> str:
+    """
+    Synthesize an executive notification for Carl when Linear free tier quota is reached.
+    Explains that activeIssueCount limit is exceeded and writes/issue creations are blocked.
+    Prompts Carl to clean up, archive, or delete Done/Cancelled tickets.
+    Explicitly confirms zero automated deletions were performed (Carl owns hard deletes).
+    """
+    data = alert_data or {}
+    metric = data.get("metric") or "activeIssueCount"
+    error_code = data.get("error_code") or "USAGE_LIMIT_EXCEEDED"
+
+    return (
+        "🚨 *Linear Free Tier Issue Quota Reached*\n"
+        f"The Nose detected that Linear issue creation is currently blocked (`{error_code}` on `{metric}`).\n\n"
+        "• *Impact:* Golem cannot create new tracking issues or subtasks in Linear until quota headroom is restored.\n"
+        "• *Action Needed:* Please review and clean up, archive, or hard-delete settled *Done* or *Canceled* tickets in the Linear workspace.\n"
+        "• *Guardrail Assurance:* In accordance with policy, no automated ticket deletions have been performed. Carl owns hard delete operations."
+    )
+
+
+

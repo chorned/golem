@@ -15,8 +15,9 @@ import shutil
 import inspect
 import asyncio
 import logging
+import weakref
 from dataclasses import dataclass, field
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Set
 
 try:
     from herdr_client import HerdrClient
@@ -228,6 +229,8 @@ class RunnerExecutor:
     returns completed handle; otherwise yields running handle and continues in background.
     """
 
+    _ACTIVE_EXECUTORS: Set["RunnerExecutor"] = set()
+
     def __init__(
         self,
         herdr_bin: Optional[str] = None,
@@ -249,9 +252,26 @@ class RunnerExecutor:
         self._active_handles: Dict[str, Any] = {}
         if hasattr(self.sensory_bus, "subscribe"):
             try:
-                self._bus_unsubscribe = self.sensory_bus.subscribe(
-                    self._on_sensory_alert, alert_types=["completion"]
+                weak_self = weakref.ref(self)
+                unsub_holder: list[Any] = [None]
+
+                async def _weak_alert_proxy(alert: Any) -> None:
+                    inst = weak_self()
+                    if inst is None:
+                        unsub_fn = unsub_holder[0]
+                        if callable(unsub_fn):
+                            try:
+                                unsub_fn()
+                            except Exception:
+                                pass
+                        return
+                    await inst._on_sensory_alert(alert)
+
+                unsub = self.sensory_bus.subscribe(
+                    _weak_alert_proxy, alert_types=["completion"]
                 )
+                unsub_holder[0] = unsub
+                self._bus_unsubscribe = unsub
             except Exception as e:
                 logger.debug(f"Could not subscribe to sensory bus: {e}")
                 self._bus_unsubscribe = None
@@ -286,6 +306,15 @@ class RunnerExecutor:
             if alert_type == "completion":
                 data = getattr(alert, "data", {}) or {}
                 pane = data.get("pane") or "runner"
+                active_obs = getattr(self, "_active_observers", None) or {}
+                active_handles = getattr(self, "_active_handles", None) or {}
+                if (
+                    pane not in active_obs
+                    and "runner" not in active_obs
+                    and pane not in active_handles
+                    and "runner" not in active_handles
+                ):
+                    return
                 is_err = data.get("is_error", False)
                 returncode = 1 if is_err else 0
                 await self.settle_command(pane, returncode=returncode)
@@ -306,6 +335,14 @@ class RunnerExecutor:
         marker = f"[INFO] Golem.Hands: Command settled with exit code {returncode}"
         hands_logger.info(marker)
         logger.info(marker)
+        active_handles = getattr(self, "_active_handles", None)
+        th = task_handle
+        if th is None and isinstance(active_handles, dict):
+            th = active_handles.get(pane) or active_handles.get("runner")
+        if isinstance(active_handles, dict):
+            for p in {pane, "runner"}:
+                active_handles.pop(p, None)
+
         if hasattr(self, "_active_observers"):
             for p in {pane, "runner"}:
                 if p in self._active_observers:
@@ -317,11 +354,12 @@ class RunnerExecutor:
                             await obs.stop()
                     except Exception as e:
                         logger.debug(f"Error stopping observer for pane '{p}': {e}")
+            if not self._active_observers:
+                self._ACTIVE_EXECUTORS.discard(self)
 
         # Asynchronous Post-Flight Settlement Reflection
         try:
             from golem.memory.reflection import record_task_settlement_async
-            th = task_handle or (getattr(self, "_active_handles", {}).get(pane) if hasattr(self, "_active_handles") else None)
             t_id = getattr(th, "task_id", f"task_{pane}_{int(time.time())}") if th else f"task_{pane}_{int(time.time())}"
             t_desc = getattr(th, "description", getattr(th, "command", "")) if th else ""
             t_node = getattr(th, "target_node", "localhost") if th else "localhost"
@@ -344,7 +382,6 @@ class RunnerExecutor:
 
         # Linear Subtask Settlement & Parent Evaluation
         try:
-            th = task_handle or (getattr(self, "_active_handles", {}).get(pane) if hasattr(self, "_active_handles") else None)
             subtask_id = getattr(th, "linear_issue_id", None) if th else None
             if subtask_id:
                 from golem.linear_bridge import LinearBridge
@@ -382,6 +419,7 @@ class RunnerExecutor:
 
     def close(self) -> None:
         """Unsubscribe from event bus and clean up resources."""
+        self._ACTIVE_EXECUTORS.discard(self)
         if hasattr(self, "_bus_unsubscribe") and callable(self._bus_unsubscribe):
             try:
                 self._bus_unsubscribe()
@@ -402,6 +440,7 @@ class RunnerExecutor:
 
     async def async_close(self) -> None:
         """Asynchronously stop all active observers and clean up resources."""
+        self._ACTIVE_EXECUTORS.discard(self)
         if hasattr(self, "_bus_unsubscribe") and callable(self._bus_unsubscribe):
             try:
                 self._bus_unsubscribe()
@@ -572,6 +611,7 @@ class RunnerExecutor:
                         self._active_observers[obs_target] = obs
                         if str(target_pane) != obs_target:
                             self._active_observers[str(target_pane)] = obs
+                        self._ACTIVE_EXECUTORS.add(self)
                     return TaskHandle(
                         status="running",
                         pane=str(effective_pane),
@@ -690,6 +730,7 @@ class RunnerExecutor:
                         self._active_observers[obs_target] = obs
                         if str(target_pane) != obs_target:
                             self._active_observers[str(target_pane)] = obs
+                        self._ACTIVE_EXECUTORS.add(self)
                     return TaskHandle(
                         status="running",
                         pane=str(effective_pane),
@@ -837,7 +878,7 @@ class RunnerExecutor:
             except asyncio.TimeoutError:
                 try:
                     list_proc.kill()
-                    await list_proc.wait()
+                    await asyncio.wait_for(list_proc.wait(), timeout=1.0)
                 except Exception:
                     pass
                 return None
@@ -1029,7 +1070,7 @@ class RunnerExecutor:
                         await res
                     w = proc.wait()
                     if inspect.isawaitable(w):
-                        await w
+                        await asyncio.wait_for(w, timeout=1.0)
                 except Exception:
                     pass
                 if last_pid is not None:

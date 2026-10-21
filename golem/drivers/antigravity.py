@@ -936,8 +936,58 @@ class AntigravityDriver(BaseAgentDriver):
                 except RuntimeError:
                     pass
 
+    @staticmethod
+    def _resume_or_clear_reader(reader: Any) -> None:
+        """Clear any buffered unread data on a StreamReader and unpause its pipe transport."""
+        if reader is None:
+            return
+        try:
+            buf = getattr(reader, "_buffer", None)
+            if isinstance(buf, (bytearray, list, deque)) and hasattr(buf, "clear"):
+                buf.clear()
+            if hasattr(reader, "_maybe_resume_transport"):
+                reader._maybe_resume_transport()
+        except Exception:
+            pass
+
+    @staticmethod
+    def _force_close_process_pipes(proc: Any) -> None:
+        """
+        Forcibly close underlying asyncio subprocess pipe transports so CPython's
+        BaseSubprocessTransport cannot deadlock in proc.wait() when a stdout/stderr
+        read pipe transport was paused (pause_reading) due to an unread buffer.
+        """
+        if proc is None:
+            return
+        try:
+            if getattr(proc, "stdin", None) is not None:
+                try:
+                    proc.stdin.close()
+                except Exception:
+                    pass
+            AntigravityDriver._resume_or_clear_reader(getattr(proc, "stdout", None))
+            AntigravityDriver._resume_or_clear_reader(getattr(proc, "stderr", None))
+            transport = getattr(proc, "_transport", None)
+            if transport is not None:
+                pipes = getattr(transport, "_pipes", None)
+                if isinstance(pipes, dict):
+                    for pipe_proto in list(pipes.values()):
+                        try:
+                            pipe_tr = getattr(pipe_proto, "pipe", None)
+                            if pipe_tr is not None and hasattr(pipe_tr, "close"):
+                                pipe_tr.close()
+                        except Exception:
+                            pass
+                if hasattr(transport, "close"):
+                    try:
+                        transport.close()
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
     async def terminate_session(self) -> None:
-        """Gracefully close stdin and terminate subprocess."""
+        """Gracefully close stdin and terminate subprocess without hanging on paused pipes."""
         if self._stderr_task and not self._stderr_task.done():
             self._stderr_task.cancel()
             try:
@@ -956,26 +1006,37 @@ class AntigravityDriver(BaseAgentDriver):
 
         if self.process:
             proc = self.process
-            if proc.returncode is None:
-                try:
-                    if proc.stdin and not proc.stdin.is_closing():
-                        proc.stdin.close()
-                        try:
-                            await proc.stdin.wait_closed()
-                        except Exception:
-                            pass
-                    await asyncio.wait_for(proc.wait(), timeout=2.0)
-                except (asyncio.TimeoutError, Exception):
+            try:
+                if proc.returncode is None:
+                    # Unpause stdout/stderr readers first so a child blocked writing >64KB can flush
+                    self._resume_or_clear_reader(getattr(proc, "stdout", None))
+                    self._resume_or_clear_reader(getattr(proc, "stderr", None))
                     try:
-                        proc.terminate()
-                        await asyncio.wait_for(proc.wait(), timeout=1.5)
+                        if proc.stdin and not proc.stdin.is_closing():
+                            proc.stdin.close()
+                            try:
+                                await asyncio.wait_for(proc.stdin.wait_closed(), timeout=1.0)
+                            except Exception:
+                                pass
+                        await asyncio.wait_for(proc.wait(), timeout=2.0)
                     except (asyncio.TimeoutError, Exception):
                         try:
-                            proc.kill()
-                            await proc.wait()
-                        except Exception:
-                            pass
-            self.process = None
+                            self._resume_or_clear_reader(getattr(proc, "stdout", None))
+                            proc.terminate()
+                            await asyncio.wait_for(proc.wait(), timeout=1.5)
+                        except (asyncio.TimeoutError, Exception):
+                            try:
+                                proc.kill()
+                            except Exception:
+                                pass
+                            self._force_close_process_pipes(proc)
+                            try:
+                                await asyncio.wait_for(proc.wait(), timeout=2.0)
+                            except (asyncio.TimeoutError, Exception):
+                                pass
+            finally:
+                self._force_close_process_pipes(proc)
+                self.process = None
 
         if self._lock.locked():
             try:

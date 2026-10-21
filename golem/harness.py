@@ -345,7 +345,10 @@ class DualPaneHarness:
                 )
 
         from golem.runner import RunnerExecutor
-        executor = RunnerExecutor(herdr_client=self.herdr_client)
+        executor = getattr(self, "_runner_executor", None)
+        if executor is None or getattr(executor, "herdr_client", None) is not self.herdr_client:
+            executor = RunnerExecutor(herdr_client=self.herdr_client)
+            self._runner_executor = executor
         return await executor.run_command(
             pane=str(target_pane),
             command=command,

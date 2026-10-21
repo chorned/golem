@@ -68,3 +68,12 @@ skills/
 .agents/skills/
 .agents/rules/
 memory/
+
+# Personal WebUI top-right navigation links (keep example template tracked)
+webui_links.txt
+golem/webui/static/webui_links.txt
+!webui_links.example.txt
+
+# Editor and IDE
+.vscode/
+
