@@ -39,7 +39,7 @@ class InfrastructureError(RuntimeError):
     """Raised when underlying infrastructure (Herdr, worktree, agent process) fails."""
     pass
 
-HOST_DIR = os.environ.get("GOLEM_HOST_DIR", os.path.dirname(os.path.abspath(__file__)))
+HOST_DIR = os.environ.get("GOLEM_HOST_DIR", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 PROJECT_ROOT = HOST_DIR
 DEFAULT_TARGET_REPO = os.environ.get("DEFAULT_TARGET_REPO", "/Users/hermes/projects/AGY")
 DEFAULT_WORKERS_YAML = os.path.join(HOST_DIR, ".agents", "workers.yaml")

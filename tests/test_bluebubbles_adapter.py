@@ -19,6 +19,7 @@ from aiohttp import web
 from aiohttp.test_utils import AioHTTPTestCase, unittest_run_loop
 
 import app
+import golem  # noqa: F401
 from bluebubbles_transport import (
     BlueBubblesClient,
     BlueBubblesTransport,

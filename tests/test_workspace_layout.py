@@ -27,6 +27,7 @@ from app import (
     sessions,
     agent_name_to_session
 )
+import golem  # noqa: F401
 import herdr_tools
 from herdr_tools import herdr_pane_run, herdr_agent_read, herdr_handoff
 from agent_core import ChiefOfStaff

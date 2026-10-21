@@ -241,9 +241,9 @@ class TestTier3GolemIdentityStackIntegration(unittest.TestCase):
 
     def test_identity_stack_lineage_citation_harmony(self):
         """C05: Golem branding and Lineage Invariant are consistently present across stack."""
-        project_md = os.path.join(PROJECT_DIR, "PROJECT.md")
-        self.assertTrue(os.path.exists(project_md))
-        with open(project_md, "r", encoding="utf-8") as f:
+        agents_md = os.path.join(PROJECT_DIR, "AGENTS.md")
+        self.assertTrue(os.path.exists(agents_md))
+        with open(agents_md, "r", encoding="utf-8") as f:
             p_content = f.read()
 
         self.assertIn(LINEAGE_INVARIANT, p_content)

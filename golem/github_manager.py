@@ -20,7 +20,7 @@ from typing import Dict, Any, Optional, List, Tuple
 
 logger = logging.getLogger("AGY.GitHubManager")
 
-HOST_DIR = os.environ.get("GOLEM_HOST_DIR", os.path.dirname(os.path.abspath(__file__)))
+HOST_DIR = os.environ.get("GOLEM_HOST_DIR", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 PROJECT_ROOT = HOST_DIR
 DEFAULT_TARGET_REPO = os.environ.get("DEFAULT_TARGET_REPO", "/Users/hermes/projects/AGY")
 

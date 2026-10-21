@@ -18,6 +18,7 @@ from dotenv import load_dotenv
 
 load_dotenv(REPO_ROOT / ".env")
 
+import golem  # noqa: F401
 from bluebubbles_transport import BlueBubblesTransport
 
 async def main():

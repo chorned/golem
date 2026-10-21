@@ -22,6 +22,7 @@ if PROJECT_DIR not in sys.path:
     sys.path.insert(0, PROJECT_DIR)
 
 import app
+import golem  # noqa: F401
 import agent_core
 from agent_core import ChiefOfStaff, build_system_prompt, format_for_slack
 from herdr_tools import SPAWNED_AGENTS

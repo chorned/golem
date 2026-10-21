@@ -45,6 +45,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from slack_sdk.errors import SlackApiError
 
+import golem  # noqa: F401
 import normalizer
 from golem.transport import (
     sanitize_for_slack,

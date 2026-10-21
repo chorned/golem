@@ -5,8 +5,52 @@ Golem is the open-source evolution of First Mate, powered by Herdr's distributed
 """
 from __future__ import annotations
 
+import importlib
+import importlib.abc
+import importlib.util
+import sys
+
 __version__ = "2.1.0"
 LINEAGE = "Golem is the open-source evolution of First Mate, powered by Herdr's distributed PTY mesh."
+
+_LEGACY_ROOT_MODULES = frozenset({
+    "agent_core",
+    "bluebubbles_transport",
+    "github_manager",
+    "herdr_client",
+    "herdr_fleet",
+    "herdr_tools",
+    "memory_manager",
+    "normalizer",
+    "supervisor",
+    "telemetry_observer",
+})
+
+
+class _LegacyRootAliasLoader(importlib.abc.Loader):
+    def __init__(self, target_name: str) -> None:
+        self.target_name = target_name
+
+    def create_module(self, spec):  # type: ignore[no-untyped-def]
+        return importlib.import_module(self.target_name)
+
+    def exec_module(self, module) -> None:  # type: ignore[no-untyped-def]
+        short_name = self.target_name.split(".")[-1]
+        module.__name__ = self.target_name
+        sys.modules[short_name] = module
+        sys.modules[self.target_name] = module
+
+
+class _LegacyRootAliasFinder(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname: str, path=None, target=None):  # type: ignore[no-untyped-def]
+        if fullname in _LEGACY_ROOT_MODULES:
+            target_mod = f"golem.{fullname}"
+            return importlib.util.spec_from_loader(fullname, _LegacyRootAliasLoader(target_mod))
+        return None
+
+
+if not any(isinstance(f, _LegacyRootAliasFinder) for f in sys.meta_path):
+    sys.meta_path.insert(0, _LegacyRootAliasFinder())
 
 # Primary flattened modules
 from . import config
@@ -138,3 +182,29 @@ __all__ = [
     "BaseAgentDriver",
     "AntigravityDriver",
 ]
+
+# Consolidated root modules (exposed both as golem.<mod> and top-level <mod>)
+from . import herdr_client
+from . import herdr_fleet
+from . import herdr_tools
+from . import github_manager
+from . import memory_manager
+from . import supervisor
+from . import telemetry_observer
+from . import bluebubbles_transport
+from . import agent_core
+
+for _legacy_name, _legacy_mod in (
+    ("agent_core", agent_core),
+    ("bluebubbles_transport", bluebubbles_transport),
+    ("github_manager", github_manager),
+    ("herdr_client", herdr_client),
+    ("herdr_fleet", herdr_fleet),
+    ("herdr_tools", herdr_tools),
+    ("memory_manager", memory_manager),
+    ("normalizer", normalizer),
+    ("supervisor", supervisor),
+    ("telemetry_observer", telemetry_observer),
+):
+    sys.modules[_legacy_name] = _legacy_mod
+

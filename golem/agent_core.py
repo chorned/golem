@@ -50,7 +50,7 @@ from golem import (
 
 from golem.config import get_mouth_model, get_default_hand_worker
 
-HOST_DIR = os.environ.get("GOLEM_HOST_DIR", os.path.dirname(os.path.abspath(__file__)))
+HOST_DIR = os.environ.get("GOLEM_HOST_DIR", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 PROJECT_ROOT = HOST_DIR
 DEFAULT_TARGET_REPO = os.environ.get("DEFAULT_TARGET_REPO", "/Users/hermes/projects/AGY")
 DEFAULT_GEMINI_MODEL = get_mouth_model()

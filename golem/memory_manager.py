@@ -16,7 +16,7 @@ from typing import Dict, Any, Optional, List
 
 logger = logging.getLogger("AGY.MemoryManager")
 
-HOST_DIR = os.environ.get("GOLEM_HOST_DIR", os.path.dirname(os.path.abspath(__file__)))
+HOST_DIR = os.environ.get("GOLEM_HOST_DIR", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DEFAULT_LEDGER_PATH = os.environ.get(
     "GOLEM_LEDGER_PATH",
     os.path.join(HOST_DIR, "memory", "ledger.jsonl")

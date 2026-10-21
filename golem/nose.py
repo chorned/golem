@@ -874,10 +874,10 @@ class ZeroRegexEvaluator:
         return True
 
     def _is_mock_env(self) -> bool:
-        if os.environ.get("FIRSTMATE_TEST_MODE") == "1":
+        if os.environ.get("FIRSTMATE_TEST_MODE") == "1" or os.environ.get("GOLEM_TEST_MODE") == "1":
             return True
         key = self.api_key or get_gemini_api_key()
-        if not key or key.startswith("your_") or key == "test_api_key":
+        if not key or key.startswith("your_") or key in ("test_api_key", "test-ci-key"):
             return True
         return False
 
@@ -1550,9 +1550,15 @@ def is_ticket_actively_worked(
         if os.path.isdir(cand) and not _is_self_repo(cand) and cand not in workspace_candidates:
             workspace_candidates.append(cand)
     # 2. Known project directory matches
-    generic_stop_words = {"skill", "build", "task", "project", "fix", "update", "create", "test", "issue", "golem", "first-mate", "agy"}
+    generic_stop_words = {
+        "skill", "build", "task", "project", "fix", "update", "create", "test",
+        "issue", "golem", "first-mate", "agy", "isolated", "ticket", "execute",
+        "plan", "original", "backlog", "request", "stale",
+    }
+    title_tokens: List[str] = []
     for token in re.findall(r"[A-Za-z0-9_-]+", title):
         if len(token) > 3 and token.lower() not in generic_stop_words:
+            title_tokens.append(token.lower())
             p = f"/Users/hermes/projects/{token}"
             if os.path.isdir(p) and not _is_self_repo(p) and p not in workspace_candidates:
                 workspace_candidates.append(p)
@@ -1766,6 +1772,9 @@ def is_ticket_actively_worked(
                         has_active_runner_or_process = True
                         break
                     if any(os.path.basename(ws).lower() in cmd_lower for ws in workspace_candidates if ws):
+                        has_active_runner_or_process = True
+                        break
+                    if any(f"/{tok}/" in cmd_lower or cmd_lower.endswith(f"/{tok}") for tok in title_tokens):
                         has_active_runner_or_process = True
                         break
         except Exception as exc:
@@ -2323,7 +2332,13 @@ class NoseSentinel:
 
     async def _call_gemini_evaluation(self, error_logs: List[str], deltas: List[Any]) -> AnomalyVerdict:
         """Invokes evaluator, allowing test patch targeting self._call_gemini_evaluation."""
-        return await self.evaluator._call_gemini_evaluation(error_logs, deltas)
+        if not _is_mock_object(getattr(self.evaluator, "_call_gemini_evaluation", None)) and self.evaluator._is_mock_env():
+            return self.evaluator._evaluate_offline_fallback(error_logs, deltas)
+        try:
+            return await self.evaluator._call_gemini_evaluation(error_logs, deltas)
+        except Exception as e:
+            logger.warning(f"Error calling NOSE_MODEL ({self.nose_model}); falling back to offline analysis: {e}")
+            return self.evaluator._evaluate_offline_fallback(error_logs, deltas)
 
     def probe_stalled_hands(self, now: Optional[float] = None) -> List[StatusDelta]:
         """
@@ -2711,6 +2726,10 @@ class NoseSentinel:
                     smells_off = bool(verdict.get("smells_off", False))
 
             if verdict and smells_off:
+                v_cat = verdict.category if hasattr(verdict, "category") else (verdict.get("category") if isinstance(verdict, dict) else None)
+                if quota_alert is not None and v_cat == "linear_quota_exceeded":
+                    return quota_alert
+
                 summary = verdict.summary if hasattr(verdict, "summary") else verdict.get("summary", "Health anomaly detected")
                 actionable_deltas = [
                     (d.to_dict() if hasattr(d, "to_dict") else dict(d))

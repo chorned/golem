@@ -7,6 +7,7 @@ Golem is the open-source evolution of First Mate, powered by Herdr's distributed
 """
 
 import unittest
+import golem  # noqa: F401
 from normalizer import (
     strip_ansi,
     strip_tui_debris,

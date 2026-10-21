@@ -11,3 +11,5 @@ os.environ.setdefault("GOLEM_TEST_MODE", "1")
 os.environ.pop("GOLEM_DEFAULT_HAND_WORKER", None)
 os.environ.pop("GOLEM_ENGINE", None)
 os.environ.pop("FIRSTMATE_DEFAULT_HAND_WORKER", None)
+
+import golem  # noqa: F401, E402

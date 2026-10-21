@@ -38,9 +38,7 @@ htmlcov/
 bot.log
 bot.err
 *.log
-.logs/*.log
-!.logs/M*-*.log
-!.logs/.gitkeep
+.logs/
 slack_transfers/
 *.tmp*
 

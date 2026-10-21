@@ -302,20 +302,21 @@ class TestDashboardFunctionalAndMobileDesign(unittest.TestCase):
         self.assertNotIn('<header class="arcade-hud">', self.content)
 
     def test_mobile_responsive_design_and_switcher(self) -> None:
-        """Verify alternative mobile-optimized design strictly triggered on phone viewports."""
+        """Verify functional mobile-optimized design triggered on phone viewports with 100% desktop parity."""
         # 1. Media query for max-width: 768px
         self.assertIn("@media (max-width: 768px)", self.content)
 
-        # 2. Mobile tab switcher bar
+        # 2. Mobile tab switcher bar (4 organs with 100% desktop parity; mobile-only telemetry fleet view removed)
         self.assertIn(".mobile-tab-strip", self.content)
         self.assertIn(".mobile-tab-btn", self.content)
         self.assertIn('data-tab="hands"', self.content)
         self.assertIn('data-tab="eyes"', self.content)
         self.assertIn('data-tab="nose"', self.content)
         self.assertIn('data-tab="mouth"', self.content)
-        self.assertIn('data-tab="fleet"', self.content)
+        self.assertNotIn('data-tab="fleet"', self.content)
 
-        # 3. JS mobile detection and tab switching logic
+        # 3. Generous tap targets and JS mobile detection / tab switching logic
+        self.assertIn("min-height: 44px", self.content)
         self.assertIn("checkMobileMode", self.content)
         self.assertIn("switchMobileTab", self.content)
 

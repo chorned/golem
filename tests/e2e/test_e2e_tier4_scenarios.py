@@ -177,10 +177,10 @@ class TestTier4LegacyInvariantAndBackwardCompatibilityScenario(unittest.TestCase
 
     def test_lineage_invariant_preservation_and_legacy_shims(self):
         """S04: Lineage invariant is codified and legacy imports resolve transparently."""
-        # Check lineage invariant in PROJECT.md
-        project_md = os.path.join(PROJECT_DIR, "PROJECT.md")
-        self.assertTrue(os.path.exists(project_md))
-        with open(project_md, "r", encoding="utf-8") as f:
+        # Check lineage invariant in AGENTS.md
+        agents_md = os.path.join(PROJECT_DIR, "AGENTS.md")
+        self.assertTrue(os.path.exists(agents_md))
+        with open(agents_md, "r", encoding="utf-8") as f:
             content = f.read()
         self.assertIn(LINEAGE_INVARIANT, content)
 

@@ -30,6 +30,7 @@ if PROJECT_DIR not in sys.path:
     sys.path.insert(0, PROJECT_DIR)
 
 import app
+import golem  # noqa: F401
 from herdr_tools import validate_action_payload
 from herdr_fleet import HerdrFleet
 from herdr_client import HerdrClient, InfrastructureError

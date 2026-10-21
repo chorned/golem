@@ -21,6 +21,7 @@ if PROJECT_DIR not in sys.path:
 
 import app
 from app import GatewaySession, sessions, process_user_prompt
+import golem  # noqa: F401
 from telemetry_observer import (
     SessionTelemetryObserver,
     resolve_machine_name,

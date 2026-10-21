@@ -1,6 +1,6 @@
 # Golem: Autonomous Fleet Chief of Staff
 
-[![CI](https://github.com/kunchenguid/firstmate/actions/workflows/ci.yml/badge.svg)](https://github.com/kunchenguid/firstmate/actions)
+[![CI](https://github.com/chorned/golem/actions/workflows/ci.yml/badge.svg)](https://github.com/chorned/golem/actions)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 [![Lineage](https://img.shields.io/badge/open--source-notable--projects-purple.svg)](#notable-open-source-projects)
@@ -11,13 +11,13 @@
 
 ---
 
-## Built for Slack & Antigravity, But easily extensible to any Stack)
+## Built for Slack & Antigravity, easily extensible to any Stack
 
 Golem is built for **Slack** and **Antigravity (`agy`)** out of the box, but its modular architecture makes it easily modified to work with any combination of LLM provider and chat interface:
 
 ### Requirements:
-- **LLM API Key:** Google Gemini (recommended out of the box for massive context and fast responses), Anthropic Claude, OpenAI, or local open-weights models (**Mistral**, **DeepSeek**, **Qwen**) via Ollama or vLLM.
-- **Chat Interface:** Slack Bot Token (Socket Mode out of the box), or Discord, WhatsApp, iMessage (via BlueBubbles), or any other chat platform.
+- **LLM API Key:** Google Gemini, Anthropic Claude, OpenAI, or local open-weights models (**Mistral**, **DeepSeek**, **Qwen**) via Ollama or vLLM.
+- **Chat Interface:** Slack Bot Token, or Discord, WhatsApp, iMessage (via BlueBubbles), or any other chat platform.
 - **Agent Harness:** Antigravity (`agy`) out of the box, with built-in support for alternative harnesses like Claude Code, Codex, or OpenCode.
 
 ---
@@ -238,7 +238,7 @@ Clone the repository and install Golem in editable mode:
 
 ```bash
 # Clone the repository
-git clone https://github.com/kunchenguid/firstmate.git golem
+git clone https://github.com/chorned/golem.git golem
 cd golem
 
 # Set up a virtual environment

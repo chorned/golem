@@ -274,8 +274,7 @@ class TestRepositoryGitignore(unittest.TestCase):
             "htmlcov/",
             ".pytest_cache/",
             ".DS_Store",
-            ".logs/*.log",
-            "!.logs/M*-*.log",
+            ".logs/",
             ".env",
             ".env.*",
             "!.env.example",
@@ -375,17 +374,11 @@ class TestRepositorySecretScanning(unittest.TestCase):
 
         # Explicitly ensure both launchd plist definitions and key root configs are audited
         mandatory_targets = [
-            
             "com.user.golem.plist",
             "app.py",
             "setup.py",
-            "agent_core.py",
-            "herdr_fleet.py",
-            "herdr_tools.py",
             "CONTRIBUTING.md",
             "LICENSE",
-            "PROJECT.md",
-            "TASK_QUEUE.md",
             "pyproject.toml",
             ".gitignore",
         ]

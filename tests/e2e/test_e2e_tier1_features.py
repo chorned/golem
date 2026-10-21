@@ -81,16 +81,16 @@ class TestTier1R1NamespaceAndLineage(unittest.TestCase):
             )
 
     def test_f03_lineage_invariant_codification(self):
-        """F03: Lineage invariant is codified in package docstrings and PROJECT.md."""
-        # Check PROJECT.md for lineage invariant
-        project_md_path = os.path.join(PROJECT_DIR, "PROJECT.md")
-        self.assertTrue(os.path.exists(project_md_path), "PROJECT.md must exist")
-        with open(project_md_path, "r", encoding="utf-8") as f:
+        """F03: Lineage invariant is codified in package docstrings and AGENTS.md."""
+        # Check AGENTS.md for lineage invariant
+        agents_md_path = os.path.join(PROJECT_DIR, "AGENTS.md")
+        self.assertTrue(os.path.exists(agents_md_path), "AGENTS.md must exist")
+        with open(agents_md_path, "r", encoding="utf-8") as f:
             content = f.read()
         self.assertIn(
             LINEAGE_INVARIANT,
             content,
-            "PROJECT.md must contain the exact lineage invariant citation"
+            "AGENTS.md must contain the exact lineage invariant citation"
         )
 
         # If golem is available, verify package docstring contains invariant

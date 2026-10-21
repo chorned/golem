@@ -707,7 +707,7 @@ def resolve_imessage_speaker_name(
     # Only inspect .env files on disk if not explicitly in test mode and no env var set
     if not raw_map and not (os.environ.get("GOLEM_TEST_MODE") == "1" or os.environ.get("FIRSTMATE_TEST_MODE") == "1"):
         env_candidates = [
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"),
+            os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env"),
             "/Users/hermes/projects/first-mate/.env",
             "/Users/hermes/projects/golem/.env",
             os.path.expanduser("~/.hermes/.env"),
@@ -860,7 +860,7 @@ class BlueBubblesTransport:
             return
 
         env_candidates = [
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"),
+            os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env"),
             "/Users/hermes/projects/golem/.env",
             "/Users/hermes/projects/first-mate/.env",
             os.path.expanduser("~/.hermes/.env"),
