@@ -59,8 +59,8 @@ class SessionRouter:
         self.bus: Optional[Any] = sensory_bus or bus
         self.registry_path = (
             registry_path
-            or os.environ.get("FIRSTMATE_SESSIONS_REGISTRY_PATH")
-            or DEFAULT_REGISTRY_PATH
+            if registry_path is not None
+            else (os.environ.get("FIRSTMATE_SESSIONS_REGISTRY_PATH") or DEFAULT_REGISTRY_PATH)
         )
 
         self.sessions: Dict[str, SessionHandle] = {}

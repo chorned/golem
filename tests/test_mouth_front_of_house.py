@@ -479,7 +479,11 @@ class TestExecutiveBriefingDelivery(unittest.IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self) -> None:
         self.bus = ShoulderTapEventBus()
-        self.router = SessionRouter(default_target_cwd=PROJECT_DIR, adapter_factory=make_mock_adapter)
+        self.router = SessionRouter(
+            default_target_cwd=PROJECT_DIR,
+            adapter_factory=make_mock_adapter,
+            registry_path="",
+        )
         self.gateway = IngressGateway(router=self.router, bot_user_id="U_FIRSTMATE", sensory_bus=self.bus)
         self.client = MockSlackClient()
         os.environ["FIRSTMATE_FORCE_MOUTH"] = "1"

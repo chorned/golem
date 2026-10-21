@@ -415,28 +415,52 @@ class TestWebUISensoryAndLinksFixes(unittest.IsolatedAsyncioTestCase):
         import tempfile
         from golem.webui.server import load_webui_nav_links
 
+        # Verify webui_links.txt is gitignored so personal links never sync to remote
+        gitignore_text = (Path(PROJECT_DIR) / ".gitignore").read_text(encoding="utf-8")
+        self.assertIn("webui_links.txt", gitignore_text)
+
         # 1. Default when file does not exist: only Wiki
         default_links = load_webui_nav_links("/tmp/nonexistent_golem_links_12345.txt")
         self.assertEqual(len(default_links), 1)
         self.assertEqual(default_links[0]["label"], "WIKI")
         self.assertEqual(default_links[0]["url"], "/wiki")
 
-        # 2. Custom links from repo's webui_links.txt
-        repo_links = load_webui_nav_links()
-        labels = [l["label"] for l in repo_links]
-        urls = [l["url"] for l in repo_links]
-        self.assertIn("WIKI", labels)
-        self.assertIn("Status", labels)
-        self.assertIn("Code", labels)
-        self.assertIn("https://status.horned.se", urls)
-        self.assertIn("https://code.horned.se", urls)
+        # 2. Custom links from repo's webui_links.txt (or temp fixture when gitignored on CI)
+        default_links_path = Path(PROJECT_DIR) / "webui_links.txt"
+        tmp_file_path = None
+        prev_env = os.environ.get("GOLEM_WEBUI_LINKS_FILE")
+        try:
+            if not default_links_path.is_file():
+                fd, tmp_file_path = tempfile.mkstemp(suffix=".txt")
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    f.write("https://status.horned.se (Status)\nhttps://code.horned.se (Code)\n")
+                os.environ["GOLEM_WEBUI_LINKS_FILE"] = tmp_file_path
 
-        # 3. Verify GET / renders the links in #top-nav-links
-        async with aiohttp.ClientSession() as session:
-            async with session.get(f"http://127.0.0.1:{self.port}/") as resp:
-                html = await resp.text()
-                self.assertIn('href="https://status.horned.se"', html)
-                self.assertIn('href="https://code.horned.se"', html)
+            repo_links = load_webui_nav_links()
+            labels = [l["label"] for l in repo_links]
+            urls = [l["url"] for l in repo_links]
+            self.assertIn("WIKI", labels)
+            self.assertIn("Status", labels)
+            self.assertIn("Code", labels)
+            self.assertIn("https://status.horned.se", urls)
+            self.assertIn("https://code.horned.se", urls)
+
+            # 3. Verify GET / renders the links in #top-nav-links
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f"http://127.0.0.1:{self.port}/") as resp:
+                    html = await resp.text()
+                    self.assertIn('href="https://status.horned.se"', html)
+                    self.assertIn('href="https://code.horned.se"', html)
+        finally:
+            if prev_env is None:
+                os.environ.pop("GOLEM_WEBUI_LINKS_FILE", None)
+            else:
+                os.environ["GOLEM_WEBUI_LINKS_FILE"] = prev_env
+            if tmp_file_path and os.path.exists(tmp_file_path):
+                try:
+                    os.remove(tmp_file_path)
+                except OSError:
+                    pass
 
 
 class TestCleanTerminalHeadersAndMobileLayout(unittest.IsolatedAsyncioTestCase):
