@@ -481,7 +481,7 @@ class DualPaneHarness:
         """
         Prepend pre-flight node invariants and dispatch command to runner pane.
         """
-        invariants = get_preflight_node_invariants(target_node)
+        invariants = get_preflight_node_invariants(target_node, precedent_source=precedent_source)
         effective_task = task_description
         if invariants:
             effective_task = f"[Node Context & Invariants]\n{invariants}\n\n[Task]\n{task_description}"
@@ -562,15 +562,26 @@ class DualPaneHarness:
                 asyncio.create_task(_settle_hand())
 
 
-def get_preflight_node_invariants(target_node: str = "localhost") -> str:
+def get_preflight_node_invariants(
+    target_node: str = "localhost",
+    precedent_source: Optional[str] = None,
+    wiki_dir: Optional[Union[str, Path]] = None,
+    wiki: Optional[Any] = None,
+) -> str:
     """
-    Retrieve pre-flight node facts and topology from wiki:
-    Checks context/rules/<target_node>.md and context/topology.md.
+    Retrieve pre-flight node facts, capabilities, topology, and cited precedent from wiki:
+    Checks context/rules/<target_node>.md, context/capabilities.md, context/topology.md,
+    and any verified wiki file referenced in precedent_source.
     """
     invariants = []
     try:
-        from golem.wiki import GolemWiki
-        wiki = GolemWiki()
+        from golem.wiki import GolemWiki, DEFAULT_WIKI_DIR
+        effective_dir = wiki_dir
+        if effective_dir is None:
+            # Respect mock/patch of DEFAULT_WIKI_DIR if it points to a non-standard test directory
+            if str(DEFAULT_WIKI_DIR) != os.path.expanduser("~/.golem/wiki") and not os.environ.get("GOLEM_WIKI_DIR"):
+                effective_dir = DEFAULT_WIKI_DIR
+        wiki = wiki or GolemWiki(wiki_dir=effective_dir)
         node_name = (target_node or "localhost").strip().lower()
         if node_name == "localhost":
             node_name = "hermes"
@@ -581,10 +592,30 @@ def get_preflight_node_invariants(target_node: str = "localhost") -> str:
             if content:
                 invariants.append(f"--- Node Invariants ({node_name}) ---\n{content}")
 
+        if wiki.exists("context/capabilities.md"):
+            cap_content = wiki.read("context/capabilities.md").strip()
+            if cap_content:
+                invariants.append(f"--- Fleet Capabilities & Affordances ---\n{cap_content}")
+
         if wiki.exists("context/topology.md"):
             topo_content = wiki.read("context/topology.md").strip()
             if topo_content:
                 invariants.append(f"--- Fleet Topology ---\n{topo_content}")
+
+        if precedent_source and isinstance(precedent_source, str):
+            clean_prec = precedent_source.strip()
+            if (
+                clean_prec
+                and clean_prec.lower() != "none"
+                and not clean_prec.startswith("/")
+                and ".." not in clean_prec
+                and ("\n" not in clean_prec)
+                and (clean_prec.endswith(".md") or "/" in clean_prec)
+                and wiki.exists(clean_prec)
+            ):
+                prec_content = (wiki.read(clean_prec) or "").strip()
+                if prec_content and clean_prec not in (node_rule_path, "context/capabilities.md", "context/topology.md"):
+                    invariants.append(f"--- Cited Operational Precedent ({clean_prec}) ---\n{prec_content}")
     except Exception as e:
         logger.debug(f"Error reading preflight node invariants: {e}")
 

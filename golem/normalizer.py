@@ -377,24 +377,50 @@ def transpile_markdown_to_mrkdwn(text: str) -> str:
         url = re.sub(r"\s+[\"\x27][^\"\x27]*[\"\x27]$", "", url).strip()
         if url.startswith("<") and url.endswith(">"):
             url = url[1:-1].strip()
+        if url.lower().startswith("file://"):
+            if alt:
+                return alt if "\x00FM_CODE_" in alt else f"`{alt.strip('`')}`"
+            path_part = re.sub(r"^file://(?:localhost)?", "", url, flags=re.IGNORECASE).split("#")[0]
+            return f"`{path_part}`"
         if alt:
             return f"<{url}|{alt}>"
         return f"<{url}>"
 
     transpiled = MARKDOWN_IMAGE_PATTERN.sub(_image_repl, transpiled)
 
-    # 2. Convert Markdown links: [label](url) -> <url|label>
+    # 2. Convert Markdown links: [label](url) -> <url|label> (or `label` for non-clickable file:// URIs)
     def _link_repl(match: re.Match) -> str:
         label = match.group(1).strip()
         url = match.group(2).strip()
         url = re.sub(r"\s+[\"\x27][^\"\x27]*[\"\x27]$", "", url).strip()
         if url.startswith("<") and url.endswith(">"):
             url = url[1:-1].strip()
+        if url.lower().startswith("file://"):
+            if label:
+                return label if "\x00FM_CODE_" in label else f"`{label.strip('`')}`"
+            path_part = re.sub(r"^file://(?:localhost)?", "", url, flags=re.IGNORECASE).split("#")[0]
+            return f"`{path_part}`"
         if label == url:
             return f"<{url}>"
         return f"<{url}|{label}>"
 
     transpiled = MARKDOWN_LINK_PATTERN.sub(_link_repl, transpiled)
+
+    # 2b. Convert raw Slack-style <file://...|label> or <file://...> links into clean inline code
+    def _slack_file_link_repl(match: re.Match) -> str:
+        raw_url = match.group(1).strip()
+        label = (match.group(2) or "").strip()
+        if label:
+            return label if "\x00FM_CODE_" in label else f"`{label.strip('`')}`"
+        path_part = re.sub(r"^file://(?:localhost)?", "", raw_url, flags=re.IGNORECASE).split("#")[0]
+        return f"`{path_part}`"
+
+    transpiled = re.sub(
+        r"<(file://[^|>]+)(?:\|([^>]+))?>",
+        _slack_file_link_repl,
+        transpiled,
+        flags=re.IGNORECASE,
+    )
 
     # 3. Convert ATX headings to Slack bold headers: *Header*
     def _heading_repl(match: re.Match) -> str:

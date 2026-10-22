@@ -110,6 +110,86 @@ def unwrap_terminal_buffer(raw_buffer: str, col_width: int = 80) -> str:
     return "\n".join(unwrapped)
 
 
+def _validate_classification(clean_buffer: str, parsed: Dict[str, Any], pane: str = "") -> Dict[str, Any]:
+    """
+    Guard against false-positive OAuth/interactive blocker classifications when an
+    autonomous worker (e.g. agy) merely logs or inspects a generic website `/login` URL
+    inside tool output or thoughts without halting for user input.
+    """
+    if not isinstance(parsed, dict) or parsed.get("state") != "BLOCKER":
+        return parsed
+
+    unwrapped = unwrap_terminal_buffer(clean_buffer)
+    is_agent_stream = (
+        str(pane).startswith("agy-")
+        or any(m in unwrapped for m in ("▸ [THOUGHT]", "● [TOOL START]", "✔ [TOOL END]", "✖ [TOOL ERROR]", "🚀 ["))
+    )
+    has_explicit_await = "⚠️ [AWAITING INPUT]" in unwrapped or "[AWAITING_USER_INPUT]" in unwrapped
+
+    b_type = str(parsed.get("blocker_type") or "").lower()
+    b_url = str(parsed.get("blocker_url") or "").strip()
+
+    if b_type == "oauth" and not has_explicit_await:
+        is_interactive_oauth_url = bool(
+            OAUTH_URL_PROMPT.search(b_url)
+            or re.search(
+                r"(?:127\.0\.0\.1|localhost|0\.0\.0\.0|/oauth|/authorize|/device|user_code=|code_challenge=|client_id=)",
+                b_url,
+                re.IGNORECASE,
+            )
+        )
+        tail_lines = "\n".join([l.strip() for l in unwrapped.splitlines() if l.strip()][-4:])
+        has_interactive_oauth_cue = bool(
+            re.search(
+                r"(?:open\s+.*browser|visit\s+.*url|waiting\s+for\s+(?:auth|callback|login)|enter\s+.*code|device\s+code)",
+                tail_lines,
+                re.IGNORECASE,
+            )
+        )
+        if is_agent_stream and not is_interactive_oauth_url:
+            logger.info(
+                f"EyesTaskObserver: Suppressing non-interactive URL '{b_url}' in autonomous agent stream on {pane}."
+            )
+            return {
+                "state": "RUNNING",
+                "blocker_type": None,
+                "blocker_url": None,
+                "blocker_prompt": None,
+                "summary": "Autonomous worker inspecting tool output.",
+            }
+        if not is_interactive_oauth_url and not has_interactive_oauth_cue:
+            logger.info(
+                f"EyesTaskObserver: Suppressing non-OAuth URL '{b_url}' without interactive cue on {pane}."
+            )
+            return {
+                "state": "RUNNING",
+                "blocker_type": None,
+                "blocker_url": None,
+                "blocker_prompt": None,
+                "summary": "Command actively executing.",
+            }
+    elif is_agent_stream and not has_explicit_await:
+        non_hb_lines = [
+            l.strip()
+            for l in unwrapped.splitlines()
+            if l.strip() and "[HEARTBEAT" not in l
+        ]
+        last_real_line = non_hb_lines[-1] if non_hb_lines else ""
+        if last_real_line.startswith(("▸ [THOUGHT]", "● [TOOL START]", "✔ [TOOL END]", "✖ [TOOL ERROR]", "🚀 [")):
+            logger.info(
+                f"EyesTaskObserver: Suppressing non-explicit blocker ({b_type}) while agent stream is active on {pane}."
+            )
+            return {
+                "state": "RUNNING",
+                "blocker_type": None,
+                "blocker_url": None,
+                "blocker_prompt": None,
+                "summary": "Autonomous worker actively streaming.",
+            }
+
+    return parsed
+
+
 class EyesTaskObserver:
     """
     Watches active runner terminal buffers and emits ShoulderTapAlerts
@@ -449,11 +529,18 @@ class EyesTaskObserver:
                 '  "summary": "<concise 1-sentence description>"\n'
                 "}\n\n"
                 "Classification Guidelines:\n"
-                '- "BLOCKER": Execution is paused waiting for user input, interactive confirmation ([y/N], (y/n)), '
-                'sudo password, passphrase, secret token, or an OAuth authentication URL (e.g. http://127.0.0.1:.../auth or localhost).\n'
+                '- "BLOCKER": Execution is genuinely HALTED at the end of the buffer waiting for interactive user input, '
+                'confirmation ([y/N], (y/n)), sudo password, passphrase, secret token, an explicit ⚠️ [AWAITING INPUT] marker, '
+                'or an interactive CLI OAuth callback/device URL (e.g. http://127.0.0.1:.../auth, http://localhost:..., '
+                'oauth2/authorize, or device login prompt).\n'
+                '- ANTI-FALSE-POSITIVE RULE: When observing an autonomous worker stream containing `▸ [THOUGHT]`, '
+                '`● [TOOL START]`, or `✔ [TOOL END]` blocks, DO NOT classify a generic website login URL '
+                '(e.g. `https://.../login` or `https://.../my-account/login`), HTTP 401/403 status log, or source code '
+                'snippet inside tool output as `"BLOCKER"` unless the worker explicitly emitted `⚠️ [AWAITING INPUT]` '
+                'or halted on a localhost/device OAuth listener at the very end of the buffer.\n'
                 '- "COMPLETED": The command finished running and returned to the shell prompt with success.\n'
                 '- "ERROR": The command failed, crashed, threw an unhandled exception or non-zero exit code.\n'
-                '- "RUNNING": The process is actively executing, printing logs, compiling, or downloading.'
+                '- "RUNNING": The process is actively executing, reasoning, running tools, printing logs, compiling, or downloading.'
             )
 
             payload = {
@@ -523,13 +610,17 @@ class EyesTaskObserver:
                         try:
                             parsed = json.loads(raw_json)
                             if isinstance(parsed, dict) and "state" in parsed:
-                                return parsed
+                                return self._validate_classification(clean_buffer, parsed)
                         except Exception:
                             pass
         except Exception as e:
             logger.warning(f"EYES_MODEL classification failed; falling back to offline analysis: {e}")
 
         return self._classify_buffer_offline_fallback(clean_buffer)
+
+    def _validate_classification(self, clean_buffer: str, parsed: Dict[str, Any]) -> Dict[str, Any]:
+        """Delegate to module-level _validate_classification with this observer's pane."""
+        return _validate_classification(clean_buffer, parsed, pane=str(getattr(self, "pane", "")))
 
     def _classify_buffer_offline_fallback(self, clean_buffer: str) -> Dict[str, Any]:
         """
@@ -548,26 +639,26 @@ class EyesTaskObserver:
                     b_type = blocker.get("type", "prompt")
                     b_url = blocker.get("url")
                     b_content = blocker.get("content")
-                    return {
+                    return self._validate_classification(clean_buffer, {
                         "state": "BLOCKER",
                         "blocker_type": b_type,
                         "blocker_url": b_url,
                         "blocker_prompt": b_content,
                         "summary": f"Interactive blocker ({b_type}) waiting for input.",
                         "pattern_id": f"buffer_observer_{b_type}",
-                    }
+                    })
 
         # 2. Check for OAuth callback URL
         oauth_match = OAUTH_URL_PROMPT.search(unwrapped)
         if oauth_match:
-            return {
+            return self._validate_classification(clean_buffer, {
                 "state": "BLOCKER",
                 "blocker_type": "oauth",
                 "blocker_url": oauth_match.group(0),
                 "blocker_prompt": None,
                 "summary": "OAuth authentication URL detected.",
                 "pattern_id": "oauth_url",
-            }
+            })
 
         # 3. Check for SUDO / SSH passphrase prompt
         sudo_match = SUDO_SSH_PROMPT.search(unwrapped)

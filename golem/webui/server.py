@@ -518,6 +518,8 @@ class WebUIServer:
             "buffer_tail": initial_log,
             "worker": worker or "agy",
             "model": hand_model or worker or "agy",
+            "channel": kwargs.get("channel"),
+            "thread_ts": kwargs.get("thread_ts"),
             "started_at": kwargs.get("started_at", now_ts),
             "last_activity_at": kwargs.get("last_activity_at", now_ts),
             "last_real_activity_at": kwargs.get("last_real_activity_at", kwargs.get("started_at", now_ts)),

@@ -229,6 +229,19 @@ def strip_read_only_tools(tools: Any) -> List[Dict[str, Any]]:
     return stripped
 
 
+def strip_tools_by_name(tools: Any, excluded_names: Set[str]) -> List[Dict[str, Any]]:
+    """Return a copy of a Gemini tools declaration without the specified tool names."""
+    stripped: List[Dict[str, Any]] = []
+    for group in list(tools or []):
+        decls = [
+            d for d in group.get("functionDeclarations", [])
+            if d.get("name") not in excluded_names
+        ]
+        if decls:
+            stripped.append({"functionDeclarations": decls})
+    return stripped
+
+
 def compact_tool_output(tool_name: str, result: Any) -> Any:
     """
     Compact and sanitize verbose tool outputs before appending to working_contents.
@@ -1743,7 +1756,7 @@ class IngressGateway:
     async def _handle_health_anomaly_alert(self, alert: Any, client: Optional[Any] = None) -> None:
         """Receive health anomaly alerts from The Nose Sentinel and deliver advisory to Carl."""
         summary = getattr(alert, "summary", "") or "Fleet Sentinel detected a health anomaly."
-        from golem.notify import DEFAULT_SLACK_CHANNEL, send_slack_message
+        from golem.notify import DEFAULT_SLACK_CHANNEL, send_slack_message, send_imessage
         channel = (
             getattr(alert, "channel", None)
             or (getattr(alert, "data", {}) or {}).get("channel")
@@ -1752,11 +1765,15 @@ class IngressGateway:
             or DEFAULT_SLACK_CHANNEL
         )
         thread_ts = getattr(alert, "thread_ts", None) or (getattr(alert, "data", {}) or {}).get("thread_ts")
+        is_imessage = bool(channel and str(channel).startswith(("iMessage;", "SMS;")))
         advisory_msg = f"👃 *Sentinel Advisory (Fleet Health):*\n{summary}"
         if client and channel:
-            await self._post_response(client, channel, thread_ts, advisory_msg, is_imessage=False)
+            await self._post_response(client, channel, thread_ts, advisory_msg, is_imessage=is_imessage)
         elif channel:
-            await send_slack_message(text=advisory_msg, channel=channel, thread_ts=thread_ts)
+            if is_imessage:
+                await send_imessage(text=advisory_msg, chat_guid=str(channel))
+            else:
+                await send_slack_message(text=advisory_msg, channel=channel, thread_ts=thread_ts)
 
     async def _handle_email_received_alert(self, alert: Any, client: Optional[Any] = None) -> None:
         """
@@ -3129,7 +3146,27 @@ class IngressGateway:
                 if clean_text.strip().lower() in ("/cancel", "!cancel", "/stop", "!stop", "/abort", "!abort") or is_cancellation_message(clean_text):
                     await self._handle_out_of_band_cancellation(session, client, channel, thread_ts, ts, is_imessage)
                     return
-                elif use_mouth:
+                active_hand_dict = getattr(session, "_active_backstage_hand", None)
+                if isinstance(active_hand_dict, dict):
+                    norm_in = clean_text.strip().lower().rstrip(".!")
+                    if norm_in in ("continue", "go ahead", "keep going", "proceed", "resume"):
+                        node_lbl = active_hand_dict.get("node") or "localhost"
+                        started_ts = float(active_hand_dict.get("started_at") or time.time())
+                        elapsed_s = max(1, int(time.time() - started_ts))
+                        ack_still_running = (
+                            f"⏳ Still working on that backstage task on `{node_lbl}` "
+                            f"(running for {elapsed_s}s)—I'll post the briefing as soon as it settles."
+                        )
+                        if ts:
+                            await swap_reaction(client, channel, ts, "gear", "white_check_mark")
+                        await self._post_response(client, channel, thread_ts, ack_still_running, is_imessage)
+                        return
+                    elif norm_in and not is_status_inquiry(clean_text):
+                        if not hasattr(session, "pending_steering_notes") or not isinstance(session.pending_steering_notes, list):
+                            session.pending_steering_notes = []
+                        if clean_text.strip() not in session.pending_steering_notes:
+                            session.pending_steering_notes.append(clean_text.strip()[:500])
+                if use_mouth:
                     status_info = None
                     if hasattr(session, "get_runner_status"):
                         try:
@@ -3376,6 +3413,24 @@ class IngressGateway:
             if thread_ts:
                 await set_assistant_status(client, channel, thread_ts, "")
 
+    def _get_channel_outbound_seq(self, channel: Optional[str]) -> int:
+        if not channel:
+            return 0
+        seq_map = getattr(self, "_channel_outbound_seq", None)
+        if not isinstance(seq_map, dict):
+            return 0
+        return int(seq_map.get(str(channel), 0))
+
+    def _bump_channel_outbound_seq(self, channel: Optional[str]) -> int:
+        if not channel:
+            return 0
+        if not hasattr(self, "_channel_outbound_seq") or not isinstance(self._channel_outbound_seq, dict):
+            self._channel_outbound_seq = {}
+        key = str(channel)
+        nxt = int(self._channel_outbound_seq.get(key, 0)) + 1
+        self._channel_outbound_seq[key] = nxt
+        return nxt
+
     async def _post_response(
         self,
         client: Any,
@@ -3412,6 +3467,7 @@ class IngressGateway:
             res = client.chat_postMessage(channel=channel, thread_ts=effective_thread_ts, text=chunk)
             if inspect.isawaitable(res):
                 res = await res
+            self._bump_channel_outbound_seq(channel)
             if first_resp is None:
                 first_resp = res
 
@@ -4037,7 +4093,10 @@ class IngressGateway:
         # Pre-Flight Node Facts Injection (Hand Dispatch)
         try:
             from golem.harness import get_preflight_node_invariants
-            node_invariants = get_preflight_node_invariants(effective_node)
+            try:
+                node_invariants = get_preflight_node_invariants(effective_node, precedent_source=precedent_source)
+            except TypeError:
+                node_invariants = get_preflight_node_invariants(effective_node)
             if node_invariants:
                 task_desc = f"[Node Context & Invariants]\n{node_invariants}\n\n[Task]\n{task_desc}"
         except Exception as e:
@@ -4100,12 +4159,22 @@ class IngressGateway:
             if not live_tail:
                 live_tail = "Worker active — streaming output..."
 
+            clean_steering = str(effective_task or "").strip()
+            if clean_steering and clean_steering.lower() not in ("continue", "status", "progress"):
+                if not hasattr(session, "pending_steering_notes") or not isinstance(session.pending_steering_notes, list):
+                    session.pending_steering_notes = []
+                if clean_steering not in session.pending_steering_notes:
+                    session.pending_steering_notes.append(clean_steering[:500])
+
             active_cmd_snippet = str(active_hand.get("command", "") or "")[:300]
             accumulator.turn_status = "SUCCESS"
+            accumulator.already_running_reentrant = True
             accumulator.final_response = (
                 f"[BACKSTAGE TASK ALREADY RUNNING on {h_pane} (elapsed {elapsed_sec}s)]\n"
                 f"Active Task: {active_cmd_snippet}\n"
-                f"Recent Buffer Tail:\n{live_tail}"
+                f"Recent Buffer Tail:\n{live_tail}\n"
+                f"[NOTE: Do NOT call check_eyes or dispatch_task again in this turn. "
+                f"Synthesize a concise status update for Carl immediately and let the active Hand finish.]"
             )
             accumulator.output_tail = live_tail
             logger.info(
@@ -4113,6 +4182,12 @@ class IngressGateway:
                 f"Returning active task status without re-entrant dispatch."
             )
             return accumulator
+
+        if session is not None and isinstance(getattr(session, "pending_steering_notes", None), list) and session.pending_steering_notes:
+            prior_notes = list(session.pending_steering_notes)
+            session.pending_steering_notes.clear()
+            notes_block = "\n".join(f"- {n}" for n in prior_notes)
+            task_desc = f"[Operator Steering Context]\n{notes_block}\n\n{task_desc}"
 
         stream_gen = self._stream_backstage_events(session, task_desc)
         event_queue: asyncio.Queue[Any] = asyncio.Queue()
@@ -4154,6 +4229,16 @@ class IngressGateway:
                 if inspect.isawaitable(res):
                     await res
                 hand_registered = True
+                if isinstance(getattr(webui, "_active_hands", None), dict):
+                    resolved_k = (
+                        webui._resolve_hand_key(pane, effective_node)
+                        if hasattr(webui, "_resolve_hand_key")
+                        else pane
+                    )
+                    hand_entry = webui._active_hands.get(resolved_k) or webui._active_hands.get(pane)
+                    if isinstance(hand_entry, dict):
+                        hand_entry["channel"] = channel
+                        hand_entry["thread_ts"] = thread_ts
             except Exception as exc:
                 logger.debug(f"WebUI register_active_hand warning: {exc}")
 
@@ -4231,7 +4316,16 @@ class IngressGateway:
                         idle_seconds = now - last_activity_time[0]
                         if idle_seconds >= hb_interval:
                             elapsed_from_start = int(now - start_time)
-                            hb_text = f"\x1b[90m⏳ [HEARTBEAT +{elapsed_from_start}s] Worker active — waiting on model/tool stream...\x1b[0m\n"
+                            tool_in_flight = bool(
+                                accumulator.tool_calls
+                                and isinstance(accumulator.tool_calls[-1], dict)
+                                and accumulator.tool_calls[-1].get("status") == "running"
+                            )
+                            if tool_in_flight:
+                                active_tool_name = accumulator.tool_calls[-1].get("tool", "tool")
+                                hb_text = f"\x1b[90m⏳ [HEARTBEAT +{elapsed_from_start}s] Worker active — executing tool ({active_tool_name})...\x1b[0m\n"
+                            else:
+                                hb_text = f"\x1b[90m⏳ [HEARTBEAT +{elapsed_from_start}s] Worker active — waiting on model/tool stream...\x1b[0m\n"
                             if webui is not None and not _is_mock_object(webui):
                                 try:
                                     res = webui.update_hand_buffer(pane_id=pane, delta=hb_text, node=effective_node)
@@ -4246,12 +4340,27 @@ class IngressGateway:
                                 except Exception:
                                     pass
 
-                            stall_threshold = float(os.environ.get("GOLEM_HAND_STALL_SECONDS", "180"))
+                            if "GOLEM_HAND_STALL_SECONDS" in os.environ:
+                                stall_threshold = float(os.environ["GOLEM_HAND_STALL_SECONDS"])
+                            elif tool_in_flight:
+                                stall_threshold = float(os.environ.get("GOLEM_HAND_TOOL_STALL_SECONDS", "600"))
+                            else:
+                                stall_threshold = 180.0
                             if idle_seconds >= stall_threshold and not stall_alerted[0]:
                                 stall_alerted[0] = True
                                 nose = getattr(self, "get_nose_sentinel", lambda: None)() if callable(getattr(self, "get_nose_sentinel", None)) else getattr(self, "nose_sentinel", None)
                                 if nose is not None and hasattr(nose, "_alerted_stalled_hands"):
                                     nose._alerted_stalled_hands.add(pane)
+                                    base_pane = str(pane).split("@")[0].split("#")[0]
+                                    if base_pane:
+                                        nose._alerted_stalled_hands.add(base_pane)
+                                    if webui is not None and hasattr(webui, "_resolve_hand_key"):
+                                        try:
+                                            resolved_k = webui._resolve_hand_key(pane, effective_node)
+                                            if resolved_k:
+                                                nose._alerted_stalled_hands.add(resolved_k)
+                                        except Exception:
+                                            pass
 
                                 stall_summary = (
                                     f"Backstage hand {pane} ({effective_worker} on {effective_node}) "
@@ -4310,7 +4419,21 @@ class IngressGateway:
                                 "Execution is running silently; I'll brief you as soon as it settles."
                             )
                         if client and channel:
-                            resp = await self._post_response(client, channel, thread_ts, ack_msg, is_imessage)
+                            existing_interim_ts = kwargs.get("existing_interim_ts") or (
+                                getattr(session, "_turn_interim_ts", None) if session is not None else None
+                            )
+                            if existing_interim_ts:
+                                resp = await self._post_response(
+                                    client,
+                                    channel,
+                                    thread_ts,
+                                    ack_msg,
+                                    is_imessage,
+                                    update_ts=str(existing_interim_ts),
+                                )
+                                accumulator.interim_message_ts = str(existing_interim_ts)
+                            else:
+                                resp = await self._post_response(client, channel, thread_ts, ack_msg, is_imessage)
                             if resp:
                                 raw_data = getattr(resp, "data", None)
                                 data_dict = raw_data if isinstance(raw_data, dict) else {}
@@ -4321,6 +4444,10 @@ class IngressGateway:
                                 )
                                 if msg_ts:
                                     accumulator.interim_message_ts = str(msg_ts)
+                            if accumulator.interim_message_ts and session is not None:
+                                session._turn_interim_ts = accumulator.interim_message_ts
+                                if not existing_interim_ts:
+                                    session._turn_interim_seq = self._get_channel_outbound_seq(channel)
                         if thread_ts:
                             await set_assistant_status(
                                 client, channel, thread_ts, f"Running on {node_label} via {effective_worker}..."
@@ -4606,6 +4733,19 @@ class IngressGateway:
                     asyncio.create_task(_settle_ephemeral_hand())
                 except Exception as e:
                     logger.debug(f"Failed to initiate ephemeral [Hand] settlement in ingress: {e}")
+
+        if session is not None and isinstance(getattr(session, "pending_steering_notes", None), list) and session.pending_steering_notes:
+            drained_notes = list(session.pending_steering_notes)
+            session.pending_steering_notes.clear()
+            accumulator.steering_notes_drained = drained_notes
+            steering_suffix = (
+                "\n\n[MID-STREAM OPERATOR STEERING RECEIVED WHILE HAND WAS RUNNING]:\n"
+                + "\n".join(f"- {n}" for n in drained_notes)
+                + "\n[ACTION REQUIRED: Incorporate and execute this operator steering immediately "
+                "(e.g. consult_memory / dispatch a follow-up Hand) before delivering your final briefing.]"
+            )
+            accumulator.final_response = f"{getattr(accumulator, 'final_response', '') or ''}{steering_suffix}".strip()
+            accumulator.output_tail = f"{getattr(accumulator, 'output_tail', '') or accumulator.final_response}".strip()
 
         return accumulator
 
@@ -5487,6 +5627,55 @@ class IngressGateway:
         skip_step2_synthesis = False
         briefing_text = ""
         error_info: Dict[str, Any] = {}
+        turn_interim_ts: Optional[str] = None
+        turn_interim_seq: Optional[int] = None
+        check_eyes_called_since_dispatch = False
+        if session is not None and not isinstance(getattr(session, "_active_backstage_hand", None), dict):
+            session._turn_interim_ts = None
+            session._turn_interim_seq = None
+
+        async def _deliver_final_briefing(briefing_str: str) -> None:
+            nonlocal turn_interim_ts, turn_interim_seq
+            acc_interim = (
+                accumulator.get("interim_message_ts")
+                if isinstance(accumulator, dict)
+                else (getattr(accumulator, "interim_message_ts", None) if accumulator else None)
+            )
+            effective_interim_ts = turn_interim_ts or acc_interim
+            effective_seq = turn_interim_seq
+            if session is not None and not isinstance(getattr(session, "_active_backstage_hand", None), dict):
+                if not effective_interim_ts:
+                    effective_interim_ts = getattr(session, "_turn_interim_ts", None)
+                if effective_seq is None:
+                    effective_seq = getattr(session, "_turn_interim_seq", None)
+                session._turn_interim_ts = None
+                session._turn_interim_seq = None
+
+            cur_seq = self._get_channel_outbound_seq(channel)
+            has_intervening_messages = bool(
+                effective_interim_ts
+                and effective_seq is not None
+                and cur_seq > effective_seq
+            )
+            if effective_interim_ts and has_intervening_messages:
+                await self._post_response(
+                    client,
+                    channel,
+                    thread_ts,
+                    "✅ *Completed:* Backstage execution settled — see briefing below.",
+                    is_imessage,
+                    update_ts=effective_interim_ts,
+                )
+                await self._post_response(client, channel, thread_ts, briefing_str, is_imessage, update_ts=None)
+            else:
+                await self._post_response(
+                    client,
+                    channel,
+                    thread_ts,
+                    briefing_str,
+                    is_imessage,
+                    update_ts=effective_interim_ts,
+                )
 
         while current_hop < MAX_TOOL_CHAIN_HOPS:
             current_hop += 1
@@ -5553,8 +5742,7 @@ class IngressGateway:
                             else:
                                 target_reaction = "white_check_mark"
 
-                        interim_ts = accumulator.get("interim_message_ts") if isinstance(accumulator, dict) else (getattr(accumulator, "interim_message_ts", None) if accumulator else None)
-                        await self._post_response(client, channel, thread_ts, clean_briefing, is_imessage, update_ts=interim_ts)
+                        await _deliver_final_briefing(clean_briefing)
                         await self._broadcast_mouth_briefing(clean_briefing, model)
 
                         if file_targets:
@@ -5637,6 +5825,12 @@ class IngressGateway:
                 elif fn_name == "check_eyes":
                     pane = fn_args.get("pane")
                     tool_result = await self._execute_check_eyes(session=session, pane=pane)
+                    check_eyes_called_since_dispatch = True
+                    if isinstance(tool_result, dict) and str(tool_result.get("state", "")).upper() == "RUNNING":
+                        tool_result["note"] = (
+                            "Runner is actively executing in the background. Do NOT call check_eyes again in this turn; "
+                            "synthesize a concise live progress update for Carl immediately."
+                        )
                 elif fn_name == "check_nose":
                     trigger_fresh_sniff = bool(fn_args.get("trigger_fresh_sniff", False))
                     tool_result = await self._execute_check_nose(trigger_fresh_sniff=trigger_fresh_sniff)
@@ -5865,6 +6059,20 @@ class IngressGateway:
                     )
 
                 if fn_name in ("dispatch_task", "dispatch_subtasks"):
+                    if not getattr(accumulator, "already_running_reentrant", False):
+                        check_eyes_called_since_dispatch = False
+                    acc_interim_val = (
+                        accumulator.get("interim_message_ts")
+                        if isinstance(accumulator, dict)
+                        else getattr(accumulator, "interim_message_ts", None)
+                    )
+                    if acc_interim_val:
+                        if not turn_interim_ts:
+                            s_seq = getattr(session, "_turn_interim_seq", None) if session is not None else None
+                            turn_interim_seq = s_seq if s_seq is not None else self._get_channel_outbound_seq(channel)
+                        turn_interim_ts = str(acc_interim_val)
+                        if session is not None and not getattr(accumulator, "already_running_reentrant", False):
+                            session._turn_interim_ts = turn_interim_ts
                     # Unpack accumulator result (handles both accumulator instance and mock dict return)
                     if isinstance(accumulator, dict):
                         acc_status = accumulator.get("status", "SUCCESS")
@@ -5992,6 +6200,10 @@ class IngressGateway:
             is_chainable = (fn_name in CHAINABLE_TOOLS) or (fn_name == "dispatch_task" and bool(pending_subtasks))
             if fn_name == "dispatch_task" and dispatch_repair_attempts > 2:
                 is_chainable = False
+            if fn_name == "dispatch_task" and getattr(accumulator, "already_running_reentrant", False):
+                is_chainable = False
+            if fn_name == "check_eyes" and isinstance(tool_result, dict) and str(tool_result.get("state", "")).upper() == "RUNNING":
+                is_chainable = False
 
             if fn_name in READ_ONLY_HOP_TOOLS:
                 consecutive_read_only += 1
@@ -6007,7 +6219,13 @@ class IngressGateway:
                     f"(pending_subtasks={len(pending_subtasks)}). "
                     f"Allowing chain to next action or synthesis (mode=AUTO)."
                 )
-                chain_tools = tools
+                chain_tools = (
+                    strip_read_only_tools(tools)
+                    if consecutive_read_only >= MAX_CONSECUTIVE_READ_ONLY_HOPS
+                    else tools
+                )
+                if check_eyes_called_since_dispatch:
+                    chain_tools = strip_tools_by_name(chain_tools, {"check_eyes"})
                 chain_sys_prompt = sys_prompt
                 chain_payload = {
                     "systemInstruction": {"parts": [{"text": chain_sys_prompt}]},
@@ -6166,8 +6384,7 @@ class IngressGateway:
         else:
             target_reaction = "white_check_mark"
 
-        interim_ts = accumulator.get("interim_message_ts") if isinstance(accumulator, dict) else (getattr(accumulator, "interim_message_ts", None) if "accumulator" in locals() and accumulator else None)
-        await self._post_response(client, channel, thread_ts, clean_briefing, is_imessage, update_ts=interim_ts)
+        await _deliver_final_briefing(clean_briefing)
         await self._broadcast_mouth_briefing(clean_briefing, model)
         self._broadcast_mouth_log(f"[BRIEFING] {clean_briefing}", model=model)
 

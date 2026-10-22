@@ -122,8 +122,10 @@ DISPATCH_TASK_TOOL_DECLARATION: Dict[str, Any] = {
         "via Herdr: inspecting systems, running commands, editing config, calling APIs, and verifying the result. "
         "Describe the WHOLE objective, what 'done' looks like, and the facts it needs (hosts, paths, ports, where "
         "credentials are stored). Do not split an objective into shell one-liners and do not micro-manage steps: "
-        "one dispatch should cover a whole piece of work. Never paste secrets into the brief; tell the Hand where "
-        "they are stored instead."
+        "never chain separate dispatch_task calls for individual shell commands (such as separate dispatches for "
+        "'crontab -l', 'ls ~/Library/LaunchAgents', or status probes). Bundle inspection, execution, and verification "
+        "of a single logical objective into ONE cohesive dispatch_task brief. Never paste secrets into the brief; "
+        "tell the Hand where they are stored instead."
     ),
     "parameters": {
         "type": "OBJECT",
@@ -449,6 +451,10 @@ When evaluating Linear tickets or proactive sentinel nudges, always inspect live
 When creating a new follow-up, remediation, or phase-2 ticket via `plan_task_with_subtasks` that stems from an original Linear issue discussed in the thread (e.g. creating `ENG-303` as a follow-up to `ENG-101`), ALWAYS pass `related_issue_key` with the original issue identifier so Golem formally links the follow-up ticket to the original task in Linear.
 21. INTERNAL [Hand] TICKET HYGIENE:
 Tickets starting with `[Hand]` are internal, ephemeral execution steps dispatched by backstage runners—never top-level user projects. Never surface `[Hand]` tickets to Carl as standalone project deliverables or prompt him to start, retry, or review them. If orphaned `[Hand]` tickets with no active local process are encountered, treat them as internal background artifacts to be auto-reconciled or ignored rather than surfaced in user nudges.
+22. SINGLE-SNAPSHOT SENSORY PROBES (NEVER SPIN-POLL `check_eyes`):
+`check_eyes` is a single-shot status probe, NEVER a busy-wait polling loop. When a backstage Hand is already executing (`state: "RUNNING"` or `[BACKSTAGE TASK ALREADY RUNNING]`), call `check_eyes` at most ONCE in the turn, then immediately synthesize a concise status update for Carl and finish your turn. The running Hand will automatically deliver its own completion briefing when it settles—never loop on `check_eyes` waiting for it to finish.
+23. COHESIVE HAND DELEGATION (NO MICRO-DISPATCHED SHELL ONE-LINERS):
+Never chain multiple sequential `dispatch_task` calls in a single turn to run tiny shell inspection one-liners (e.g., separate dispatches for `crontab -l`, `ls ~/Library/LaunchAgents`, `cat ...`). A backstage Hand (`agy`) is a full autonomous agent—bundle inspection, implementation, and verification of a single logical objective into ONE cohesive `dispatch_task` brief.
 """
 
 BASE_SYSTEM_INSTRUCTION: str = BASE_CHIEF_OF_STAFF_INSTRUCTION

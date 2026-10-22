@@ -2375,7 +2375,9 @@ class NoseSentinel:
             if status_str != "RUNNING":
                 continue
 
+            base_pane = str(pane_id).split("@")[0].split("#")[0]
             current_running_panes.add(pane_id)
+            current_running_panes.add(base_pane)
 
             started_at = float(hand.get("started_at") or now_ts)
             elapsed = now_ts - started_at
@@ -2386,7 +2388,21 @@ class NoseSentinel:
             buffer_tail = str(hand.get("buffer_tail", "") or "")
             is_stuck = False
 
-            # Check 1: Heartbeat seconds in buffer tail >= stall_threshold
+            # Distinguish active tool execution ([TOOL START] without matching [TOOL END]/[TOOL ERROR])
+            last_tool_start = buffer_tail.rfind("[TOOL START]")
+            last_tool_end = max(buffer_tail.rfind("[TOOL END]"), buffer_tail.rfind("[TOOL ERROR]"))
+            tool_in_flight = (
+                bool(last_tool_start != -1 and last_tool_start > last_tool_end)
+                or "executing tool" in buffer_tail
+                or bool(hand.get("tool_in_flight"))
+            )
+            effective_threshold = (
+                float(os.environ.get("GOLEM_HAND_TOOL_STALL_SECONDS", "600"))
+                if (tool_in_flight and "GOLEM_HAND_STALL_SECONDS" not in os.environ)
+                else stall_threshold
+            )
+
+            # Check 1: Heartbeat seconds in buffer tail >= effective_threshold
             # Pattern: [HEARTBEAT +(\d+)s]
             hb_matches = re.findall(r"\[HEARTBEAT\s*\+(\d+)s\]", buffer_tail)
             max_hb_s = max([int(s) for s in hb_matches], default=0)
@@ -2394,16 +2410,19 @@ class NoseSentinel:
             non_empty = [l.strip() for l in buffer_tail.splitlines() if l.strip()]
             last_lines = non_empty[-3:] if non_empty else []
 
-            if hand.get("last_real_activity_at") is not None and idle_seconds >= stall_threshold:
+            if hand.get("last_real_activity_at") is not None and idle_seconds >= effective_threshold:
                 is_stuck = True
-            elif max_hb_s >= stall_threshold:
+            elif max_hb_s >= effective_threshold:
                 is_stuck = True
-            elif elapsed >= stall_threshold and any("HEARTBEAT" in l for l in last_lines):
+            elif elapsed >= effective_threshold and any("HEARTBEAT" in l for l in last_lines):
                 is_stuck = True
 
             if is_stuck:
-                if pane_id not in self._alerted_stalled_hands:
+                if pane_id not in self._alerted_stalled_hands and base_pane not in self._alerted_stalled_hands:
                     self._alerted_stalled_hands.add(pane_id)
+                    self._alerted_stalled_hands.add(base_pane)
+                    self._last_stalled_hand_channel = hand.get("channel")
+                    self._last_stalled_hand_thread_ts = hand.get("thread_ts")
                     worker_name = hand.get("worker", "worker")
                     node_name = hand.get("node", "local")
                     cmd_snippet = str(hand.get("command", "") or "")[:120]
@@ -2426,8 +2445,8 @@ class NoseSentinel:
                     stalled_deltas.append(delta)
             else:
                 # Hand is no longer stalled
-                if pane_id in self._alerted_stalled_hands:
-                    self._alerted_stalled_hands.remove(pane_id)
+                self._alerted_stalled_hands.discard(pane_id)
+                self._alerted_stalled_hands.discard(base_pane)
 
         # Clear alerted panes that are no longer RUNNING
         stale_alerted = [p for p in self._alerted_stalled_hands if p not in current_running_panes]
@@ -2741,9 +2760,18 @@ class NoseSentinel:
                 alert_data["error_line_count"] = len(errors)
                 alert_data["error_sample"] = errors[-10:] if errors else []
 
+                stalled_ch = getattr(self, "_last_stalled_hand_channel", None) if stalled_deltas else None
+                stalled_ts = getattr(self, "_last_stalled_hand_thread_ts", None) if stalled_deltas else None
+                if stalled_ch:
+                    alert_data["channel"] = stalled_ch
+                if stalled_ts:
+                    alert_data["thread_ts"] = stalled_ts
+
                 alert = ShoulderTapAlert(
                     alert_type="health_anomaly",
                     source="nose",
+                    channel=stalled_ch,
+                    thread_ts=stalled_ts,
                     timestamp=time.time(),
                     summary=summary or "Fleet health anomaly detected by The Nose",
                     data=alert_data,

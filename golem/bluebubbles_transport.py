@@ -101,6 +101,20 @@ def sanitize_for_imessage(text: str) -> str:
     sanitized = re.sub(r"```.*?```", _save_block, text, flags=re.DOTALL)
 
     # 2. Convert Slack links <url|label> or <url>
+    def _file_link_replace(match: re.Match) -> str:
+        raw_url = match.group(1).strip()
+        label = match.group(2).strip() if match.group(2) else None
+        if label:
+            return label
+        return re.sub(r"^file://(?:localhost)?", "", raw_url, flags=re.IGNORECASE).split("#")[0]
+
+    sanitized = re.sub(
+        r"<(file://[^|>]+)(?:\|([^>]+))?>",
+        _file_link_replace,
+        sanitized,
+        flags=re.IGNORECASE,
+    )
+
     def _link_replace(match: re.Match) -> str:
         url = match.group(1).strip()
         label = match.group(2).strip() if match.group(2) else None
@@ -117,6 +131,13 @@ def sanitize_for_imessage(text: str) -> str:
     )
 
     # Convert standard Markdown links [label](url)
+    sanitized = re.sub(
+        r"\[([^\]]+)\]\((file://[^)]+)\)",
+        lambda m: m.group(1).strip() or re.sub(r"^file://(?:localhost)?", "", m.group(2).strip(), flags=re.IGNORECASE).split("#")[0],
+        sanitized,
+        flags=re.IGNORECASE,
+    )
+
     def _md_link_replace(match: re.Match) -> str:
         label = match.group(1).strip()
         url = match.group(2).strip()
