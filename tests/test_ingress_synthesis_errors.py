@@ -101,7 +101,7 @@ class TestIngressSynthesisErrors(unittest.IsolatedAsyncioTestCase):
         runner_output = "Runner finished build with 42 warnings."
 
         with patch("golem.ingress.call_gemini_api", new_callable=AsyncMock) as mock_gemini:
-            mock_gemini.side_effect = [turn1_dispatch, turn2_empty, fallback_empty]
+            mock_gemini.side_effect = [turn1_dispatch, turn2_empty, fallback_empty, turn2_empty, fallback_empty]
             with patch.object(self.gateway, "_execute_backstage_task", new_callable=AsyncMock) as mock_task:
                 mock_task.return_value = {
                     "status": "SUCCESS",
@@ -347,6 +347,246 @@ class TestIngressSynthesisErrors(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(user_turn["role"], "user")
             self.assertGreaterEqual(len(user_turn["parts"]), 1)
             self.assertEqual(user_turn["parts"][0]["functionResponse"]["name"], "check_eyes")
+
+    async def test_flat_error_preserves_timeout_details_without_masking(self) -> None:
+        """Verify flat _error: True response preserves TimeoutError without masking as generic SynthesisError."""
+        turn1_dispatch = {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [
+                            {
+                                "functionCall": {
+                                    "name": "dispatch_task",
+                                    "args": {"task_description": "run benchmarks"},
+                                }
+                            }
+                        ]
+                    },
+                    "finishReason": "STOP",
+                }
+            ]
+        }
+        flat_timeout_error = {
+            "_error": True,
+            "status": 500,
+            "code": 500,
+            "error_type": "TimeoutError",
+            "raw_error": "Gemini API call timed out after 60.0s",
+            "message": "Gemini API call timed out after 60.0s",
+        }
+
+        with patch("golem.ingress.call_gemini_api", new_callable=AsyncMock) as mock_gemini:
+            # Hop 1: dispatch_task, Hop 2: timeout, Step 2: also timeout, Direct fallback: timeout
+            mock_gemini.side_effect = [turn1_dispatch, flat_timeout_error, flat_timeout_error, flat_timeout_error]
+            with patch.object(self.gateway, "_execute_backstage_task", new_callable=AsyncMock) as mock_task:
+                mock_task.return_value = {
+                    "status": "SUCCESS",
+                    "output_tail": "Benchmark completed.",
+                }
+
+                event = {
+                    "channel": "C_TEST",
+                    "ts": "400.001",
+                    "thread_ts": "400.001",
+                    "text": "<@U_GOLEM> run benchmarks",
+                }
+                await self.gateway.handle_message(event, self.client)
+
+                self.assertTrue(len(self.client.posted_messages) >= 1)
+                posted = self.client.posted_messages[-1]["text"]
+
+                # Must NOT be masked as SynthesisError or "Synthesis failed with empty candidate text"
+                self.assertIn("⚠️ *Executive Synthesis Failed* (HTTP 500 / TimeoutError):", posted)
+                self.assertIn("Gemini API call timed out after 60.0s", posted)
+                self.assertNotIn("Synthesis failed with empty candidate text", posted)
+
+    async def test_nested_error_dict_preserves_details(self) -> None:
+        """Verify nested _error dict is properly unwrapped and preserved."""
+        turn1_dispatch = {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [
+                            {
+                                "functionCall": {
+                                    "name": "dispatch_task",
+                                    "args": {"task_description": "test nested error"},
+                                }
+                            }
+                        ]
+                    },
+                    "finishReason": "STOP",
+                }
+            ]
+        }
+        nested_error = {
+            "_error": {
+                "status": 503,
+                "code": 503,
+                "error_type": "ServiceUnavailable",
+                "raw_error": "Backend model overloaded",
+                "message": "Backend model overloaded",
+            }
+        }
+
+        with patch("golem.ingress.call_gemini_api", new_callable=AsyncMock) as mock_gemini:
+            mock_gemini.side_effect = [turn1_dispatch, nested_error, nested_error, nested_error]
+            with patch.object(self.gateway, "_execute_backstage_task", new_callable=AsyncMock) as mock_task:
+                mock_task.return_value = {
+                    "status": "SUCCESS",
+                    "output_tail": "Finished task.",
+                }
+
+                event = {
+                    "channel": "C_TEST",
+                    "ts": "401.001",
+                    "thread_ts": "401.001",
+                    "text": "<@U_GOLEM> test nested error",
+                }
+                await self.gateway.handle_message(event, self.client)
+
+                self.assertTrue(len(self.client.posted_messages) >= 1)
+                posted = self.client.posted_messages[-1]["text"]
+
+                self.assertIn("⚠️ *Executive Synthesis Failed* (HTTP 503 / ServiceUnavailable):", posted)
+                self.assertIn("Backend model overloaded", posted)
+                self.assertNotIn("Synthesis failed with empty candidate text", posted)
+
+    async def test_post_dispatch_chain_hop_timeout_recovers_via_step2_synthesis(self) -> None:
+        """Verify that when a post-dispatch chain hop times out, Step 2 synthesis recovers using the completed tool result."""
+        turn1_dispatch = {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [
+                            {
+                                "functionCall": {
+                                    "name": "dispatch_task",
+                                    "args": {"task_description": "build artifact"},
+                                }
+                            }
+                        ]
+                    },
+                    "finishReason": "STOP",
+                }
+            ]
+        }
+        chain_timeout_error = {
+            "_error": True,
+            "status": 500,
+            "error_type": "TimeoutError",
+            "message": "Gemini API call timed out after 60.0s",
+        }
+        step2_briefing = {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [
+                            {"text": "✨ *Build Briefing:* Artifact compiled successfully in 3.4s."}
+                        ]
+                    },
+                    "finishReason": "STOP",
+                }
+            ]
+        }
+
+        with patch("golem.ingress.call_gemini_api", new_callable=AsyncMock) as mock_gemini:
+            # Hop 1: dispatch_task, Hop 2: timeout, Step 2: succeeds!
+            mock_gemini.side_effect = [turn1_dispatch, chain_timeout_error, step2_briefing]
+            with patch.object(self.gateway, "_execute_backstage_task", new_callable=AsyncMock) as mock_task:
+                mock_task.return_value = {
+                    "status": "SUCCESS",
+                    "duration_seconds": 3.4,
+                    "output_tail": "Artifact build complete with 0 errors.",
+                }
+
+                event = {
+                    "channel": "C_TEST",
+                    "ts": "500.001",
+                    "thread_ts": "500.001",
+                    "text": "<@U_GOLEM> build artifact",
+                }
+                await self.gateway.handle_message(event, self.client)
+
+                self.assertTrue(len(self.client.posted_messages) >= 1)
+                posted = self.client.posted_messages[-1]["text"]
+
+                # Must succeed with executive briefing
+                self.assertIn("Artifact compiled successfully in 3.4s", posted)
+                self.assertNotIn("⚠️ *Executive Synthesis Failed*", posted)
+                self.assertNotIn("Raw sensory data returned above", posted)
+
+                # Must react with white_check_mark, not boom
+                added_reactions = [r["name"] for r in self.client.reactions_added]
+                self.assertIn("white_check_mark", added_reactions)
+                self.assertNotIn("boom", added_reactions)
+
+    async def test_post_dispatch_chain_hop_timeout_recovers_via_step2_direct_fallback(self) -> None:
+        """Verify that when both chain hop and Step 2 functionResponse time out, direct text fallback produces the briefing."""
+        turn1_dispatch = {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [
+                            {
+                                "functionCall": {
+                                    "name": "dispatch_task",
+                                    "args": {"task_description": "large codebase refactor"},
+                                }
+                            }
+                        ]
+                    },
+                    "finishReason": "STOP",
+                }
+            ]
+        }
+        timeout_error = {
+            "_error": True,
+            "status": 500,
+            "error_type": "TimeoutError",
+            "message": "Gemini API call timed out after 60.0s",
+        }
+        direct_fallback_briefing = {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [
+                            {"text": "🚀 *Refactor Summary:* Codebase migration finished cleanly across 15 files."}
+                        ]
+                    },
+                    "finishReason": "STOP",
+                }
+            ]
+        }
+
+        with patch("golem.ingress.call_gemini_api", new_callable=AsyncMock) as mock_gemini:
+            # Hop 1: dispatch_task, Hop 2: timeout, Step 2: timeout, Direct text fallback: succeeds!
+            mock_gemini.side_effect = [turn1_dispatch, timeout_error, timeout_error, direct_fallback_briefing]
+            with patch.object(self.gateway, "_execute_backstage_task", new_callable=AsyncMock) as mock_task:
+                mock_task.return_value = {
+                    "status": "SUCCESS",
+                    "duration_seconds": 12.0,
+                    "output_tail": "Refactor finished: 15 files changed, 230 insertions, 45 deletions.",
+                }
+
+                event = {
+                    "channel": "C_TEST",
+                    "ts": "600.001",
+                    "thread_ts": "600.001",
+                    "text": "<@U_GOLEM> refactor codebase",
+                }
+                await self.gateway.handle_message(event, self.client)
+
+                self.assertTrue(len(self.client.posted_messages) >= 1)
+                posted = self.client.posted_messages[-1]["text"]
+
+                # Must succeed via direct fallback synthesis
+                self.assertIn("Codebase migration finished cleanly across 15 files", posted)
+                self.assertNotIn("⚠️ *Executive Synthesis Failed*", posted)
+                added_reactions = [r["name"] for r in self.client.reactions_added]
+                self.assertIn("white_check_mark", added_reactions)
+                self.assertNotIn("boom", added_reactions)
 
 
 if __name__ == "__main__":

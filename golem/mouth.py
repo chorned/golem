@@ -414,7 +414,8 @@ You are a single unified Chief of Staff persona across Planning, Execution, Vali
 3. EXECUTE (NATURAL >3s HEADS-UP): When calling `dispatch_task` or `dispatch_subtasks`, include a brief, natural 1-sentence status in your response text alongside the tool call (e.g., "Running the test suite on `hermes` now—I'll report back once I've verified the results."). If the task finishes in <3s, that interim text is suppressed automatically; if it runs >3s, it is posted as your natural heads-up.
 4. VALIDATE & SELF-REPAIR (SAME TURN): After a mutating `dispatch_task` or `dispatch_subtasks` returns, do not blindly claim success. In the same turn, verify the result (inspect exit code/output, or call a verification probe via `dispatch_task(read_only=True, ...)` or `read_project_file`). If verification fails, automatically dispatch a targeted fix (up to 2 self-repair rounds) and re-verify before reporting to Carl.
 5. UAT & DEPLOY (CHECKPOINT 2): Once verified, subtasks settle to 'Claimed Fixed' in Linear. Present the verified executive briefing to Carl and pause for his UAT / deployment approval. Only when Carl replies approving the work (e.g., "looks good", "approved", "deploy it"), execute any production deployment and call `approve_linear_task` to transition the Linear tree to 'Completed'.
-6. STRICT TOOL HONESTY: Never claim in prose to have consulted the wiki, created/updated Linear issues, or verified a fix unless you actually invoked the corresponding tool in this turn or are citing a real key present in `[Linear working notes]`. Note that your full wiki (`context/` and `runbooks/`) is already pre-loaded in your system prompt under `OPERATIONAL WIKI PERIPHERAL VISION`.
+6. STRICT TOOL HONESTY & MEMORY CONTRACT: Never claim in prose to have consulted the wiki, created/updated Linear issues, or verified a fix unless you actually invoked the corresponding tool in this turn or are citing a real key present in `[Linear working notes]`.
+MEMORY & PERIPHERAL VISION: Tier 1 `context/*` core context and node rule pages are embedded in full in `<peripheral_vision_knowledge>`, while Tier 2 `skills/*` and `runbooks/*` domain pages are listed in `<peripheral_vision_index>` and should be fetched on demand via `consult_memory(path=...)` before dispatching domain-specific work.
 7. DO NOT TALK ABOUT EXECUTING: Never reply saying "Starting transfer now", "Triggering script now", or "Spooling up backstage work" without calling `dispatch_task` or `dispatch_subtasks` in the same turn. If an action is required, call the tool.
 8. READ BEFORE ACTING: Use `read_project_file` to check manifests, JSON files, and local directories before guessing file paths.
 9. SYNTHESIZE OUTCOMES: Once your tools finish executing, report the actual output, verified artifacts, and live status directly to Carl.
@@ -661,36 +662,20 @@ async def generate_mouth_response(
         last_prompt = getattr(session, "last_prompt", "") or ""
         status_val = status_info.get("status") or ("running" if getattr(session, "is_executing", False) else "idle")
 
-        sys_prompt = (
-            "You are First Mate, Carl's Chief of Staff and operational liaison in Slack.\n"
-            "You are communicating with Carl in a Slack thread while background work is active.\n"
-            "Fleet Topology & Machine Roles:\n"
-            "• hermes: Local macOS controller, daily development anchor, and homelab runner (localhost).\n"
-            "• desktop-pc: High-VRAM Windows node for CUDA, model training, and heavy GPU compute (100.80.59.45) — this is Carl's PC / Windows machine.\n"
-            "• oci-machine: Remote cloud VPS for external daemons and scrapers (100.113.173.33).\n"
-            "• personal-laptop: Secondary macOS node (100.96.38.5) — Carl's personal MacBook.\n\n"
-            "You possess full sensory awareness of The Eyes (active task observer) and The Nose (fleet health sentinel).\n"
-            "Respond naturally, directly, and conversationally like a trusted senior colleague.\n"
-            "Strictly adhere to Slack mrkdwn syntax: *bold*, `code`, <URL|Label>.\n"
-            "Never dump terminal escape codes, ANSI colors, or box drawing characters.\n"
-            "CRITICAL GROUNDING INVARIANT:\n"
-            "You must ALWAYS ground your status reports strictly in [CURRENT WORKER REGISTRY STATE].\n"
-            "If Active Workers is 0 (or 'None running'), NEVER state or imply that workers, agents, or subtasks are running, attached, or active. State plainly and factually that 0 workers are active.\n\n"
-            "If Carl asks if he can ask something mid-stream or converse, reassure him warmly and answer his question.\n"
-            "If Carl asks about what The Eyes see or what The Nose smells mid-stream, answer factually using the current sensory state.\n"
-            "If Carl asks about the fleet, machines, or which machine is the PC, answer factually using the fleet topology above.\n"
-            "If Carl asks for status or progress, report current progress accurately based on the worker registry.\n"
-            "Keep answers focused, high-signal, and proportionate to Carl's question."
-        )
+        active_model = (model or get_mouth_model() or get_workhorse_model()).strip()
+        sys_prompt = build_mouth_system_instruction()
 
-        # Ambient Peripheral Vision & Capabilities Injection from Wiki
-        try:
-            from golem.memory.peripheral import compile_peripheral_vision
-            pv_content = compile_peripheral_vision()
-            if pv_content and pv_content.strip():
-                sys_prompt += f"\n\n{pv_content.strip()}"
-        except Exception:
-            pass
+        critical_rules = (
+            "CRITICAL OPERATIONAL RULES:\n"
+            "1. Look at LIVE SENSORY CONTEXT below. Ground your status reports strictly in [CURRENT WORKER REGISTRY STATE].\n"
+            "2. If Active Workers is 0 (or 'None running'), NEVER state or imply that workers, agents, or subtasks are running, attached, or active. State plainly and factually that 0 workers are active.\n"
+            "3. If Carl asks if he can ask something mid-stream or converse, reassure him warmly and answer his question.\n"
+            "4. If Carl asks about what The Eyes see or what The Nose smells mid-stream, answer factually using the current sensory state.\n"
+            "5. If Carl asks about the fleet, machines, or which machine is the PC, answer factually using the fleet topology.\n"
+            "6. If Carl asks for status or progress, report current progress accurately based on the worker registry.\n"
+            "7. Keep answers focused, high-signal, and proportionate to Carl's question.\n"
+            "8. Strictly adhere to Slack mrkdwn syntax: *bold*, `code`, <URL|Label>. Never dump terminal escape codes, ANSI colors, or box drawing characters."
+        )
 
         state_ctx_lines = []
         if worker_registry_state:
@@ -725,6 +710,8 @@ async def generate_mouth_response(
         state_ctx_lines.append(f"Initial Prompt / Task: {last_prompt}")
         state_ctx = "\n".join(state_ctx_lines)
 
+        user_content_text = f"{critical_rules}\n\nCurrent background state:\n{state_ctx}\n\nCarl's message: {prompt}"
+
         generation_config: Dict[str, Any] = {
             "temperature": 0.3,
         }
@@ -734,14 +721,13 @@ async def generate_mouth_response(
                 {
                     "role": "user",
                     "parts": [{
-                        "text": f"Current background state:\n{state_ctx}\n\nCarl's message: {prompt}"
+                        "text": user_content_text
                     }]
                 }
             ],
             "generationConfig": generation_config
         }
-        model_name = model or get_mouth_model()
-        url = GEMINI_API_URL.format(model=model_name)
+        url = GEMINI_API_URL.format(model=active_model)
         if "?key=" in url or "&key=" in url:
             raise ValueError("Security violation: Gemini API keys must not be passed via URL query parameters; use 'x-goog-api-key' header.")
         timeout = aiohttp.ClientTimeout(total=timeout_seconds)
@@ -769,7 +755,7 @@ async def generate_mouth_response(
                             th_tok = usage.get("thoughtsTokenCount", 0) or 0
                             logger.info(
                                 "Gemini usageMetadata (%s): promptTokenCount=%s, cachedContentTokenCount=%s, thoughtsTokenCount=%s, candidatesTokenCount=%s",
-                                model_name,
+                                active_model,
                                 p_tok,
                                 usage.get("cachedContentTokenCount"),
                                 th_tok,
@@ -781,7 +767,7 @@ async def generate_mouth_response(
                                 if webui is not None:
                                     webui.append_organ_log(
                                         "mouth",
-                                        f"[TOKENS] prompt={p_tok} candidates={c_tok} thoughts={th_tok} model={model_name}",
+                                        f"[TOKENS] prompt={p_tok} candidates={c_tok} thoughts={th_tok} model={active_model}",
                                     )
                             except Exception:
                                 pass
@@ -942,10 +928,13 @@ async def call_gemini_api(
     if not key:
         return None
 
-    configured_primary = get_mouth_model()
-    is_default_mouth = (model is None or model == configured_primary)
-    models_to_try = [model or configured_primary]
-    if is_default_mouth:
+    primary = (model or get_mouth_model() or get_workhorse_model()).strip()
+    configured_primary = (get_mouth_model() or "").strip()
+    models_to_try = [primary]
+    enable_fallbacks = kwargs.get("enable_fallbacks", True)
+    if enable_fallbacks:
+        if configured_primary and configured_primary not in models_to_try:
+            models_to_try.append(configured_primary)
         fallbacks = get_mouth_fallback_models()
         for fb in fallbacks:
             if fb and fb not in models_to_try:
@@ -1818,12 +1807,29 @@ async def synthesize_linear_ticket_nudge(
 
 def synthesize_linear_quota_nudge(alert_data: Optional[Dict[str, Any]] = None) -> str:
     """
-    Synthesize an executive notification for Carl when Linear free tier quota is reached.
-    Explains that activeIssueCount limit is exceeded and writes/issue creations are blocked.
+    Synthesize an executive notification for Carl when Linear free tier quota is reached
+    or approaching the free-tier limit (e.g. 200+ active issues).
+    Explains that activeIssueCount limit is near or exceeded.
     Prompts Carl to clean up, archive, or delete Done/Cancelled tickets.
     Explicitly confirms zero automated deletions were performed (Carl owns hard deletes).
     """
     data = alert_data or {}
+    status = data.get("status") or "blocked"
+    active_count = data.get("active_count")
+    ceiling = data.get("ceiling") or 250
+    threshold = data.get("threshold") or 200
+
+    if status == "warning" or data.get("alert_type") == "linear_quota_warning":
+        active_str = f"{active_count}" if active_count is not None else "200+"
+        headroom_str = f"{max(0, ceiling - (active_count or threshold))}"
+        return (
+            f"⚠️ *Linear Active Issue Quota Warning ({active_str}/{ceiling})*\n"
+            f"The Nose detected that active unarchived Linear issues have crossed the warning threshold ({threshold}+).\n\n"
+            f"• *Current Count:* {active_str} active issues (Ceiling: {ceiling}, Headroom: {headroom_str}).\n"
+            "• *Action Needed:* Please clean up or allow automatic archiving of settled *Done* or *Canceled* tickets to prevent issue creation blockages.\n"
+            "• *Guardrail Assurance:* No hard ticket deletions have been performed. Carl owns hard delete operations."
+        )
+
     metric = data.get("metric") or "activeIssueCount"
     error_code = data.get("error_code") or "USAGE_LIMIT_EXCEEDED"
 
@@ -1834,6 +1840,26 @@ def synthesize_linear_quota_nudge(alert_data: Optional[Dict[str, Any]] = None) -
         "• *Action Needed:* Please review and clean up, archive, or hard-delete settled *Done* or *Canceled* tickets in the Linear workspace.\n"
         "• *Guardrail Assurance:* In accordance with policy, no automated ticket deletions have been performed. Carl owns hard delete operations."
     )
+
+
+def format_health_recovery_message(
+    node: str,
+    duration: Union[str, float, int] = "transient",
+    context: Optional[str] = None,
+) -> str:
+    """
+    Format an executive resolution message for recovered nodes.
+    Used by The Mouth and IngressGateway when a degraded node recovers.
+    """
+    if isinstance(duration, (int, float)):
+        duration_str = f"{int(round(duration))}s"
+    else:
+        duration_str = str(duration)
+    msg = f":white_check_mark: *Sentinel Resolution:* Node `{node}` has recovered after {duration_str}. Latency / connectivity restored."
+    if context:
+        msg += f"\n{context}"
+    return msg
+
 
 
 

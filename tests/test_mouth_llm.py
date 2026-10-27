@@ -340,6 +340,157 @@ class TestMouthLLM(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(fn_call["name"], "dispatch_task")
                 self.assertEqual(fn_call["args"]["worker"], "agy")
 
+    async def test_generate_mouth_response_preserves_system_instruction_byte_for_byte(self) -> None:
+        """Verify generate_mouth_response passes build_mouth_system_instruction() byte-for-byte without mutation."""
+        from golem.mouth import build_mouth_system_instruction
+
+        mock_session = MagicMock()
+        mock_session.is_executing = True
+
+        status_info: Dict[str, Any] = {
+            "status": "running",
+            "pid": 5678,
+            "command": "python test.py",
+            "buffer_tail": "Running tests...",
+        }
+
+        captured_payloads = []
+
+        mock_gemini_response = {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [{"text": "Working on it!"}]
+                    }
+                }
+            ]
+        }
+
+        mock_resp_obj = AsyncMock()
+        mock_resp_obj.status = 200
+        mock_resp_obj.json = AsyncMock(return_value=mock_gemini_response)
+
+        mock_post_cm = AsyncMock()
+        mock_post_cm.__aenter__.return_value = mock_resp_obj
+        mock_post_cm.__aexit__.return_value = None
+
+        def mock_post(url, json=None, headers=None):
+            captured_payloads.append(json)
+            return mock_post_cm
+
+        with patch("aiohttp.ClientSession.post", side_effect=mock_post):
+            resp = await generate_mouth_response(
+                prompt="What's happening right now?",
+                status_info=status_info,
+                session=mock_session,
+                api_key="test_key",
+            )
+            self.assertEqual(resp, "Working on it!")
+            self.assertEqual(len(captured_payloads), 1)
+            payload = captured_payloads[0]
+            self.assertIn("systemInstruction", payload)
+            actual_sys_instruction = payload["systemInstruction"]["parts"][0]["text"]
+            expected_sys_instruction = build_mouth_system_instruction()
+            self.assertEqual(
+                actual_sys_instruction,
+                expected_sys_instruction,
+                "systemInstruction must match build_mouth_system_instruction() byte-for-byte",
+            )
+            # Ensure CRITICAL OPERATIONAL RULES were placed in user contents instead
+            user_text = payload["contents"][0]["parts"][0]["text"]
+            self.assertIn("CRITICAL OPERATIONAL RULES:", user_text)
+            self.assertIn("What's happening right now?", user_text)
+
+    async def test_escalated_mouth_turn_enables_fallback_models(self) -> None:
+        """Verify that an escalated Mouth turn (e.g. gemini-4-argon) retains fallback to configured primary and fallbacks."""
+        from golem.mouth import call_gemini_api
+
+        requested_urls = []
+
+        class MockRespSuccess:
+            status = 200
+            async def json(self):
+                return {"candidates": [{"content": {"parts": [{"text": "Success on fallback"}]}}]}
+            async def text(self):
+                return ""
+            async def __aenter__(self):
+                return self
+            async def __aexit__(self, *args):
+                pass
+
+        class MockRespTimeout:
+            status = 500
+            async def text(self):
+                return "Internal Server Error"
+            async def __aenter__(self):
+                return self
+            async def __aexit__(self, *args):
+                pass
+
+        class MockSession:
+            def post(self, url, json=None, headers=None):
+                requested_urls.append(url)
+                if "gemini-4-argon" in url:
+                    # First model (escalated) fails
+                    return MockRespTimeout()
+                # Second model (fallback gemini-3.8-flash) succeeds
+                return MockRespSuccess()
+            async def __aenter__(self):
+                return self
+            async def __aexit__(self, *args):
+                pass
+
+        with patch.dict(os.environ, {"MOUTH_MODEL": "gemini-3.8-flash", "MOUTH_BACKEND": "gemini"}):
+            with patch("aiohttp.ClientSession", return_value=MockSession()):
+                res = await call_gemini_api(
+                    {"contents": []},
+                    model="gemini-4-argon",
+                    api_key="fake-key",
+                )
+                self.assertIsNotNone(res)
+                self.assertIn("candidates", res)
+                self.assertEqual(len(requested_urls), 2)
+                self.assertIn("gemini-4-argon", requested_urls[0])
+                self.assertIn("gemini-3.8-flash", requested_urls[1])
+
+    async def test_call_gemini_api_disable_fallbacks_flag(self) -> None:
+        """Verify enable_fallbacks=False prevents fallback model attempts."""
+        from golem.mouth import call_gemini_api
+
+        requested_urls = []
+
+        class MockRespFail:
+            status = 500
+            async def text(self):
+                return "Internal Server Error"
+            async def __aenter__(self):
+                return self
+            async def __aexit__(self, *args):
+                pass
+
+        class MockSession:
+            def post(self, url, json=None, headers=None):
+                requested_urls.append(url)
+                return MockRespFail()
+            async def __aenter__(self):
+                return self
+            async def __aexit__(self, *args):
+                pass
+
+        with patch.dict(os.environ, {"MOUTH_MODEL": "gemini-3.8-flash", "MOUTH_BACKEND": "gemini"}):
+            with patch("aiohttp.ClientSession", return_value=MockSession()):
+                res = await call_gemini_api(
+                    {"contents": []},
+                    model="gemini-4-argon",
+                    api_key="fake-key",
+                    enable_fallbacks=False,
+                )
+                self.assertIsNotNone(res)
+                self.assertTrue(res.get("_error"))
+                # Only 1 model tried when fallbacks disabled
+                self.assertEqual(len(requested_urls), 1)
+                self.assertIn("gemini-4-argon", requested_urls[0])
+
 
 if __name__ == "__main__":
     unittest.main()

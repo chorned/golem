@@ -246,14 +246,14 @@ def compact_tool_output(tool_name: str, result: Any) -> Any:
     """
     Compact and sanitize verbose tool outputs before appending to working_contents.
     Preserves essential operational fields while preventing KV cache bloat:
-    - read_project_file: cap large outputs (>12,000 chars) to first 100 lines + summary + last 50 lines.
+    - read_project_file / consult_memory: cap large outputs (>12,000 chars) to first 100 lines + summary + last 50 lines.
     - dispatch_task / check_eyes: cap buffer tails to bounded lines (max 100 lines).
     - plan_task_with_subtasks / check_linear_task_status: prune verbose internal JSON schemas and keep ticket keys, titles, states, and URLs.
     """
     if result is None:
         return result
 
-    if tool_name == "read_project_file":
+    if tool_name in ("read_project_file", "consult_memory"):
         if isinstance(result, dict) and "content" in result and isinstance(result["content"], str):
             content = result["content"]
             if len(content) > 12000:
@@ -280,7 +280,7 @@ def compact_tool_output(tool_name: str, result: Any) -> Any:
     elif tool_name in ("dispatch_task", "check_eyes"):
         if isinstance(result, dict):
             compacted = dict(result)
-            for k in ("output", "raw_output", "buffer_tail", "buffer", "tail"):
+            for k in ("output", "output_tail", "raw_output", "buffer_tail", "buffer", "tail"):
                 if k in compacted and isinstance(compacted[k], str):
                     val = compacted[k]
                     lines = val.splitlines()
@@ -339,9 +339,43 @@ def compact_tool_output(tool_name: str, result: Any) -> Any:
     return result
 
 
+def _extract_recent_user_text_for_routing(prompt: str) -> str:
+    """
+    Extract only the current user message and at most the single immediately preceding
+    user turn from a hydrated thread prompt, stripping Linear notes, assistant turns,
+    and markdown file paths (*.md) so filenames or stale thread history do not lock
+    a routine turn onto gemini-4-argon.
+    """
+    text = prompt or ""
+    marker = "[End of previous thread context; current user message follows:]"
+    if marker in text:
+        before, after = text.split(marker, 1)
+        current_msg = after.strip()
+        last_user_turn = ""
+        for line in before.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("User:"):
+                last_user_turn = stripped[len("User:"):].strip()
+        text = f"{last_user_turn}\n{current_msg}".strip() if last_user_turn else current_msg
+    else:
+        # Strip prepended [Linear working notes: ...] and [THREAD LINEAR PROJECT CONTEXT...] blocks
+        text = re.sub(r"\[Linear working notes:.*?\n\]\s*", "", text, flags=re.DOTALL)
+        text = re.sub(
+            r"\[THREAD LINEAR PROJECT CONTEXT & RUNTIME TELEMETRY\].*?(?=\n\n|\Z)",
+            "",
+            text,
+            flags=re.DOTALL,
+        )
+
+    # Strip markdown file paths (e.g. sensory-architecture.md) before complexity matching
+    text = re.sub(r"[\w\-./]+\.md\b", "", text, flags=re.IGNORECASE)
+    return text
+
+
 def is_high_complexity_turn(prompt: str) -> bool:
     """Detect if prompt demands Tier 1 Architect (gemini-4-argon)."""
-    p_lower = (prompt or "").lower()
+    scoped_text = _extract_recent_user_text_for_routing(prompt)
+    p_lower = scoped_text.lower()
     architect_indicators = [
         "architect", "architecture", "refactor", "system design",
         "redesign", "deep design", "migration plan", "codebase overhaul",
@@ -1212,6 +1246,7 @@ class IngressGateway:
         self._file_locks: Dict[str, asyncio.Lock] = {}
         self._file_locks_guard = asyncio.Lock()
         self._seen_email_ids: Set[str] = set()
+        self._node_incident_threads: Dict[str, str] = {}
         self.nose_sentinel = nose_sentinel
         if self.nose_sentinel is not None and getattr(self.nose_sentinel, "session_router", None) is None:
             self.nose_sentinel.session_router = self.router
@@ -1230,6 +1265,7 @@ class IngressGateway:
 
         if self.bus is not None and hasattr(self.bus, "subscribe"):
             self.bus.subscribe(self._handle_health_anomaly_alert, alert_types=["health_anomaly"])
+            self.bus.subscribe(self._handle_health_recovery_alert, alert_types=["health_recovery"])
             self.bus.subscribe(self._handle_email_received_alert, alert_types=["email_received"])
             self.bus.subscribe(
                 self._handle_linear_assigned_tickets_alert,
@@ -1237,7 +1273,7 @@ class IngressGateway:
             )
             self.bus.subscribe(
                 self._handle_linear_quota_exceeded_alert,
-                alert_types=["linear_quota_exceeded"],
+                alert_types=["linear_quota_exceeded", "linear_quota_warning"],
             )
 
         # Ensure router shares the same event bus if not explicitly configured
@@ -1346,13 +1382,16 @@ class IngressGateway:
         elif alert.alert_type == "health_anomaly":
             await self._handle_health_anomaly_alert(alert, client=client)
 
+        elif alert.alert_type == "health_recovery":
+            await self._handle_health_recovery_alert(alert, client=client)
+
         elif alert.alert_type == "email_received":
             await self._handle_email_received_alert(alert, client=client)
 
         elif alert.alert_type in ("linear_assigned_tickets", "assigned_tickets"):
             await self._handle_linear_assigned_tickets_alert(alert, client=client)
 
-        elif alert.alert_type == "linear_quota_exceeded":
+        elif alert.alert_type in ("linear_quota_exceeded", "linear_quota_warning"):
             await self._handle_linear_quota_exceeded_alert(alert, client=client)
 
     def _find_existing_thread_for_ticket(self, channel: str, ticket: Dict[str, Any]) -> Optional[str]:
@@ -1767,13 +1806,74 @@ class IngressGateway:
         thread_ts = getattr(alert, "thread_ts", None) or (getattr(alert, "data", {}) or {}).get("thread_ts")
         is_imessage = bool(channel and str(channel).startswith(("iMessage;", "SMS;")))
         advisory_msg = f"👃 *Sentinel Advisory (Fleet Health):*\n{summary}"
+
+        posted_ts = None
         if client and channel:
-            await self._post_response(client, channel, thread_ts, advisory_msg, is_imessage=is_imessage)
+            resp = await self._post_response(client, channel, thread_ts, advisory_msg, is_imessage=is_imessage)
+            if isinstance(resp, dict):
+                posted_ts = resp.get("ts")
         elif channel:
             if is_imessage:
                 await send_imessage(text=advisory_msg, chat_guid=str(channel))
             else:
-                await send_slack_message(text=advisory_msg, channel=channel, thread_ts=thread_ts)
+                resp = await send_slack_message(text=advisory_msg, channel=channel, thread_ts=thread_ts)
+                if isinstance(resp, dict):
+                    posted_ts = resp.get("ts")
+
+        # Track incident thread for follow-up resolution
+        incident_thread = thread_ts or posted_ts
+        if incident_thread:
+            alert_data = getattr(alert, "data", {}) or {}
+            affected = alert_data.get("affected_nodes") or []
+            node = alert_data.get("node") or alert_data.get("target") or (affected[0] if affected else None)
+            if node:
+                self._node_incident_threads[str(node)] = str(incident_thread)
+
+    async def _handle_health_recovery_alert(self, alert: Any, client: Optional[Any] = None) -> None:
+        """Receive health recovery alerts from The Nose Sentinel and deliver resolution follow-up to Carl."""
+        if not alert:
+            return
+        from golem.notify import DEFAULT_SLACK_CHANNEL, send_slack_message, send_imessage
+
+        data = getattr(alert, "data", {}) or getattr(alert, "metadata", {}) or {}
+        node = data.get("node") or data.get("target") or "fleet"
+        if node and (str(node).lower() in ("personal-laptop", "laptop", "dev-grid", "personal_laptop") or "macbook" in str(node).lower() or "workstation" in str(node).lower()):
+            logger.info(f"IngressGateway: Ignoring health_recovery alert for exempt workstation node '{node}'")
+            return
+        duration_val = data.get("duration_str") or data.get("duration") or "transient"
+        if isinstance(duration_val, (int, float)):
+            duration_str = f"{int(round(duration_val))}s"
+        else:
+            duration_str = str(duration_val)
+
+        resolution_msg = (
+            f":white_check_mark: *Sentinel Resolution:* Node `{node}` has recovered after {duration_str}. "
+            f"Latency / connectivity restored."
+        )
+
+        channel = (
+            getattr(alert, "channel", None)
+            or data.get("channel")
+            or os.environ.get("FIRSTMATE_DEFAULT_CHANNEL")
+            or os.environ.get("GOLEM_DEFAULT_CHANNEL")
+            or DEFAULT_SLACK_CHANNEL
+        )
+
+        # Deliver to incident thread if known, else operational channel
+        thread_ts = (
+            getattr(alert, "thread_ts", None)
+            or data.get("thread_ts")
+            or self._node_incident_threads.pop(str(node), None)
+        )
+
+        is_imessage = bool(channel and str(channel).startswith(("iMessage;", "SMS;")))
+        if client and channel:
+            await self._post_response(client, channel, thread_ts, resolution_msg, is_imessage=is_imessage)
+        elif channel:
+            if is_imessage:
+                await send_imessage(text=resolution_msg, chat_guid=str(channel))
+            else:
+                await send_slack_message(text=resolution_msg, channel=channel, thread_ts=thread_ts)
 
     async def _handle_email_received_alert(self, alert: Any, client: Optional[Any] = None) -> None:
         """
@@ -3202,7 +3302,7 @@ class IngressGateway:
                     nose_val = nose_status if nose_status is not None else ""
 
                     sensory_prefix = f"[Active Backstage Execution & Sensory State: status={status_val}, command={cmd_val}, eyes={eyes_val}, nose={nose_val}]"
-                    prompt_to_send = f"{sensory_prefix}\n\n{prompt_to_send}" if prompt_to_send else sensory_prefix
+                    prompt_to_send = f"{prompt_to_send}\n\n{sensory_prefix}" if prompt_to_send else sensory_prefix
 
                     await self._handle_mouth_turn(
                         session=session,
@@ -3673,7 +3773,11 @@ class IngressGateway:
             "\n[LINEAR GUARDRAIL: NEVER call Linear GraphQL APIs or modify Linear issue states directly from a Hand. Only The Mouth manages Linear ticket transitions.]\n"
             "[IRON LAW OF EXTERNAL INTEGRATIONS — NO SILENT MOCKS: Never fabricate synthetic fallbacks, mock IDs, or offline heuristic stubs when an external API is blocked by auth, 2FA, or WAF/Cloudflare/Imperva. Fail loudly at the boundary, leave downstream state untouched, and report the exact blocker. Never claim 'Staged', 'Deployed', or 'Sent' without a verified network response.]\n"
         )
+        prior_handoff = kwargs.get("prior_subtask_handoff")
+        rotate_conv = bool(kwargs.get("rotate_conversation", False))
         task_prompt = task_brief
+        if prior_handoff and isinstance(prior_handoff, str) and prior_handoff.strip():
+            task_prompt = f"[Prior Subtask Settlement Handoff]\n{prior_handoff.strip()}\n\n[Current Subtask]\n{task_prompt}"
         if "[LINEAR GUARDRAIL:" not in task_prompt:
             task_prompt = f"{task_prompt}{linear_guardrail}"
 
@@ -3687,6 +3791,11 @@ class IngressGateway:
                         stream_lock = asyncio.Lock()
                         setattr(session, "_hand_stream_lock", stream_lock)
                     async with stream_lock:
+                        if rotate_conv:
+                            adapter = getattr(session, "adapter", None)
+                            if adapter is not None and not _is_mock_object(adapter) and hasattr(adapter, "conversation_id"):
+                                adapter.conversation_id = None
+                                setattr(session, "_invariants_injected_key", None)
                         if issue_key:
                             session.linear_issue_key = issue_key
                         if client and channel and thread_ts:
@@ -3886,6 +3995,7 @@ class IngressGateway:
                     )
                 else:  # sequential
                     results = []
+                    prior_handoff_summary: Optional[str] = None
                     for i, task in enumerate(subtasks):
                         cur_key = str(task.get("issue_key") or "").strip()
                         rem_keys = [
@@ -3904,6 +4014,10 @@ class IngressGateway:
                                 self._ticket_activity_tracker[pk]["in_flight_subtasks"] = [cur_key] if cur_key else []
                                 self._ticket_activity_tracker[pk]["queued_subtasks"] = rem_keys
                         p_id = f"hand_{task['issue_key']}" if task.get("issue_key") else f"hand_{i}"
+                        seq_kwargs = dict(kwargs)
+                        seq_kwargs["rotate_conversation"] = (i > 0)
+                        if prior_handoff_summary:
+                            seq_kwargs["prior_subtask_handoff"] = prior_handoff_summary
                         res = await self._spawn_hand(
                             task,
                             pane_id=p_id,
@@ -3912,9 +4026,20 @@ class IngressGateway:
                             channel=channel,
                             thread_ts=thread_ts,
                             worker=worker,
-                            **kwargs,
+                            **seq_kwargs,
                         )
                         results.append(res)
+                        if isinstance(res, dict):
+                            r_st = res.get("status", "SUCCESS")
+                            r_out = str(res.get("output") or res.get("output_tail") or "").strip()[-1000:]
+                        elif hasattr(res, "get_full_output"):
+                            r_st = getattr(res, "turn_status", "SUCCESS")
+                            r_out = str(res.get_full_output() or "").strip()[-1000:]
+                        else:
+                            r_st = "SUCCESS"
+                            r_out = ""
+                        if r_out:
+                            prior_handoff_summary = f"Subtask {cur_key or i} ({r_st}):\n{r_out}"
             finally:
                 if session is not None:
                     session.in_flight_subtasks = []
@@ -4090,23 +4215,39 @@ class IngressGateway:
             except Exception as exc:
                 logger.debug(f"LinearBridge init warning: {exc}")
 
-        # Pre-Flight Node Facts Injection (Hand Dispatch)
-        try:
-            from golem.harness import get_preflight_node_invariants
+        # Pre-Flight Node Facts Injection (Hand Dispatch) — deduplicated per active conversation_id + node
+        adapter_obj = getattr(session, "adapter", None)
+        active_conv_id = getattr(adapter_obj, "conversation_id", None) if adapter_obj is not None else None
+        invariants_key = (
+            (active_conv_id, effective_node)
+            if (isinstance(active_conv_id, str) and active_conv_id.strip())
+            else None
+        )
+        already_injected_invariants = bool(
+            invariants_key is not None
+            and getattr(session, "_invariants_injected_key", None) == invariants_key
+        )
+        if not already_injected_invariants:
             try:
-                node_invariants = get_preflight_node_invariants(effective_node, precedent_source=precedent_source)
-            except TypeError:
-                node_invariants = get_preflight_node_invariants(effective_node)
-            if node_invariants:
-                task_desc = f"[Node Context & Invariants]\n{node_invariants}\n\n[Task]\n{task_desc}"
-        except Exception as e:
-            logger.debug(f"Error retrieving preflight node invariants: {e}")
+                from golem.harness import get_preflight_node_invariants
+                try:
+                    node_invariants = get_preflight_node_invariants(effective_node, precedent_source=precedent_source)
+                except TypeError:
+                    node_invariants = get_preflight_node_invariants(effective_node)
+                if node_invariants:
+                    task_desc = f"[Node Context & Invariants]\n{node_invariants}\n\n[Task]\n{task_desc}"
+                    if invariants_key is not None:
+                        setattr(session, "_invariants_injected_key", invariants_key)
+                    else:
+                        setattr(session, "_pending_invariants_node", effective_node)
+            except Exception as e:
+                logger.debug(f"Error retrieving preflight node invariants: {e}")
 
         linear_guardrail = (
             "\n[LINEAR GUARDRAIL: NEVER call Linear GraphQL APIs or modify Linear issue states directly from a Hand. Only The Mouth manages Linear ticket transitions.]\n"
             "[IRON LAW OF EXTERNAL INTEGRATIONS — NO SILENT MOCKS: Never fabricate synthetic fallbacks, mock IDs, or offline heuristic stubs when an external API is blocked by auth, 2FA, or WAF/Cloudflare/Imperva. Fail loudly at the boundary, leave downstream state untouched, and report the exact blocker. Never claim 'Staged', 'Deployed', or 'Sent' without a verified network response.]\n"
         )
-        if "[LINEAR GUARDRAIL:" not in task_desc:
+        if not already_injected_invariants and "[LINEAR GUARDRAIL:" not in task_desc:
             task_desc = f"{task_desc}{linear_guardrail}"
 
         # On-demand delegation to specialized workers (OpenCode, Hermes)
@@ -4562,6 +4703,12 @@ class IngressGateway:
                     break
 
         finally:
+            if session is not None:
+                pending_node = getattr(session, "_pending_invariants_node", None)
+                post_conv_id = getattr(getattr(session, "adapter", None), "conversation_id", None)
+                if pending_node and isinstance(post_conv_id, str) and post_conv_id.strip():
+                    setattr(session, "_invariants_injected_key", (post_conv_id, pending_node))
+                    setattr(session, "_pending_invariants_node", None)
             if session is not None and getattr(session, "_active_backstage_hand", None) is active_hand_metadata:
                 session._active_backstage_hand = None
             if heartbeat_task is not None and not heartbeat_task.done():
@@ -4792,7 +4939,7 @@ class IngressGateway:
                         f"  Runtime State: IN-FLIGHT={in_flight}, QUEUED={queued}, ACTIVE_WORKERS={workers}"
                     )
                 elif secs_ago is not None:
-                    roadmap_lines.append(f"  Runtime State: IDLE (last activity {int(secs_ago)}s ago)")
+                    roadmap_lines.append("  Runtime State: IDLE")
                 if last_err:
                     roadmap_lines.append(f"  Last Run Error: {last_err}")
 
@@ -5773,6 +5920,16 @@ class IngressGateway:
             # Case B: Tool Call Turn (dispatch_task, check_eyes, check_nose, read_project_file, etc.)
             fn_name = fn_call.get("name", "dispatch_task")
             fn_args = fn_call.get("args", {})
+            if (
+                (fn_name in READ_ONLY_HOP_TOOLS and consecutive_read_only >= MAX_CONSECUTIVE_READ_ONLY_HOPS)
+                or (fn_name == "check_eyes" and check_eyes_called_since_dispatch)
+            ):
+                logger.warning(
+                    f"Hard hop gate blocked disallowed tool '{fn_name}' on hop {current_hop} "
+                    f"(consecutive_read_only={consecutive_read_only}, check_eyes_called_since_dispatch={check_eyes_called_since_dispatch}); "
+                    f"breaking to Step 2 synthesis."
+                )
+                break
             executed_any_tool = True
             last_fn_name = fn_name
             last_fn_args = fn_args
@@ -6219,13 +6376,17 @@ class IngressGateway:
                     f"(pending_subtasks={len(pending_subtasks)}). "
                     f"Allowing chain to next action or synthesis (mode=AUTO)."
                 )
-                chain_tools = (
-                    strip_read_only_tools(tools)
-                    if consecutive_read_only >= MAX_CONSECUTIVE_READ_ONLY_HOPS
-                    else tools
-                )
-                if check_eyes_called_since_dispatch:
-                    chain_tools = strip_tools_by_name(chain_tools, {"check_eyes"})
+                # Keep tools 100% static across all hops & Step 2 to preserve the Gemini prefix cache.
+                # Tool hop caps are enforced via steering notes and the hard execution gate at the top of Case B.
+                chain_tools = tools
+                if consecutive_read_only >= MAX_CONSECUTIVE_READ_ONLY_HOPS and working_contents and working_contents[-1].get("role") == "user":
+                    working_contents[-1]["parts"].append({
+                        "text": (
+                            "[SYSTEM HOP CAP: You have reached the maximum consecutive read-only inspection hops (3). "
+                            "Do NOT call read_project_file, consult_memory, check_nose, check_eyes, or check_linear_task_status again. "
+                            "Either emit your final response text now or call an action tool like dispatch_task.]"
+                        )
+                    })
                 chain_sys_prompt = sys_prompt
                 chain_payload = {
                     "systemInstruction": {"parts": [{"text": chain_sys_prompt}]},
@@ -6253,14 +6414,50 @@ class IngressGateway:
                         logger.warning(f"Mouth chain retry also empty ({describe_candidate_shape(next_resp)}).")
 
                 if candidate_is_empty(next_resp) or not next_resp or next_resp.get("_error"):
-                    if fn_name == "dispatch_task":
+                    if isinstance(next_resp, dict):
+                        if isinstance(next_resp.get("_error"), dict):
+                            error_info = dict(next_resp["_error"])
+                        elif next_resp.get("_error"):
+                            error_info = dict(next_resp)
+                            error_info.setdefault("status", 500)
+                            error_info.setdefault("code", error_info.get("status", 500))
+                            error_info.setdefault("error_type", "SynthesisError")
+                            error_info.setdefault("message", error_info.get("raw_error") or "Unknown error")
+                        else:
+                            error_info = {
+                                "status": 500,
+                                "code": 500,
+                                "error_type": "SynthesisError",
+                                "message": "Synthesis failed with empty candidate text",
+                            }
+                    else:
+                        error_info = {
+                            "status": 500,
+                            "code": 500,
+                            "error_type": "SynthesisError",
+                            "message": "Synthesis failed with empty candidate text",
+                        }
+
+                    has_completed_tool_result = bool(
+                        isinstance(last_tool_result, dict)
+                        and (
+                            last_tool_result.get("output_tail")
+                            or last_tool_result.get("output")
+                            or last_tool_result.get("buffer_tail")
+                            or last_tool_result.get("card")
+                            or last_tool_result.get("verdict_summary")
+                            or last_tool_result.get("status") in ("SUCCESS", "COMPLETED", "DONE")
+                        )
+                    )
+                    if has_completed_tool_result:
+                        logger.info(
+                            f"Mouth chain step failed or returned empty after '{fn_name}', but completed tool result is available. "
+                            f"Allowing Step 2 fallback synthesis to recover."
+                        )
+                        skip_step2_synthesis = False
+                    else:
                         skip_step2_synthesis = True
                         briefing_text = ""
-                        error_info = (
-                            next_resp.get("_error")
-                            if isinstance(next_resp, dict) and isinstance(next_resp.get("_error"), dict)
-                            else {"status": 500, "code": 500, "error_type": "SynthesisError", "message": "Synthesis failed with empty candidate text"}
-                        )
                     break
 
                 if next_resp and not next_resp.get("_error") and next_resp.get("candidates"):
@@ -6296,7 +6493,7 @@ class IngressGateway:
                 step2_extra["budget_note"] = build_hop_budget_note(MAX_TOOL_CHAIN_HOPS, list(pending_subtasks))
 
             self._broadcast_mouth_log(f"[SYNTHESIS] Synthesizing executive briefing with {model}...", model=model)
-            briefing_text, error_info = await self._execute_step2_synthesis(
+            briefing_text, step2_error = await self._execute_step2_synthesis(
                 sys_prompt=sys_prompt,
                 prompt=prompt,
                 candidate=last_candidate,
@@ -6309,6 +6506,8 @@ class IngressGateway:
                 contents=working_contents if len(working_contents) >= 3 else None,
                 **step2_extra,
             )
+            if not briefing_text and step2_error:
+                error_info = step2_error
 
         if not briefing_text:
             # Fail loudly on Step 2 synthesis or runtime failure
@@ -6557,9 +6756,14 @@ class IngressGateway:
                 "error_reference": err_ref,
             }
 
+        briefing_text = ""
+        b_cand = {}
+        b_parts = []
+        step2_api_error: Optional[Dict[str, Any]] = None
+
         if not briefing_resp:
             err_ref = generate_error_reference("ERR")
-            return "", {
+            step2_api_error = {
                 "status": 500,
                 "code": 500,
                 "error_type": "NoResponse",
@@ -6567,35 +6771,40 @@ class IngressGateway:
                 "message": "No response",
                 "error_reference": err_ref,
             }
-
-        if briefing_resp.get("_error"):
+        elif briefing_resp.get("_error"):
             err_ref = briefing_resp.get("error_reference") or generate_error_reference("ERR")
-            briefing_resp["error_reference"] = err_ref
-            return "", briefing_resp
+            err_dict = briefing_resp.get("_error") if isinstance(briefing_resp.get("_error"), dict) else briefing_resp
+            step2_api_error = dict(err_dict)
+            step2_api_error.setdefault("status", 500)
+            step2_api_error.setdefault("code", step2_api_error.get("status", 500))
+            step2_api_error.setdefault("error_type", "SynthesisError")
+            step2_api_error.setdefault("message", step2_api_error.get("raw_error") or "Step 2 synthesis failed")
+            step2_api_error["error_reference"] = err_ref
+        else:
+            candidates = briefing_resp.get("candidates", [])
+            if not candidates:
+                err_ref = generate_error_reference("ERR")
+                step2_api_error = {
+                    "status": 200,
+                    "code": 200,
+                    "error_type": "ZeroCandidates",
+                    "raw_error": "Gemini API returned zero candidates",
+                    "message": "Zero candidates",
+                    "error_reference": err_ref,
+                }
+            else:
+                b_cand = candidates[0] if (isinstance(candidates, list) and candidates and isinstance(candidates[0], dict)) else {}
+                b_parts = extract_candidate_parts(b_cand)
+                briefing_text = extract_candidate_text(b_cand)
 
-        candidates = briefing_resp.get("candidates", [])
-        if not candidates:
-            err_ref = generate_error_reference("ERR")
-            return "", {
-                "status": 200,
-                "code": 200,
-                "error_type": "ZeroCandidates",
-                "raw_error": "Gemini API returned zero candidates",
-                "message": "Zero candidates",
-                "error_reference": err_ref,
-            }
-
-        b_cand = candidates[0] if (isinstance(candidates, list) and candidates and isinstance(candidates[0], dict)) else {}
-        b_parts = extract_candidate_parts(b_cand)
-        briefing_text = extract_candidate_text(b_cand)
         if not briefing_text:
             attempted_calls = [
                 (p["functionCall"] or {}).get("name") for p in b_parts
                 if isinstance(p, dict) and isinstance(p.get("functionCall"), dict)
             ]
+            reason = f"error={step2_api_error.get('error_type')}" if step2_api_error else f"empty text ({describe_candidate_shape(briefing_resp)}; attempted_tool_calls={attempted_calls})"
             logger.warning(
-                f"Step 2 synthesis returned empty text ({describe_candidate_shape(briefing_resp)}; "
-                f"attempted_tool_calls={attempted_calls}); attempting direct text-only fallback synthesis."
+                f"Step 2 synthesis returned {reason}; attempting direct text-only fallback synthesis."
             )
             # Comprehensive extraction across all tool result schemas (error, task output, sensory digests, cards)
             error_val = tool_result.get("error") if isinstance(tool_result, dict) else None
@@ -6654,6 +6863,8 @@ class IngressGateway:
                 logger.debug(f"Direct fallback synthesis failed: {e}")
 
         if not briefing_text:
+            if step2_api_error:
+                return "", step2_api_error
             error_ref = generate_error_reference("ERR")
             finish_reason = b_cand.get("finishReason", "UNKNOWN") if "b_cand" in locals() and isinstance(b_cand, dict) else "UNKNOWN"
             fn_calls = [
